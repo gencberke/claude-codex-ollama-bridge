@@ -1,0 +1,34 @@
+{
+  "name": "codex-ollama-bridge",
+  "version": "0.1.5",
+  "private": true,
+  "description": "Loopback gateway so Codex can keep native GPT on ChatGPT auth and route ollama/* models to local Ollama Responses.",
+  "type": "module",
+  "bin": {
+    "cob": "./dist/cli.js"
+  },
+  "files": [
+    "dist/*.js",
+    "!dist/*.test.js",
+    "!dist/*.harness.js",
+    "README.md",
+    "CHANGELOG.md",
+    "RELEASE.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc && node --test dist/*.test.js",
+    "cob": "node dist/cli.js",
+    "pack": "npm run build && npm pack"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}

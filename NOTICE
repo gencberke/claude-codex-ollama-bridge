@@ -1,0 +1,18 @@
+codex-ollama-bridge
+===================
+
+This project reimplements a narrow subset of ideas from OpenCodex
+(https://github.com/lidge-jun/opencodex), which is licensed under the MIT License.
+Copyright (c) OpenCodex contributors.
+
+Ideas adapted, not source-copied:
+
+- Loopback `openai_base_url` plus a replacement `model_catalog_json` while
+  keeping Codex's built-in `openai` provider id.
+- Allowlisted header forwarding to `https://chatgpt.com/backend-api/codex/responses`.
+- Merging native Codex catalog rows with third-party slugs in one `{ "models": [] }` file.
+- Featuring a mixed roster in the first five `visibility=list` rows by ascending priority.
+
+No OpenCodex source files are vendored. In particular this tree does not include
+`inject.ts`, `sync.ts`, `router.ts`, `registry.ts`, `openai-chat.ts`, GUI, OAuth,
+launchd, a Codex binary shim, or V2 encrypted-task recovery.
