@@ -14,9 +14,11 @@ It is not native GPT gold.
 **survives Codex updates and ChatGPT/Codex quit–reopen**, without a one-shot
 manual overlay. Today the app binary is stock; durability is unproven. Desktop
 rewrites `config.toml`, `app-server` ignores `--profile cob`, and cob is a
-separate process on `openai_base_url`. After an update or a cold start, picker
-and 0731 routing must still hit cob, or `cob status` must say why not. Do not
-patch ChatGPT.app or steal native slugs to “survive” an update.
+separate process on `openai_base_url`. After an update or a quit–reopen, picker
+and 0731 routing must still hit cob, or `cob status` must say why not. A dead
+gateway after reboot is recovered with `cob start` — cob does not install
+launchd or a login item. Do not patch ChatGPT.app or steal native slugs to
+“survive” an update.
 
 ## Surfaces
 
@@ -45,6 +47,13 @@ revert a user-owned Desktop trial.
   hide that slug on this build. OpenCodex `nativeAlias` (stealing a bare
   `gpt-5.6-*` id) is **not** the picker fix here and must not become cob
   default.
+- **Desktop native GPT (luna high, 2026-08-20 afternoon):** after ChatGPT
+  credits returned, a `gpt-5.6-luna` `effort=high` thread hit cob
+  `target=native` (`tools_n=0`, `b_tools=0`). Native body is byte-forwarded
+  (cob does not force `store: false`). Desktop tools on that path show up as
+  `custom_tool_call` in `input_by`, not cob `tools[]`. Isolated CLI `exec` is
+  still a separate trace. Picker success alone remains insufficient; this
+  wire trace is the native gold that quota had blocked.
 - **Desktop Ollama parent:** DeepSeek 0731 turns reach cob `target=ollama`.
   Simple chat ≈ one Ollama `/v1/responses`; a web-search turn ≈ two model
   calls plus a separate Codex `web search` meter. Codex Cloud usage attributes
@@ -95,15 +104,18 @@ Desktop may persist picker choice back into root `config.toml` (`model =`,
 
 ## Not proven / blocked
 
-- **Native GPT** on this Desktop/CLI build after the 2026-08-19 Codex refresh.
-  ChatGPT usage limit blocked a native `exec` (retry after 2026-08-20 09:10
-  local). Do not treat picker success as native passthrough gold.
 - **Native GPT parent → Ollama V1 child** (LIVE-TESTING L3–L5: G1–G2, G7–G8,
-  G10). Earlier CLI harness spawn is not Desktop gold.
+  G10) as a named Desktop gold. Same-afternoon cob log interleaved one 0731
+  request (`b_instr=17947`, `input_n=3`, `tools_n=14`) between luna-high
+  turns — spawn-shaped, not G2–G5 gold until the luna thread actually opens
+  `ollama/deepseek-v4-flash:0731-cloud` as a V1 child. Earlier CLI harness
+  spawn is not Desktop gold. Named files under `~/.codex/agents/` are **not**
+  required: 0731 is already in the catalog spawn window (`visibility=list`).
+  cob does not write `agents/*.toml`.
 - **G8 follow-up shrink** (`replay_ratio << 1` on the Ollama `/v1/responses`
   cob emits). Post-compact Desktop turns exist; upstream item/byte counts
   were not captured. Isolated L5 harness still unrun. Native GPT compact
-  stays ChatGPT passthrough and still needs credits.
+  stays ChatGPT passthrough.
 - **Ollama parent → GPT child** — out of product; still unsupported.
 
 ## Desktop trial (this machine)
@@ -134,12 +146,16 @@ Must still work after:
    (detect + user-owned restore path), not cob writing `config.toml` as a
    product default.
 
-`cob status` **detects** that rewrite: it read-only inspects root
-`model_provider`, `openai_base_url`, and `model_catalog_json` against the live
-gateway port and cob catalog. Missing or mismatched keys print
-`desktop overlay: broken` plus a user-owned restore hint. Gateway down with
-keys still pointing at cob prints `desktop overlay: ready`. This is not live
-quit/reopen or update proof.
+Reboot / a dead cob process is **not** an autostart product. Run `cob start`.
+
+`cob status` **detects** overlay rewrite and a stopped gateway: first line
+`cob: ok|ready|broken|absent|unreadable`, exit 1 when this Codex home needs
+action. It read-only inspects root `model_provider`, `openai_base_url`, and
+`model_catalog_json` against the live gateway port and cob catalog. Missing
+or mismatched keys print `desktop overlay: broken` plus a user-owned restore
+hint. Gateway down with keys still pointing at cob prints
+`desktop overlay: ready` (`cob: ready`). Default `cob status` does not spawn
+Codex or probe Ollama. This is not live quit/reopen or update proof.
 
 `cob restore` remaining overlay-only is still correct; durability is “the
 trial keeps working across app lifecycle,” not “cob owns root config.”
@@ -173,11 +189,12 @@ denominator. Gateway zstd bodies match the split (~17–19 KB native vs ~50 KB
 
 0. **Durability** — ChatGPT quit–reopen and a Codex/Desktop update (or a
    documented pin + re-verify). Picker + 0731 + spawn still hit cob, or
-   `cob status` explains the break.
-1. **G8 on the compacted 0731 thread** — one follow-up message; capture
+   `cob status` explains the break. Reboot recovery is `cob start`, not a
+   cob-owned LaunchAgent.
+1. **G8 on the compacted 0731 thread** — observe in daily use; capture
    Ollama input = handoff + later turns (`replay_ratio << 1`), no
    `encrypted_content` / `cob1.` on Ollama. Isolated L5 still useful as a
    recorded harness. Native GPT compact stays ChatGPT passthrough.
-2. Native GPT through cob on this build, **when credits return** (G1, byte
-   passthrough, no `store: false` force on native).
-3. GPT parent → 0731 child on Desktop or isolated L3 harness (G1–G5).
+2. **GPT parent → 0731 child** on the luna thread (catalog slug, not
+   `~/.codex/agents/*.toml`). Pass: G1–G5 on the wire. Take a versioned
+   build after that Desktop gold, not before.

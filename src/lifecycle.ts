@@ -15,7 +15,13 @@ import { listenGateway } from "./gateway.js";
 import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "./limits.js";
 import { assertLoopbackHttpUrl } from "./loopback.js";
 import { writeCobProfile } from "./profile.js";
-import { assessDesktopOverlay, loadRootTomlKeys, openaiPortFromToml } from "./root-config.js";
+import {
+  assessDesktopOverlay,
+  loadRootTomlKeys,
+  openaiPortFromToml,
+  summarizeCobStatus,
+  type DesktopOverlayAssessment,
+} from "./root-config.js";
 import { resolvePaths, type CobPaths } from "./paths.js";
 import { detectInstall, formatInstallLine, isLiveCodexHome } from "./install.js";
 import {
@@ -565,11 +571,18 @@ export async function waitForHealth(port: number, opts: number | HealthWait = 40
   throw new Error(`gateway did not become healthy on ${port}: ${last}`);
 }
 
-export async function statusReport(paths: CobPaths = resolvePaths()): Promise<string> {
+export type StatusReport = {
+  /** Exit 0 when this Codex home needs no cob action. */
+  ok: boolean;
+  text: string;
+};
+
+export async function statusReport(paths: CobPaths = resolvePaths()): Promise<StatusReport> {
+  const liveHome = isLiveCodexHome(paths.codexHome);
   const runtime = readRuntime(paths);
   const root = existsSync(paths.rootConfig);
   const install = detectInstall();
-  const lines = [
+  const heading = [
     formatInstallLine(install),
     `cli: ${install.cliPath || "-"}`,
     `codex home: ${paths.codexHome}`,
@@ -578,13 +591,13 @@ export async function statusReport(paths: CobPaths = resolvePaths()): Promise<st
     `catalog: ${existsSync(paths.catalog) ? paths.catalog : "missing"}`,
     `state: ${existsSync(paths.stateDir) ? paths.stateDir : "missing"}`,
   ];
-  if (!isLiveCodexHome(paths.codexHome)) {
-    lines.push("isolated Codex home: ChatGPT Desktop still reads ~/.codex");
+  if (!liveHome) {
+    heading.push("isolated Codex home: ChatGPT Desktop still reads ~/.codex");
   }
   if (!runtime) {
-    lines.push("gateway: stopped");
-    lines.push(...desktopOverlayLines(paths, { gatewayHealthy: false }));
-    return lines.join("\n");
+    return finishStatusReport(liveHome, heading, ["gateway: stopped"], paths, {
+      gatewayHealthy: false,
+    });
   }
   let health = "unknown";
   let liveCompaction: string | undefined;
@@ -607,33 +620,52 @@ export async function statusReport(paths: CobPaths = resolvePaths()): Promise<st
       }
     }
   }
-  lines.push(`gateway pid: ${runtime.pid}`);
-  lines.push(`gateway port: ${runtime.port}`);
-  lines.push(`gateway health: ${health}`);
-  lines.push(`ollama url: ${runtime.ollamaUrl}`);
+  const gatewayHealthy = health === "ok";
+  const details = [
+    `gateway pid: ${runtime.pid}`,
+    `gateway port: ${runtime.port}`,
+    `gateway health: ${health}`,
+    `ollama url: ${runtime.ollamaUrl}`,
+  ];
   if (runtime.version) {
-    lines.push(`gateway release: ${runtime.version} (${runtime.installKind ?? "unknown"})`);
+    details.push(`gateway release: ${runtime.version} (${runtime.installKind ?? "unknown"})`);
   }
   if (liveCompaction) {
-    lines.push(`compaction: ${liveCompaction}`);
+    details.push(`compaction: ${liveCompaction}`);
   } else if (runtime.compaction) {
-    lines.push(
+    details.push(
       `compaction: ${runtime.compaction.provider}${runtime.compaction.model ? `/${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction.ollamaThreads ?? "summarize"}`,
     );
   }
-  lines.push(
-    ...desktopOverlayLines(paths, {
-      runtimePort: runtime.port,
-      gatewayHealthy: health === "ok",
-    }),
-  );
-  return lines.join("\n");
+  return finishStatusReport(liveHome, heading, details, paths, {
+    runtimePort: runtime.port,
+    gatewayHealthy,
+  });
 }
 
-function desktopOverlayLines(
+function finishStatusReport(
+  liveHome: boolean,
+  heading: string[],
+  details: string[],
   paths: CobPaths,
   opts: { runtimePort?: number; gatewayHealthy: boolean },
-): string[] {
+): StatusReport {
+  const overlay = assessPathsOverlay(paths, opts);
+  const summary = summarizeCobStatus({
+    liveHome,
+    overlay: overlay.state,
+    gatewayHealthy: opts.gatewayHealthy,
+  });
+  return {
+    ok: summary.ok,
+    text: [`cob: ${summary.kind}`, ...heading, ...details, ...overlay.lines].join("\n"),
+  };
+}
+
+function assessPathsOverlay(
+  paths: CobPaths,
+  opts: { runtimePort?: number; gatewayHealthy: boolean },
+): DesktopOverlayAssessment {
   const loaded = loadRootTomlKeys(paths.rootConfig);
   let profilePort: number | undefined;
   try {
@@ -650,7 +682,7 @@ function desktopOverlayLines(
     profilePort,
     runtimePort: opts.runtimePort,
     gatewayHealthy: opts.gatewayHealthy,
-  }).lines;
+  });
 }
 
 async function runtimeStillServing(runtime: RuntimeState): Promise<boolean> {

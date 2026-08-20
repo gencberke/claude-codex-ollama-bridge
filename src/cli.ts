@@ -146,9 +146,12 @@ async function main(argv: string[]): Promise<void> {
       );
       return;
     }
-    case "status":
-      console.log(await statusReport(paths));
+    case "status": {
+      const status = await statusReport(paths);
+      console.log(status.text);
+      if (!status.ok) process.exitCode = 1;
       return;
+    }
     case "smoke":
       await runSmoke({ live: flags.live, ollamaUrl: flags.ollamaUrl });
       return;
@@ -221,7 +224,10 @@ Launch Codex against the live bridge:
 
 cob status read-only inspects root config.toml for Desktop overlay keys
 (openai_base_url, model_catalog_json, model_provider) against the live gateway.
-It never writes that file. cob restore does not revert a user-owned Desktop trial.
+The first line is cob: ok|ready|broken|absent|unreadable. Exit 0 only when
+this Codex home needs no cob action; otherwise exit 1. It never writes that
+file and does not spawn Codex or probe Ollama. After a reboot or a dead
+gateway, run cob start. cob restore does not revert a user-owned Desktop trial.
 
 Compaction is native ChatGPT passthrough for GPT threads. Ollama threads
 summarize via Ollama /v1/responses (not /compact). --compaction-model still

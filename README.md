@@ -84,7 +84,7 @@ Commands:
 | `cob stop` | Stop the gateway. Leaves the profile in place |
 | `cob restore` | Stop, then delete profile + catalog + cob state. Root config is untouched |
 | `cob sync` | Refresh `cob-catalog.json` from `codex debug models --bundled` + Ollama `/api/tags`. A running gateway reloads that file on the next request |
-| `cob status` | Overlay paths, pid, health, install version, and a **read-only** Desktop overlay check (`openai_base_url` / `model_catalog_json` vs the live gateway) |
+| `cob status` | First line `cob: ok\|ready\|broken\|absent\|unreadable`; exit 1 if cob or the Desktop overlay needs action. Read-only overlay check (`openai_base_url` / `model_catalog_json` vs the live gateway). Does not spawn Codex. After reboot or a dead gateway: `cob start` |
 | `cob smoke` | Catalog, roster, encrypted-content, restore, and native passthrough checks. `cob smoke --live` also pings Ollama through the gateway |
 | `cob pack` | Workspace only: production `tsc` + `npm pack` (no `*.test.js` in the tarball) |
 | `cob version` | Print `cob <version> (global\|workspace)` |

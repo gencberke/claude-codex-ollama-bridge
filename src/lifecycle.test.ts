@@ -1035,9 +1035,11 @@ describe("cob status desktop overlay", () => {
     writeFileSync(paths.rootConfig, original);
     const report = await statusReport(paths);
     assert.equal(readFileSync(paths.rootConfig, "utf8"), original);
-    assert.match(report, /desktop overlay: broken/);
-    assert.match(report, /openai_base_url is missing/);
-    assert.match(report, /cob restore does not revert config.toml/);
+    assert.equal(report.ok, false);
+    assert.match(report.text, /^cob: broken\n/);
+    assert.match(report.text, /desktop overlay: broken/);
+    assert.match(report.text, /openai_base_url is missing/);
+    assert.match(report.text, /cob restore does not revert config.toml/);
   });
 
   it("reports a ready Desktop overlay when root keys match cob and the gateway is stopped", async () => {
@@ -1062,8 +1064,20 @@ describe("cob status desktop overlay", () => {
     writeFileSync(paths.rootConfig, original);
     const report = await statusReport(paths);
     assert.equal(readFileSync(paths.rootConfig, "utf8"), original);
-    assert.match(report, /gateway: stopped/);
-    assert.match(report, /desktop overlay: ready \(gateway stopped; run cob start\)/);
+    assert.equal(report.ok, false);
+    assert.match(report.text, /^cob: ready\n/);
+    assert.match(report.text, /gateway: stopped/);
+    assert.match(report.text, /desktop overlay: ready \(gateway stopped; run cob start\)/);
+  });
+
+  it("treats a stopped isolated home with no root config as ready, not absent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-isolated-"));
+    const paths = resolvePaths(dir);
+    const report = await statusReport(paths);
+    assert.equal(report.ok, false);
+    assert.match(report.text, /^cob: ready\n/);
+    assert.match(report.text, /isolated Codex home/);
+    assert.match(report.text, /desktop overlay: no root config.toml/);
   });
 });
 

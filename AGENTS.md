@@ -36,6 +36,8 @@ Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG
   `tool_search_call` ↔ function_call and promotes discovered leaf tools onto
   the next Ollama `tools[]` as namespace-aware aliases. Do not set `tool_mode`.
   Do not hand-edit `cob-catalog.json` to force the flag.
+- Install launchd, a Login Item, or any OS supervisor for cob. After reboot
+  or a dead gateway, recovery is `cob start`.
 
 ## Activation split
 
@@ -63,4 +65,5 @@ config writes.
 Durability (STATUS: ChatGPT quit–reopen and `codex update`) is an **important**
 subtask, not deferred cosmetics. Do not patch the app binary or use
 `nativeAlias` to paper over an update. After lifecycle tests, picker + 0731
-routing must still hit cob, or `cob status` must say why not.
+routing must still hit cob, or `cob status` must say why not. Reboot is not
+cob autostart; `cob start` brings the gateway back.

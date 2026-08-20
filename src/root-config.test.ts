@@ -10,6 +10,7 @@ import {
   parseLoopbackBaseUrl,
   parseRootTomlKeys,
   sameFilesystemPath,
+  summarizeCobStatus,
   type DesktopOverlayInput,
 } from "./root-config.js";
 
@@ -205,6 +206,41 @@ describe("desktop overlay assessment", () => {
   it("reports absent and unreadable root configs", () => {
     assert.equal(assess({ keys: null }).state, "absent");
     assert.equal(assess({ keys: null, readError: "EACCES" }).state, "unreadable");
+  });
+
+  it("summarizes live vs isolated status without encoding a 0/1/2/3 taxonomy", () => {
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: true, overlay: "ok", gatewayHealthy: true }),
+      { kind: "ok", ok: true },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: true, overlay: "ready", gatewayHealthy: false }),
+      { kind: "ready", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: true, overlay: "broken", gatewayHealthy: true }),
+      { kind: "broken", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: true, overlay: "absent", gatewayHealthy: false }),
+      { kind: "absent", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: true, overlay: "unreadable", gatewayHealthy: false }),
+      { kind: "unreadable", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: false, overlay: "absent", gatewayHealthy: true }),
+      { kind: "ok", ok: true },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: false, overlay: "absent", gatewayHealthy: false }),
+      { kind: "ready", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({ liveHome: false, overlay: "broken", gatewayHealthy: true }),
+      { kind: "broken", ok: false },
+    );
   });
 
   it("rejects a non-loopback openai_base_url", () => {

@@ -138,6 +138,27 @@ export function assessDesktopOverlay(input: DesktopOverlayInput): DesktopOverlay
   };
 }
 
+/**
+ * First-line `cob: …` kind plus whether `cob status` should exit 0.
+ * Isolated homes (`--dev`) treat a missing root config as normal; live
+ * `~/.codex` does not. Does not spawn Codex or probe Ollama.
+ */
+export function summarizeCobStatus(input: {
+  liveHome: boolean;
+  overlay: DesktopOverlayState;
+  gatewayHealthy: boolean;
+}): { kind: DesktopOverlayState; ok: boolean } {
+  const { liveHome, overlay, gatewayHealthy } = input;
+  const ok =
+    gatewayHealthy &&
+    overlay !== "broken" &&
+    overlay !== "unreadable" &&
+    (overlay === "ok" || (!liveHome && overlay === "absent"));
+  if (liveHome) return { kind: overlay, ok };
+  if (overlay === "broken" || overlay === "unreadable") return { kind: overlay, ok };
+  return { kind: gatewayHealthy ? "ok" : "ready", ok };
+}
+
 export function loadRootTomlKeys(rootConfigPath: string): {
   keys: RootTomlKeys | null;
   readError?: string;
