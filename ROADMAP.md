@@ -71,10 +71,11 @@ silently leave Desktop on stale model semantics.
 
 ## Code evidence map
 
-Isolated WP1–WP6 are in the working tree. The remaining live-proof points:
+Isolated WP1–WP7 are packed in cob **0.1.8**. The remaining live-proof points:
 
 - Catalog producer/sidecar/status kinds are implemented (`catalog-provenance.ts`).
-  Live 0.1.6 still cannot emit `stale` / `unknown`; G11 needs a packed install.
+  Live `cob status` can emit `stale` / `unknown`. G11 is still the live
+  procedure, not a claim from the pack.
 - Search defaults on; newest-first promotion is unchanged. G12 is unrun.
 - Ollama allowlist is pinned to 0.32.15 `ResponsesRequest` fields. G13 is unrun.
 - Headers/idle/backpressure split is implemented. G14 is unrun.

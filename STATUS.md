@@ -23,7 +23,7 @@ native slugs to “survive” an update.
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | loopback `127.0.0.1:18790` (live global **0.1.8** after this cut), Ollama-thread summarize compact. Dev isolate: `cob start --dev` → `~/.codex-cob-dev` port **18791**. |
+| cob gateway | loopback `127.0.0.1:18790` (live global **0.1.8**, pid **61801**), Ollama-thread summarize compact. Dev isolate: `cob start --dev` → `~/.codex-cob-dev` port **18791**. |
 | Codex CLI | 0.147.0 — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | **26.818.41509** (WP0 2026-08-23), bundled `codex-cli 0.149.0-alpha.4.1`. Earlier gold hop: 26.818.22352 / alpha.21 |
 | Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). 0.32.14→0.32.15 on 2026-08-21; cob unchanged. |
