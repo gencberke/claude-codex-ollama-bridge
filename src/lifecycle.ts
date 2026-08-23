@@ -251,6 +251,9 @@ async function syncCatalogUnlocked(opts: {
   const catalog = mergeCatalogWithFallback(bundled, tags, previous, Boolean(ollamaError), {
     spawnableOllamaSlugs: spawnable,
     supportsSearchTool,
+    advertiseCloudMaxContext: cob.catalog?.advertiseCloudMaxContext === true,
+    activeContextWindow: cob.catalog?.activeContextWindow,
+    autoCompactTokenLimit: cob.catalog?.autoCompactTokenLimit,
   });
   if (process.env.COB_SKIP_CATALOG_CHECK !== "1") {
     try {
@@ -316,6 +319,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
       model: opts.compaction?.model,
       ollamaThreads: opts.compaction?.ollamaThreads,
       ollamaModel: opts.compaction?.ollamaModel,
+      ollamaEffort: opts.compaction?.ollamaEffort,
     });
   const spawnable = resolveSpawnableOllamaSlugs(cob);
   const before = readRootConfig(paths);

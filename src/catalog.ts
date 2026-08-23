@@ -31,6 +31,15 @@ export type CatalogMergeOptions = {
   spawnableOllamaSlugs?: readonly string[];
   /** Advertise supports_search_tool on Ollama rows. Requires the cob tool_search shim. */
   supportsSearchTool?: boolean;
+  /** Expose tag max_context_window on verified cloud tags. Default false. */
+  advertiseCloudMaxContext?: boolean;
+  /** Active catalog cap. Default 256000. Never inferred from max. */
+  activeContextWindow?: number;
+  /**
+   * Isolated compact-threshold experiment. Emitted only when the native
+   * skeleton already advertises `auto_compact_token_limit`.
+   */
+  autoCompactTokenLimit?: number;
 };
 
 export type CatalogSafetyOptions = {
@@ -171,7 +180,12 @@ export function buildOllamaEntry(
   options?: CatalogMergeOptions,
 ): JsonObject {
   const evidence = evidenceFromOllamaTag(tag);
-  const context = ollamaCatalogContextWindow(tag.details?.context_length);
+  const windows = ollamaCatalogWindows({
+    tagLength: tag.details?.context_length,
+    cloud: isVerifiedCloudOllamaTag(tag),
+    advertiseCloudMax: options?.advertiseCloudMaxContext === true,
+    activeCap: options?.activeContextWindow,
+  });
   const size = tag.details?.parameter_size ? ` (${tag.details.parameter_size})` : "";
   const where = tag.remote_host
     ? `via the local Ollama daemon to ${tag.remote_host}`
@@ -179,8 +193,10 @@ export function buildOllamaEntry(
   const fields = ollamaChildCatalogFields({
     evidence,
     skeleton,
-    contextWindow: context,
+    contextWindow: windows.contextWindow,
+    maxContextWindow: windows.maxContextWindow,
     supportsSearchTool: options?.supportsSearchTool === true,
+    autoCompactTokenLimit: options?.autoCompactTokenLimit,
   });
   const slug = ollamaCatalogSlug(tag.name);
   const entry: JsonObject = {
@@ -205,9 +221,38 @@ export function buildOllamaEntry(
   return entry;
 }
 
-export function ollamaCatalogContextWindow(tagLength: number | undefined): number {
-  const raw = typeof tagLength === "number" && tagLength > 0 ? tagLength : 32768;
-  return Math.min(raw, OLLAMA_CATALOG_CONTEXT_CAP);
+export function ollamaCatalogContextWindow(
+  tagLength: number | undefined,
+  activeCap = OLLAMA_CATALOG_CONTEXT_CAP,
+): number {
+  return ollamaCatalogWindows({ tagLength, activeCap }).contextWindow;
+}
+
+export function isVerifiedCloudOllamaTag(tag: Pick<OllamaTag, "name" | "remote_host">): boolean {
+  return Boolean(tag.remote_host) || /:cloud$|-cloud$/.test(tag.name);
+}
+
+export function isVerifiedCloudOllamaSlug(slug: string): boolean {
+  const name = slug.startsWith("ollama/") ? slug.slice("ollama/".length) : slug;
+  return /:cloud$|-cloud$/.test(name);
+}
+
+export function ollamaCatalogWindows(opts: {
+  tagLength?: number;
+  reportedMax?: number;
+  cloud?: boolean;
+  advertiseCloudMax?: boolean;
+  activeCap?: number;
+}): { contextWindow: number; maxContextWindow: number } {
+  const raw = typeof opts.tagLength === "number" && opts.tagLength > 0 ? opts.tagLength : 32768;
+  const activeCap = opts.activeCap ?? OLLAMA_CATALOG_CONTEXT_CAP;
+  const contextWindow = Math.min(raw, activeCap);
+  const reportedMax =
+    typeof opts.reportedMax === "number" && opts.reportedMax > 0 ? opts.reportedMax : raw;
+  if (opts.advertiseCloudMax && opts.cloud && reportedMax > contextWindow) {
+    return { contextWindow, maxContextWindow: reportedMax };
+  }
+  return { contextWindow, maxContextWindow: contextWindow };
 }
 
 export function assignFeaturedPriorities(
@@ -345,14 +390,20 @@ function rebuildOllamaRowFromPrevious(
     ),
     vision: Array.isArray(model.input_modalities) && model.input_modalities.includes("image"),
   };
-  const context = ollamaCatalogContextWindow(
-    typeof model.context_window === "number" ? model.context_window : undefined,
-  );
+  const windows = ollamaCatalogWindows({
+    tagLength: typeof model.context_window === "number" ? model.context_window : undefined,
+    reportedMax: typeof model.max_context_window === "number" ? model.max_context_window : undefined,
+    cloud: isVerifiedCloudOllamaSlug(slug),
+    advertiseCloudMax: options?.advertiseCloudMaxContext === true,
+    activeCap: options?.activeContextWindow,
+  });
   const fields = ollamaChildCatalogFields({
     evidence,
     skeleton,
-    contextWindow: context,
+    contextWindow: windows.contextWindow,
+    maxContextWindow: windows.maxContextWindow,
     supportsSearchTool: options?.supportsSearchTool === true,
+    autoCompactTokenLimit: options?.autoCompactTokenLimit,
   });
   const entry: JsonObject = {
     slug,
@@ -459,6 +510,20 @@ export function assertOllamaRowsSafe(catalog: CatalogFile, options?: CatalogSafe
       }
       if (!efforts.includes(model.default_reasoning_level)) {
         throw new Error(`Ollama row ${slug} default_reasoning_level is not in supported_reasoning_levels`);
+      }
+    }
+    const active = typeof model.context_window === "number" ? model.context_window : undefined;
+    const maximum = typeof model.max_context_window === "number" ? model.max_context_window : undefined;
+    if (typeof active === "number" && typeof maximum === "number" && maximum < active) {
+      throw new Error(`Ollama row ${slug} max_context_window is below context_window`);
+    }
+    if ("auto_compact_token_limit" in model) {
+      const limit = model.auto_compact_token_limit;
+      if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit <= 0) {
+        throw new Error(`Ollama row ${slug} auto_compact_token_limit must be a positive integer`);
+      }
+      if (typeof active === "number" && limit > active) {
+        throw new Error(`Ollama row ${slug} auto_compact_token_limit exceeds context_window`);
       }
     }
   }

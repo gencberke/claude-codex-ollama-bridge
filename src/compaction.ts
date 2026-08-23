@@ -4,8 +4,27 @@ import { MAX_COB_COMPACT_SUMMARY_BYTES } from "./compact-envelope.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
 
-export const COB_OLLAMA_COMPACT_INSTRUCTIONS =
-  "You are compacting a conversation for later continuation. Write a concise handoff for your future self: the goal, decisions made, files touched, commands run, remaining work, and any constraints. Do not call tools. Reply with the handoff only.";
+export const OLLAMA_COMPACT_HANDOFF_SECTIONS = [
+  "Goal",
+  "Constraints",
+  "Completed",
+  "Pending",
+  "Decisions",
+  "Tool state",
+  "Verification/evidence",
+] as const;
+
+export type CompactHandoffSection = (typeof OLLAMA_COMPACT_HANDOFF_SECTIONS)[number];
+export type CompactHandoffSectionFlags = Record<CompactHandoffSection, boolean>;
+
+export const COB_OLLAMA_COMPACT_INSTRUCTIONS = [
+  "You are compacting a conversation for later continuation.",
+  "Do not call tools. Reply with the handoff only.",
+  "Write these sections in this order using the heading text exactly.",
+  "Write None when a section has nothing to record:",
+  "",
+  ...OLLAMA_COMPACT_HANDOFF_SECTIONS,
+].join("\n");
 
 const UNSUPPORTED_OLLAMA_COMPACT_MEDIA = new Set([
   "input_image",
@@ -79,23 +98,90 @@ export function resolveCompactPlan(opts: {
   return { kind: "native-for-ollama", compactModel };
 }
 
+export const OLLAMA_COMPACT_EFFORTS = ["none", "low", "high", "max"] as const;
+export type OllamaCompactEffort = (typeof OLLAMA_COMPACT_EFFORTS)[number];
+
+/** Current G8 summarizer effort after prepareOllamaWire (missing → high). */
+export const DEFAULT_OLLAMA_COMPACT_EFFORT = "high" satisfies OllamaCompactEffort;
+
 export function buildOllamaSummarizerPayload(opts: {
   compactModel: string;
   history: unknown[];
+  /** Opt-in experiment. Omit to keep the current G8 high default on the wire. */
+  effort?: OllamaCompactEffort;
 }): JsonObject {
-  return {
+  const payload: JsonObject = {
     model: opts.compactModel,
     stream: false,
     store: false,
     instructions: COB_OLLAMA_COMPACT_INSTRUCTIONS,
-    input: [
-      {
-        type: "message",
-        role: "developer",
-        content: [{ type: "input_text", text: COB_OLLAMA_COMPACT_INSTRUCTIONS }],
-      },
-      ...projectOllamaSummarizerHistory(opts.history),
-    ],
+    input: projectOllamaSummarizerHistory(opts.history),
+  };
+  if (opts.effort) payload.reasoning = { effort: opts.effort };
+  return payload;
+}
+
+export function ollamaSummarizerInstructionCopyCount(payload: JsonObject): number {
+  let copies = 0;
+  if (payload.instructions === COB_OLLAMA_COMPACT_INSTRUCTIONS) copies += 1;
+  const input = payload.input;
+  if (!Array.isArray(input)) return copies;
+  for (const item of input) {
+    if (!isRecord(item)) continue;
+    if (typeof item.content === "string" && item.content === COB_OLLAMA_COMPACT_INSTRUCTIONS) {
+      copies += 1;
+      continue;
+    }
+    if (!Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (isRecord(part) && part.text === COB_OLLAMA_COMPACT_INSTRUCTIONS) copies += 1;
+    }
+  }
+  return copies;
+}
+
+export function compactHandoffSectionFlags(text: string): CompactHandoffSectionFlags {
+  const flags = {} as CompactHandoffSectionFlags;
+  for (const name of OLLAMA_COMPACT_HANDOFF_SECTIONS) {
+    flags[name] = compactHandoffHasSection(text, name);
+  }
+  return flags;
+}
+
+export function formatCompactSectionFlags(flags: CompactHandoffSectionFlags): string {
+  return OLLAMA_COMPACT_HANDOFF_SECTIONS.map((name) => `${compactSectionLogKey(name)}:${flags[name] ? 1 : 0}`).join(",");
+}
+
+function compactSectionLogKey(name: CompactHandoffSection): string {
+  return name.replaceAll(" ", "_").replaceAll("/", "_");
+}
+
+function compactHandoffHasSection(text: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\n)\\s*(?:#{1,6}\\s*|\\*\\*)?${escaped}(?:\\*\\*)?\\s*:?\\s*`, "i").test(text);
+}
+
+export function ollamaCompactHandoffSkeleton(
+  body: Partial<Record<CompactHandoffSection, string>> = {},
+): string {
+  return OLLAMA_COMPACT_HANDOFF_SECTIONS.map((name) => `${name}: ${body[name] ?? "None"}`).join("\n");
+}
+
+/**
+ * Stage 3: a malformed or incomplete skeleton fails closed. Missing headings
+ * are not filled in, and cob does not resend the full history.
+ */
+export function incompleteOllamaCompactHandoffError(
+  text: string,
+): Extract<OllamaSummaryExtract, { kind: "error" }> | undefined {
+  const flags = compactHandoffSectionFlags(text);
+  const missing = OLLAMA_COMPACT_HANDOFF_SECTIONS.filter((name) => !flags[name]);
+  if (missing.length === 0) return undefined;
+  return {
+    kind: "error",
+    code: "compaction_summary_incomplete",
+    message:
+      "Ollama compact summarizer omitted required handoff section(s); resend the full context without compacting",
   };
 }
 

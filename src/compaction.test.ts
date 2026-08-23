@@ -5,6 +5,12 @@ import {
   buildOllamaSummarizerPayload,
   classifyCompactionTrigger,
   COB_OLLAMA_COMPACT_INSTRUCTIONS,
+  compactHandoffSectionFlags,
+  formatCompactSectionFlags,
+  incompleteOllamaCompactHandoffError,
+  ollamaCompactHandoffSkeleton,
+  OLLAMA_COMPACT_HANDOFF_SECTIONS,
+  ollamaSummarizerInstructionCopyCount,
   extractOllamaCompactSummary,
   findCompactionInputItem,
   nativeCompactRequest,
@@ -261,12 +267,18 @@ describe("compaction v2", () => {
     assert.equal(payload.stream, false);
     assert.equal(payload.store, false);
     assert.equal(payload.tools, undefined);
+    assert.equal("reasoning" in payload, false);
     assert.equal(JSON.stringify(payload).includes("compaction_trigger"), false);
     assert.match(JSON.stringify(payload.input), /task/);
-    assert.match(String(payload.instructions), /handoff/);
+    assert.equal(payload.instructions, COB_OLLAMA_COMPACT_INSTRUCTIONS);
+    assert.equal(ollamaSummarizerInstructionCopyCount(payload), 1);
     const first = (payload.input as { role?: string; content?: { text?: string }[] }[])[0];
-    assert.equal(first?.role, "developer");
-    assert.equal(first?.content?.[0]?.text, COB_OLLAMA_COMPACT_INSTRUCTIONS);
+    assert.equal(first?.role, "user");
+    assert.notEqual(first?.content?.[0]?.text, COB_OLLAMA_COMPACT_INSTRUCTIONS);
+    for (const section of OLLAMA_COMPACT_HANDOFF_SECTIONS) {
+      assert.match(COB_OLLAMA_COMPACT_INSTRUCTIONS, new RegExp(section.replace("/", "\\/")));
+    }
+    assert.match(COB_OLLAMA_COMPACT_INSTRUCTIONS, /None/);
     const handoff = ollamaSummaryHandoffItem("keep going");
     assertValidOllamaFollowUpInput(handoff);
     assert.equal(handoff.role, "assistant");
@@ -365,5 +377,79 @@ describe("compaction v2", () => {
     });
     assert.equal(JSON.stringify(payload.input).includes('"type":"item_reference"'), false);
     assert.equal(JSON.stringify(payload.input).includes('"type":"web_search_call"'), false);
+  });
+
+  it("keeps one authoritative summarizer instruction across three history fixtures", () => {
+    const fixtures: unknown[][] = [
+      [{ type: "message", role: "user", content: [{ type: "input_text", text: "short task" }] }],
+      [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "tool task" }] },
+        { type: "function_call", call_id: "c1", name: "shell", arguments: "{\"cmd\":\"ls\"}" },
+        { type: "function_call_output", call_id: "c1", output: "ok" },
+      ],
+      [
+        { type: "message", role: "developer", content: [{ type: "input_text", text: "app context" }] },
+        { type: "reasoning", summary: [{ type: "summary_text", text: "thought" }] },
+        { type: "message", role: "assistant", content: [{ type: "input_text", text: "working" }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+      ],
+    ];
+    for (const history of fixtures) {
+      const payload = buildOllamaSummarizerPayload({
+        compactModel: "ollama/deepseek-v4-flash:0731-cloud",
+        history,
+      });
+      assert.equal(payload.instructions, COB_OLLAMA_COMPACT_INSTRUCTIONS);
+      assert.equal(ollamaSummarizerInstructionCopyCount(payload), 1);
+      assert.equal(JSON.stringify(payload.input).includes(COB_OLLAMA_COMPACT_INSTRUCTIONS), false);
+    }
+  });
+
+  it("records compact section-presence flags without copying summary text", () => {
+    const flags = compactHandoffSectionFlags(
+      [
+        "Goal: finish the bridge",
+        "Constraints: None",
+        "Completed: packed 0.1.7",
+        "Pending: Stage 3",
+        "Decisions: flatten tool history",
+        "Tool state: None",
+        "Verification/evidence: follow-up replay_ratio 0.03",
+      ].join("\n"),
+    );
+    assert.deepEqual(
+      flags,
+      Object.fromEntries(OLLAMA_COMPACT_HANDOFF_SECTIONS.map((name) => [name, true])),
+    );
+    const formatted = formatCompactSectionFlags(flags);
+    assert.equal(
+      formatted,
+      "Goal:1,Constraints:1,Completed:1,Pending:1,Decisions:1,Tool_state:1,Verification_evidence:1",
+    );
+    assert.equal(formatted.includes("finish the bridge"), false);
+    assert.equal(
+      incompleteOllamaCompactHandoffError("plain recap with no headings")?.code,
+      "compaction_summary_incomplete",
+    );
+    assert.equal(incompleteOllamaCompactHandoffError(ollamaCompactHandoffSkeleton()), undefined);
+    assert.deepEqual(compactHandoffSectionFlags("plain recap with no headings"), {
+      Goal: false,
+      Constraints: false,
+      Completed: false,
+      Pending: false,
+      Decisions: false,
+      "Tool state": false,
+      "Verification/evidence": false,
+    });
+  });
+
+  it("compares none and low summarizer effort without changing the omitted default", () => {
+    const history = [{ type: "message", role: "user", content: [{ type: "input_text", text: "task" }] }];
+    const current = buildOllamaSummarizerPayload({ compactModel: "ollama/x", history });
+    const low = buildOllamaSummarizerPayload({ compactModel: "ollama/x", history, effort: "low" });
+    const none = buildOllamaSummarizerPayload({ compactModel: "ollama/x", history, effort: "none" });
+    assert.equal("reasoning" in current, false);
+    assert.deepEqual(low.reasoning, { effort: "low" });
+    assert.deepEqual(none.reasoning, { effort: "none" });
   });
 });

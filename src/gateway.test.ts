@@ -10,7 +10,7 @@ import { listenGateway } from "./gateway.js";
 import { pickForwardHeaders } from "./native.js";
 import { NATIVE_RESPONSES_URL } from "./constants.js";
 import { MAX_RAW_BODY_BYTES } from "./limits.js";
-import { assertValidOllamaFollowUpInput, ollamaFollowUpInputError } from "./compaction.js";
+import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton, ollamaFollowUpInputError } from "./compaction.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./ollama.js";
 import type { CatalogFile } from "./types.js";
 
@@ -731,7 +731,7 @@ describe("gateway", () => {
                 {
                   type: "message",
                   role: "assistant",
-                  content: [{ type: "output_text", text: "handoff: keep going" }],
+                  content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Goal: "keep going" }) }],
                 },
               ],
             }),
@@ -739,7 +739,7 @@ describe("gateway", () => {
           );
         }
         assert.equal(JSON.stringify(seen.body).includes("long task"), false);
-        assert.match(JSON.stringify(seen.body.input), /handoff: keep going/);
+        assert.match(JSON.stringify(seen.body.input), /keep going/);
         assert.match(JSON.stringify(seen.body.input), /continue/);
         return new Response(
           JSON.stringify({
@@ -882,6 +882,123 @@ describe("gateway", () => {
       assert.equal(existsSync(join(stateDir, "compact-archive")), false);
     } finally {
       console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("fails closed on an incomplete handoff skeleton without resending history", async () => {
+    let ollamaHits = 0;
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      nativeFetch: async () => new Response("nope", { status: 500 }),
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response(
+          JSON.stringify({
+            id: "incomplete-sum",
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "plain recap" }] }],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: [
+            { type: "message", role: "user", content: [{ type: "input_text", text: "task" }] },
+            { type: "compaction_trigger" },
+          ],
+        }),
+      });
+      const body = (await response.json()) as {
+        error?: { code?: string; requires_full_context?: boolean };
+      };
+      assert.equal(response.status, 400);
+      assert.equal(body.error?.code, "compaction_summary_incomplete");
+      assert.equal(body.error?.requires_full_context, true);
+      assert.equal(ollamaHits, 1);
+      assert.match(logs.join("\n"), /ollama compact failed code=compaction_summary_incomplete/);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("sends opt-in low summarizer effort without changing the omitted default", async () => {
+    const seen: { body?: Record<string, unknown> } = {};
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-compact-effort-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      stateDir,
+      catalog: {
+        models: TEST_CATALOG.models.map((model) =>
+          model.slug === "ollama/deepseek-v4-flash:cloud"
+            ? {
+                ...model,
+                supported_reasoning_levels: [
+                  { effort: "none" },
+                  { effort: "low" },
+                  { effort: "high" },
+                  { effort: "max" },
+                ],
+              }
+            : model,
+        ),
+      },
+      compaction: { provider: "native", ollamaEffort: "low" },
+      nativeFetch: async () => new Response("nope", { status: 500 }),
+      ollamaFetch: async (_url, init) => {
+        seen.body = JSON.parse(init.body.toString("utf8")) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            id: "sum-low",
+            object: "response",
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Goal: "low effort" }) }],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: [
+            { type: "message", role: "user", content: [{ type: "input_text", text: "task" }] },
+            { type: "compaction_trigger" },
+          ],
+        }),
+      });
+      assert.equal(response.status, 200, await response.text());
+      assert.deepEqual(seen.body?.reasoning, { effort: "low" });
+    } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
@@ -1113,7 +1230,7 @@ describe("gateway", () => {
             id: "sum-sse",
             object: "response",
             status: "completed",
-            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "short handoff" }] }],
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Goal: "short handoff" }) }] }],
           }),
           { status: 200 },
         );
@@ -1164,7 +1281,7 @@ describe("gateway", () => {
             id: "sum-types",
             object: "response",
             status: "completed",
-            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "handoff" }] }],
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Goal: "handoff" }) }] }],
           }),
           { status: 200 },
         );

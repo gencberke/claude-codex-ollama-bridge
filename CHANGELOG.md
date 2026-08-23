@@ -10,6 +10,27 @@ not this file.
 
 ## Unreleased
 
+## 0.1.8 — 2026-08-23
+
+WP7 Stages 2–4 on the 0.1.7 G8 path. Isolated L5 / G11–G17 are still not
+claimed. Defaults stay on the proven G8 effort, 256k cap, and threshold.
+
+- Compact summarizer keeps one top-level instruction and requires the
+  handoff headings (Goal, Constraints, Completed, Pending, Decisions,
+  Tool state, Verification/evidence). `None` is allowed; omission is not.
+  The compact-ok log records section-presence flags, never summary text.
+- An incomplete handoff skeleton returns `compaction_summary_incomplete`
+  and does not resend the full history.
+- `compaction.ollama_effort` accepts `none` / `low` / `high` / `max`.
+  Omit it to keep the G8 wire (`high`).
+- `catalog.advertise_cloud_max_context = true` can expose a verified
+  cloud tag's `max_context_window` without raising the 256k active
+  `context_window`. Local rows stay conservative.
+- `catalog.auto_compact_token_limit` is omitted unless the native
+  skeleton already has the field. Isolated experiment value is `230400`.
+- `catalog.active_context_window` can raise the active cap; it is never
+  inferred from max.
+
 ## 0.1.7 — 2026-08-23
 
 Intermediate patch: isolated WP1–WP6 plus the compact summarizer flatten.

@@ -1,11 +1,14 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
+import { OLLAMA_CATALOG_CONTEXT_CAP } from "./constants.js";
 import type { CobPaths } from "./paths.js";
 
 export type CompactionProvider = "native";
 
 export type OllamaThreadCompaction = "summarize" | "native";
+
+export type OllamaCompactEffort = "none" | "low" | "high" | "max";
 
 export type CompactionPolicy = {
   provider: CompactionProvider;
@@ -15,6 +18,11 @@ export type CompactionPolicy = {
   ollamaThreads?: OllamaThreadCompaction;
   /** Optional dedicated Ollama summarizer slug. Default is the thread model. */
   ollamaModel?: string;
+  /**
+   * Opt-in summarizer effort. Omit to keep the current G8 path (wire `high`).
+   * Isolated Stage 3 compares `none` / `low`; do not change the default without G17.
+   */
+  ollamaEffort?: OllamaCompactEffort;
 };
 
 export type SubagentPolicy = {
@@ -29,6 +37,20 @@ export type CatalogPolicy = {
    * An explicit false in cob.toml remains the escape hatch.
    */
   supportsSearchTool: boolean;
+  /**
+   * When true, verified cloud tags advertise their tag `context_length` as
+   * `max_context_window` without raising the active `context_window`. Default false.
+   */
+  advertiseCloudMaxContext?: boolean;
+  /**
+   * Active catalog cap. Default 256000. Opt-in raise; never inferred from max.
+   */
+  activeContextWindow?: number;
+  /**
+   * Isolated compact-threshold experiment. Omitted from rows unless set and
+   * the native skeleton already advertises `auto_compact_token_limit`.
+   */
+  autoCompactTokenLimit?: number;
 };
 
 export type CobFileConfig = {
@@ -92,14 +114,43 @@ export function parseOllamaCompactModel(value: string | undefined): string | und
   return trimmed;
 }
 
+export function parseOllamaCompactEffort(value: string | undefined): OllamaCompactEffort | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed === "none" || trimmed === "low" || trimmed === "high" || trimmed === "max") return trimmed;
+  throw new CobConfigError(
+    "invalid_compaction_ollama_effort",
+    `invalid compaction.ollama_effort "${trimmed}" (none, low, high, or max). medium/xhigh are not compact experiments.`,
+  );
+}
+
+export function parsePositiveInt(value: string | undefined, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (!/^[0-9]+$/.test(trimmed)) {
+    throw new CobConfigError("invalid_cob_toml", `${field} must be a positive integer`);
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new CobConfigError("invalid_cob_toml", `${field} must be a positive integer`);
+  }
+  return parsed;
+}
+
 export function parseCobToml(text: string): CobFileConfig {
   let section = "";
   let provider: CompactionProvider | undefined;
   let model: string | undefined;
   let ollamaThreads: OllamaThreadCompaction | undefined;
   let ollamaModel: string | undefined;
+  let ollamaEffort: OllamaCompactEffort | undefined;
   let subagentModels: string[] | undefined;
   let supportsSearchTool: boolean | undefined;
+  let advertiseCloudMaxContext: boolean | undefined;
+  let activeContextWindow: number | undefined;
+  let autoCompactTokenLimit: number | undefined;
   let arrayKey: string | undefined;
   let arrayItems: string[] = [];
 
@@ -151,9 +202,19 @@ export function parseCobToml(text: string): CobFileConfig {
     if (section === "compaction" && key === "model" && value.length > 0) model = value;
     if (section === "compaction" && key === "ollama_threads") ollamaThreads = parseOllamaThreadCompaction(value);
     if (section === "compaction" && key === "ollama_model") ollamaModel = parseOllamaCompactModel(value);
+    if (section === "compaction" && key === "ollama_effort") ollamaEffort = parseOllamaCompactEffort(value);
     if (section === "subagents" && key === "models") subagentModels = [value];
     if (section === "catalog" && key === "supports_search_tool") {
       supportsSearchTool = parseTomlBool(value, "catalog.supports_search_tool");
+    }
+    if (section === "catalog" && key === "advertise_cloud_max_context") {
+      advertiseCloudMaxContext = parseTomlBool(value, "catalog.advertise_cloud_max_context");
+    }
+    if (section === "catalog" && key === "active_context_window") {
+      activeContextWindow = parsePositiveInt(value, "catalog.active_context_window");
+    }
+    if (section === "catalog" && key === "auto_compact_token_limit") {
+      autoCompactTokenLimit = parsePositiveInt(value, "catalog.auto_compact_token_limit");
     }
   }
   if (arrayKey) {
@@ -166,9 +227,15 @@ export function parseCobToml(text: string): CobFileConfig {
       model,
       ollamaThreads: ollamaThreads ?? "summarize",
       ollamaModel,
+      ollamaEffort,
     }),
     subagents: subagentModels ? { models: subagentModels } : {},
-    catalog: { supportsSearchTool: supportsSearchTool ?? DEFAULT_CATALOG_POLICY.supportsSearchTool },
+    catalog: catalogPolicy({
+      supportsSearchTool: supportsSearchTool ?? DEFAULT_CATALOG_POLICY.supportsSearchTool,
+      advertiseCloudMaxContext,
+      activeContextWindow,
+      autoCompactTokenLimit,
+    }),
   };
 }
 
@@ -186,6 +253,9 @@ export function renderCobToml(config: CobFileConfig): string {
   if (config.compaction.ollamaModel && config.compaction.ollamaModel.length > 0) {
     lines.push(`ollama_model = ${tomlString(config.compaction.ollamaModel)}`);
   }
+  if (config.compaction.ollamaEffort) {
+    lines.push(`ollama_effort = ${tomlString(config.compaction.ollamaEffort)}`);
+  }
   lines.push("", "[subagents]", "models = [");
   for (const slug of models) {
     lines.push(`  ${tomlString(slug)},`);
@@ -196,8 +266,20 @@ export function renderCobToml(config: CobFileConfig): string {
     "[catalog]",
     "# Default true. Set false to send the full tool list on every Ollama turn.",
     `supports_search_tool = ${config.catalog?.supportsSearchTool !== false ? "true" : "false"}`,
-    "",
   );
+  if (config.catalog?.advertiseCloudMaxContext === true) {
+    lines.push("advertise_cloud_max_context = true");
+  }
+  if (
+    typeof config.catalog?.activeContextWindow === "number" &&
+    config.catalog.activeContextWindow !== OLLAMA_CATALOG_CONTEXT_CAP
+  ) {
+    lines.push(`active_context_window = ${config.catalog.activeContextWindow}`);
+  }
+  if (typeof config.catalog?.autoCompactTokenLimit === "number") {
+    lines.push(`auto_compact_token_limit = ${config.catalog.autoCompactTokenLimit}`);
+  }
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -221,8 +303,12 @@ export function resolveCobConfig(opts: {
   model?: string;
   ollamaThreads?: string;
   ollamaModel?: string;
+  ollamaEffort?: string;
   subagentModels?: string[];
   supportsSearchTool?: boolean;
+  advertiseCloudMaxContext?: boolean;
+  activeContextWindow?: number;
+  autoCompactTokenLimit?: number;
   env?: NodeJS.ProcessEnv;
 }): CobFileConfig {
   const env = opts.env ?? process.env;
@@ -241,6 +327,10 @@ export function resolveCobConfig(opts: {
   const ollamaModel = parseOllamaCompactModel(
     firstNonEmpty(opts.ollamaModel, env.COB_COMPACTION_OLLAMA_MODEL, file?.compaction.ollamaModel),
   );
+  const ollamaEffort =
+    parseOllamaCompactEffort(opts.ollamaEffort) ??
+    parseOllamaCompactEffort(env.COB_COMPACTION_OLLAMA_EFFORT) ??
+    file?.compaction.ollamaEffort;
   const subagentModels =
     opts.subagentModels ?? parseSubagentEnv(env.COB_SUBAGENT_MODELS) ?? file?.subagents.models;
   const supportsSearchTool =
@@ -248,10 +338,28 @@ export function resolveCobConfig(opts: {
     parseEnvBool(env.COB_SUPPORTS_SEARCH_TOOL) ??
     file?.catalog?.supportsSearchTool ??
     DEFAULT_CATALOG_POLICY.supportsSearchTool;
+  const advertiseCloudMaxContext =
+    opts.advertiseCloudMaxContext ??
+    parseEnvBool(env.COB_ADVERTISE_CLOUD_MAX_CONTEXT) ??
+    file?.catalog?.advertiseCloudMaxContext ??
+    false;
+  const activeContextWindow =
+    opts.activeContextWindow ??
+    parsePositiveInt(env.COB_ACTIVE_CONTEXT_WINDOW, "COB_ACTIVE_CONTEXT_WINDOW") ??
+    file?.catalog?.activeContextWindow;
+  const autoCompactTokenLimit =
+    opts.autoCompactTokenLimit ??
+    parsePositiveInt(env.COB_AUTO_COMPACT_TOKEN_LIMIT, "COB_AUTO_COMPACT_TOKEN_LIMIT") ??
+    file?.catalog?.autoCompactTokenLimit;
   return {
-    compaction: compactionPolicy({ provider, model, ollamaThreads, ollamaModel }),
+    compaction: compactionPolicy({ provider, model, ollamaThreads, ollamaModel, ollamaEffort }),
     subagents: subagentModels ? { models: subagentModels } : {},
-    catalog: { supportsSearchTool },
+    catalog: catalogPolicy({
+      supportsSearchTool,
+      advertiseCloudMaxContext,
+      activeContextWindow,
+      autoCompactTokenLimit,
+    }),
   };
 }
 
@@ -318,12 +426,28 @@ function compactionPolicy(opts: {
   model?: string;
   ollamaThreads: OllamaThreadCompaction;
   ollamaModel?: string;
+  ollamaEffort?: OllamaCompactEffort;
 }): CompactionPolicy {
   return {
     provider: opts.provider,
     ollamaThreads: opts.ollamaThreads,
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.ollamaModel ? { ollamaModel: opts.ollamaModel } : {}),
+    ...(opts.ollamaEffort ? { ollamaEffort: opts.ollamaEffort } : {}),
+  };
+}
+
+function catalogPolicy(opts: {
+  supportsSearchTool: boolean;
+  advertiseCloudMaxContext?: boolean;
+  activeContextWindow?: number;
+  autoCompactTokenLimit?: number;
+}): CatalogPolicy {
+  return {
+    supportsSearchTool: opts.supportsSearchTool,
+    ...(opts.advertiseCloudMaxContext === true ? { advertiseCloudMaxContext: true } : {}),
+    ...(typeof opts.activeContextWindow === "number" ? { activeContextWindow: opts.activeContextWindow } : {}),
+    ...(typeof opts.autoCompactTokenLimit === "number" ? { autoCompactTokenLimit: opts.autoCompactTokenLimit } : {}),
   };
 }
 

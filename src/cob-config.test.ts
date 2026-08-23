@@ -7,6 +7,7 @@ import {
   CobConfigError,
   parseCobToml,
   parseCompactionProvider,
+  parseOllamaCompactEffort,
   parseOllamaCompactModel,
   parseOllamaThreadCompaction,
   renderCobToml,
@@ -63,6 +64,35 @@ ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
     assert.throws(
       () => parseOllamaThreadCompaction("ollama"),
       (error: unknown) => error instanceof CobConfigError && error.code === "invalid_compaction_ollama_threads",
+    );
+  });
+
+  it("parses optional compact effort and catalog context experiments without changing defaults", () => {
+    const defaults = resolveCobConfig({ env: {} });
+    assert.equal(defaults.compaction.ollamaEffort, undefined);
+    assert.equal(defaults.catalog?.advertiseCloudMaxContext, undefined);
+    assert.equal(defaults.catalog?.activeContextWindow, undefined);
+    assert.equal(defaults.catalog?.autoCompactTokenLimit, undefined);
+    const parsed = parseCobToml(`
+[compaction]
+ollama_effort = "low"
+
+[catalog]
+advertise_cloud_max_context = true
+active_context_window = 256000
+auto_compact_token_limit = 230400
+`);
+    assert.equal(parsed.compaction.ollamaEffort, "low");
+    assert.equal(parsed.catalog?.advertiseCloudMaxContext, true);
+    assert.equal(parsed.catalog?.activeContextWindow, 256000);
+    assert.equal(parsed.catalog?.autoCompactTokenLimit, 230400);
+    assert.throws(
+      () => parseOllamaCompactEffort("medium"),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_compaction_ollama_effort",
+    );
+    assert.throws(
+      () => parseOllamaCompactEffort("xhigh"),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_compaction_ollama_effort",
     );
   });
 

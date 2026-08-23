@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ollamaChildCatalogFields, ollamaChildProfile, evidenceFromOllamaTag } from "./capabilities.js";
+import {
+  nativeRowAdvertisesAutoCompactTokenLimit,
+  ollamaChildCatalogFields,
+  ollamaChildProfile,
+  evidenceFromOllamaTag,
+} from "./capabilities.js";
 
 describe("ollama child capability profile", () => {
   it("does not infer parallel tools, apply_patch, or shell from the tools tag", () => {
@@ -92,5 +97,27 @@ describe("ollama child capability profile", () => {
       supportsSearchTool: true,
     });
     assert.equal(fields.supports_search_tool, true);
+  });
+
+  it("splits max from active and omits auto_compact_token_limit unless the skeleton already has it", () => {
+    const without = ollamaChildCatalogFields({
+      evidence: { tools: true, thinking: true, vision: false },
+      skeleton: {},
+      contextWindow: 256000,
+      maxContextWindow: 1048576,
+      autoCompactTokenLimit: 230400,
+    });
+    assert.equal(without.context_window, 256000);
+    assert.equal(without.max_context_window, 1048576);
+    assert.equal("auto_compact_token_limit" in without, false);
+    assert.equal(nativeRowAdvertisesAutoCompactTokenLimit({}), false);
+    assert.equal(nativeRowAdvertisesAutoCompactTokenLimit({ auto_compact_token_limit: 180000 }), true);
+    const withField = ollamaChildCatalogFields({
+      evidence: { tools: true, thinking: true, vision: false },
+      skeleton: { auto_compact_token_limit: 180000 },
+      contextWindow: 256000,
+      autoCompactTokenLimit: 230400,
+    });
+    assert.equal(withField.auto_compact_token_limit, 230400);
   });
 });

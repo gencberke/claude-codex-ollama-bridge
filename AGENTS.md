@@ -84,7 +84,7 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Current cut is cob **0.1.7**. Future app updates can still drop overlay or hide
+child on cob 0.1.6). Current cut is cob **0.1.8**. Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;
 `cob start` brings the gateway back.

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { ConversationStateStore, type PublishCheckpoint } from "./conversation-state.js";
 import { listenGateway } from "./gateway.js";
+import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./compaction.js";
 import type { CatalogFile, JsonObject } from "./types.js";
 
 const CATALOG: CatalogFile = {
@@ -149,7 +150,7 @@ describe("gateway durable Ollama state", () => {
                 {
                   type: "message",
                   role: "assistant",
-                  content: [{ type: "output_text", text: "handoff after one" }],
+                  content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Completed: "handoff after one" }) }],
                 },
               ],
             }),
@@ -178,7 +179,10 @@ describe("gateway durable Ollama state", () => {
       const root = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: "ollama/test", input: message("user-1", "one") }),
+        body: JSON.stringify({
+          model: "ollama/test",
+          input: message("user-1", `one ${"x".repeat(4000)}`),
+        }),
       });
       const rootText = await root.text();
       assert.equal(root.status, 200, rootText);
@@ -224,9 +228,11 @@ describe("gateway durable Ollama state", () => {
     assert.deepEqual(Object.keys(summarizer).sort(), ["input", "instructions", "model", "stream"]);
     assert.equal("store" in summarizer, false);
     assert.equal("previous_response_id" in summarizer, false);
+    assert.equal(ollamaSummarizerInstructionCopyCount(summarizer), 1);
+    assert.equal(JSON.stringify(followBody).includes("x".repeat(32)), false);
     const preBytes = Buffer.byteLength(JSON.stringify(summarizer.input), "utf8");
     const postBytes = Buffer.byteLength(JSON.stringify(followBody?.input), "utf8");
-    assert.ok(postBytes < preBytes, `isolated replay_ratio=${postBytes / preBytes}`);
+    assert.ok(postBytes < preBytes / 2, `isolated replay_ratio=${postBytes / preBytes}`);
   });
 
   it("prefers previous_response_id when a matching compaction item is also present", async () => {
@@ -253,7 +259,7 @@ describe("gateway durable Ollama state", () => {
                 {
                   type: "message",
                   role: "assistant",
-                  content: [{ type: "output_text", text: "handoff after first turn" }],
+                  content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Completed: "handoff after first turn" }) }],
                 },
               ],
             }),
@@ -364,7 +370,7 @@ describe("gateway durable Ollama state", () => {
                 {
                   type: "message",
                   role: "assistant",
-                  content: [{ type: "output_text", text: `handoff ${ollamaCount}` }],
+                  content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Completed: `handoff ${ollamaCount}` }) }],
                 },
               ],
             }),

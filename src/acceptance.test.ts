@@ -10,7 +10,7 @@ import { loadBundledCatalog, loadOllamaTags, mergeCatalog, serializeCatalog } fr
 import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL } from "./constants.js";
 import { listenGateway } from "./gateway.js";
 import { isForbiddenOllamaHeader } from "./ollama.js";
-import { assertValidOllamaFollowUpInput } from "./compaction.js";
+import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton } from "./compaction.js";
 import { writeCobProfile } from "./profile.js";
 import { resolvePaths } from "./paths.js";
 import { ollamaUpstreamModel } from "./route.js";
@@ -151,7 +151,7 @@ describe("acceptance matrix (mock)", () => {
               id: "ollama-sum-1",
               object: "response",
               status: "completed",
-              output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "handoff summary" }] }],
+              output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Goal: "handoff summary" }) }] }],
             }),
             { status: 200 },
           );

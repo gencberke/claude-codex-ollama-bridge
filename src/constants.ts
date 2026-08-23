@@ -15,6 +15,9 @@ export const FEATURED_NATIVE_SLUGS = [
 /** Advertised Codex window for Ollama rows. Not Ollama n_ctx. */
 export const OLLAMA_CATALOG_CONTEXT_CAP = 256_000;
 
+/** Isolated Stage 4 compact-threshold experiment: 90% of the 256k active cap. */
+export const OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT = 230_400;
+
 /** Prefer known ChatGPT-account compaction-capable native slugs when present. */
 export const PREFERRED_NATIVE_COMPACT_SLUGS = [
   "gpt-5.6-luna",
@@ -65,6 +68,7 @@ export const OLLAMA_CATALOG_FIELDS = [
   "context_window",
   "max_context_window",
   "effective_context_window_percent",
+  "auto_compact_token_limit",
   "input_modalities",
   "supported_reasoning_levels",
   "default_reasoning_level",

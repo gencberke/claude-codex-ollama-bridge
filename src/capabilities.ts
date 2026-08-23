@@ -61,18 +61,25 @@ export function ollamaChildProfile(evidence: OllamaCapabilityEvidence): OllamaCh
  * with cob-owned defaults; unsupported capabilities are not advertised.
  * `tools` does not imply parallel calls, apply_patch, shell, or native verbosity.
  */
+export function nativeRowAdvertisesAutoCompactTokenLimit(skeleton: JsonObject): boolean {
+  return typeof skeleton.auto_compact_token_limit === "number";
+}
+
 export function ollamaChildCatalogFields(opts: {
   evidence: OllamaCapabilityEvidence;
   skeleton: JsonObject;
   contextWindow: number;
+  maxContextWindow?: number;
   supportsSearchTool?: boolean;
+  autoCompactTokenLimit?: number;
 }): JsonObject {
   const profile = ollamaChildProfile(opts.evidence);
   const levels = reasoningLevelsForEvidence(opts.skeleton, profile.supportsReasoning);
+  const maxContextWindow = opts.maxContextWindow ?? opts.contextWindow;
   const fields: JsonObject = {
     supported_in_api: true,
     context_window: opts.contextWindow,
-    max_context_window: opts.contextWindow,
+    max_context_window: maxContextWindow,
     effective_context_window_percent:
       typeof opts.skeleton.effective_context_window_percent === "number"
         ? opts.skeleton.effective_context_window_percent
@@ -95,6 +102,12 @@ export function ollamaChildCatalogFields(opts: {
     fields.default_reasoning_level =
       levels.find((level) => level.effort === DEFAULT_OLLAMA_REASONING_EFFORT)?.effort ??
       levels[0]!.effort;
+  }
+  if (
+    typeof opts.autoCompactTokenLimit === "number" &&
+    nativeRowAdvertisesAutoCompactTokenLimit(opts.skeleton)
+  ) {
+    fields.auto_compact_token_limit = opts.autoCompactTokenLimit;
   }
   return fields;
 }

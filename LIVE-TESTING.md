@@ -121,17 +121,26 @@ Pass: G6–G8. Capture:
 - whether Codex sent `previous_response_id` or full `input` on follow-up
 
 Desktop 0731 parent `/compact` on this machine (2026-08-19) recorded G7
-(summarizer + `cob1.` envelope + replacement history). Isolated L5 and G8
-`replay_ratio` on the next turn remain the live shrink gate.
+(summarizer + `cob1.` envelope + replacement history). Isolated L5 remains
+an unrun harness.
 
 2026-08-23 20:15 Desktop auto-compact on 0731 (live cob 0.1.6) is a named
 G8 failure, not a pass: inbound `compaction_trigger` after `input_n=365`
 and 146 tool pairs (decoded ~1.14MB); summarizer outbound `tools_n=0`
 `wire_bytes=1121005`; model returned a tool call; cob
 `compaction_summary_invalid` / `requires_full_context`; no envelope and no
-follow-up. Record `pre_compact_input_bytes`, summarizer `tools_n`, extract
-code, and whether a checkpoint was published. Do not change prompt, effort,
-256k cap, or threshold on the next unchanged-path retry.
+follow-up.
+
+2026-08-23 20:29 Desktop auto-compact on the same 0731 thread (live cob
+0.1.7, pid 49194, `cob_cmp_6bebd81b54f9377ddb3de5bcac3647ff`) is the G8
+pass: flatten summarizer `wire_bytes=266304` `tools_n=0`; Codex-facing
+`cob1.` compaction item; first continuation `b_input=32885` / `input_n=7`
+(`replay_ratio ≈ 0.029` vs trigger `b_input=1121805`); next Ollama wire
+`48206` vs last pre-compact wire `1167851` (`≈ 0.041`); later turns kept
+the compaction item and grew new tool pairs. Upstream exact tokens were
+not logged. Do not treat this as G17. cob **0.1.8** packs Stage 3/4 as
+opt-in toggles; the live default stays on that G8 effort, 256k cap, and
+threshold until G17.
 
 8k is a test lie. Production catalog cap is **256k** (0.1.2:
 `min(tag context_length, 256000)`), not 8k and not unbounded 1M. Desktop’s
@@ -251,6 +260,33 @@ version. Record median and p95 wall time, output hash, and fast-path hit
 rate. Keep the change only if output is identical and the improvement is
 outside run-to-run noise. Logs may record hit counts, never event or tool
 contents. If there is no measurable live claim, mark G15 not applicable.
+
+## G17 — compact quality / context policy
+
+Same long-task 0731 corpus for baseline and candidate. Do not claim G17 from
+the G8 shrink alone. Isolated Stages 3–4 stay off the live default until this
+gate: omit `ollama_effort`, keep the 256k active cap, do not advertise cloud
+max, do not emit `auto_compact_token_limit`.
+
+Compare, on the same thread shape:
+
+1. Baseline: current G8 path (omitted effort → wire `high`, 256k/256k).
+2. Candidate A: `compaction.ollama_effort = "low"`.
+3. Candidate B: `compaction.ollama_effort = "none"` only if 0731 accepts it.
+4. Candidate C (separate toggle): `catalog.advertise_cloud_max_context = true`
+   with active `context_window` still 256000.
+5. Candidate D (separate toggle): isolated `auto_compact_token_limit = 230400`
+   only if Desktop and PATH both accept the field.
+
+Record latency, inbound/outbound bytes, exact tokens when Ollama supplies
+them, section-presence flags, first continuation size, second continuation,
+and task success (constraints, pending work, tool state). Do not log summary
+text. An incomplete skeleton must fail closed with
+`compaction_summary_incomplete` / `requires_full_context` and must not
+trigger a second full-history summarizer call.
+
+Pass only if the candidate preserves or improves task quality and does not
+create an unexplained cost regression. Revert the failing toggle only.
 
 ## What static tests are for
 

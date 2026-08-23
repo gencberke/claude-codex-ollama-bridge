@@ -7,7 +7,8 @@ gold standards stay in [LIVE-TESTING.md](./LIVE-TESTING.md). Agents start at
 
 Priority: **stability and throughput** of the working Desktop+cob path.
 Picker polish, native GPT, GPT→0731 V1 spawn, and the 26.818 app hop are
-recorded below. Next live gap is G8 compact shrink.
+recorded below. Next live gaps are G11–G16 traces and G17 (Stage 3/4 opt-ins).
+Live G8 compact shrink passed on cob **0.1.7**. Current cut is cob **0.1.8**.
 
 **This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
 `codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
@@ -22,7 +23,7 @@ native slugs to “survive” an update.
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | loopback `127.0.0.1:18790` (live global **0.1.7**, pid **49194**), Ollama-thread summarize compact. Dev isolate: `cob start --dev` → `~/.codex-cob-dev` port **18791**. |
+| cob gateway | loopback `127.0.0.1:18790` (live global **0.1.8** after this cut), Ollama-thread summarize compact. Dev isolate: `cob start --dev` → `~/.codex-cob-dev` port **18791**. |
 | Codex CLI | 0.147.0 — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | **26.818.41509** (WP0 2026-08-23), bundled `codex-cli 0.149.0-alpha.4.1`. Earlier gold hop: 26.818.22352 / alpha.21 |
 | Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). 0.32.14→0.32.15 on 2026-08-21; cob unchanged. |
@@ -90,11 +91,29 @@ revert a user-owned Desktop trial.
   Checkpoint `provenance.source = "ollama-summary"`, `isCompactionReplacement`,
   history length 1, Codex-facing `encrypted_content` starts `cob1.1.`. Archive
   under `cob-state/compact-archive/`. Post-compact 0731 turns ran (same
-  thread, ~17:29). Isolated L5 and G8 `replay_ratio` are still open: Codex→cob
-  bodies stayed tens of KB (tools dominate). The stored handoff on this run
-  started as source-like text, not a conversation recap — summarizer quality,
-  not envelope transport. `@thread` / `read_thread` is a Codex tool gap on the
+  thread, ~17:29). The stored handoff on that 2026-08-19 run started as
+  source-like text, not a conversation recap — summarizer quality, not
+  envelope transport. `@thread` / `read_thread` is a Codex tool gap on the
   Ollama parent; cob compact does not load other Desktop threads.
+- **Desktop auto-compact follow-up shrink (G8):** 2026-08-23 20:29 local,
+  live cob **0.1.7** pid **49194**, 0731, checkpoint
+  `cob_cmp_6bebd81b54f9377ddb3de5bcac3647ff`. Last pre-compact turn
+  `b_input=1152853` / `input_n=360` / `wire_bytes=1167851`. Trigger inbound
+  `b_input=1121805` / `input_n=365` / 146 tool pairs. 0.1.6 same-thread
+  retries still logged `wire_bytes=1121005` `tools_n=0` then fail-closed.
+  0.1.7 flatten summarizer `wire_bytes=266304` `tools_n=0`. Codex-facing
+  archive is SSE with `cob1.` on `output_item.added` / `done` /
+  `response.completed`; no Fernet / `ocx1`. Checkpoint
+  `provenance.source=ollama-summary`, `isCompactionReplacement`, replacement
+  history length 1, `requestInput` ~1.12MB (archive only; not replayed).
+  First continuation inbound `b_input=32885` / `input_n=7` /
+  `input_by=compaction:1,message:developer:1,message:user:5`. Next Ollama
+  wire `wire_bytes=48206` `tools_n=17`, then later turns kept `compaction:1`
+  and grew new tool pairs. `replay_ratio` `32885/1121805 ≈ 0.029` (inbound
+  input) and `48206/1167851 ≈ 0.041` (first logged follow-up wire). Upstream
+  exact tokens were omitted (`ollama usage` line absent). User continued
+  after compact. Isolated L5 harness still unrun. G17 quality is not this
+  gate.
 - **Catalog without `--profile`:** once root `model_catalog_json` is set,
   `codex debug models` lists the Ollama rows.
 - **0.1.3 live gateway (this machine):** global `cob 0.1.3` on `:18790`.
@@ -134,16 +153,11 @@ Desktop may persist picker choice back into root `config.toml` (`model =`,
   (LIVE-TESTING G3) for this same GPT→0731 topology. Desktop cob logs already
   show G1 + G2 + child tools and no encrypted Ollama reject. G7–G8 on the
   **child** thread were not this run.
-- **G8 follow-up shrink** (`replay_ratio << 1` on the Ollama `/v1/responses`
-  cob emits). **2026-08-23 20:15 Desktop auto-compact** on 0731 (live cob
-  `0.1.6`, thread `edd` long-read goal) failed before a handoff: Codex sent
-  `compaction_trigger` on `input_n=365` (`function_call:146` /
-  `function_call_output:146`, decoded ~1.14MB, `effort=max`). The summarizer
-  wire was correct (`tools_n=0`, `wire_bytes=1121005`, no trigger). 0731
-  still emitted a tool call; cob returned
-  `compaction_summary_invalid` / `requires_full_context` and Desktop stalled
-  with that message. No envelope, no follow-up, no `replay_ratio`. Isolated
-  L5 harness still unrun. Native GPT compact stays ChatGPT passthrough.
+- **G8 follow-up shrink** is recorded on live cob **0.1.7** (see Proven). The
+  earlier **2026-08-23 20:15** 0.1.6 auto-compact on 0731 is a named
+  extract failure (`tools_n=0`, `wire_bytes=1121005`, tool call, no
+  envelope). Isolated L5 harness still unrun. Native GPT compact stays
+  ChatGPT passthrough.
 - **Ollama parent → GPT child** — out of product; still unsupported.
 
 ## Desktop trial (this machine)
@@ -218,33 +232,29 @@ denominator. Gateway zstd bodies match the split (~17–19 KB native vs ~50 KB
 
 ## Next live work
 
-0. **G8 on the compacted 0731 thread** — cob **0.1.7** is installed
-   globally (pid **49194**, health ok; recut same evening to drop Codex
-   `client_metadata` / `stream_options`). Live `cob status` is `unknown`:
-   PATH Codex 0.147.0 rejects the Desktop 0.149 candidate (native row
-   missing `supports_parallel_tool_calls`). cob kept the last catalog and
-   wrote no sidecar. Overlay still `ok`. Do not repair native rows. G8 is
-   still the WP7 broker, now with a named failure stage: **summarizer
-   extract**, not tools leak or envelope leak.
-   2026-08-23 20:15 auto-compact: inbound `compaction_trigger` after ~1.14MB
-   / 146 tool pairs; outbound summarizer `tools_n=0`; 0731 called a tool;
-   cob refused the handoff. cob **0.1.7** flattens those tool items to notes
-   and accepts mixed text+tool output. Prompt, effort, 256k cap, and
-   threshold are unchanged. Isolated L5 still useful as a recorded harness.
-   Native GPT compact stays ChatGPT passthrough. WP0 2026-08-23 evening:
-   Desktop is now `26.818.41509` / bundled `0.149.0-alpha.4.1`. Root-config
-   SHA `1c4bacffddc1679d11f1c8b8c3623f0876eb1dd577936f1517f7a9ce6c809839`
-   was recorded and not written by cob. A later same-evening read-only check
+0. **G17 on WP7 Stages 3–4** — live G8 passed on cob **0.1.7** (20:29
+   flatten handoff + follow-up shrink). cob **0.1.8** packs Stages 2–4.
+   Defaults stay on the G8 path: omitted summarizer effort (wire `high`),
+   256k active cap, no cloud max advertisement, no
+   `auto_compact_token_limit`. Incomplete skeletons fail closed
+   (`compaction_summary_incomplete`) without resending history. Isolated
+   L5 still useful as a recorded harness.
+   Native GPT compact stays ChatGPT passthrough.
+   Live `cob status` is `unknown`: PATH Codex 0.147.0 rejects the Desktop
+   0.149 candidate (native row missing `supports_parallel_tool_calls`). cob
+   kept the last catalog and wrote no sidecar. Overlay still `ok`. Do not
+   repair native rows. WP0 2026-08-23 evening: Desktop `26.818.41509` /
+   bundled `0.149.0-alpha.4.1`. Root-config SHA
+   `1c4bacffddc1679d11f1c8b8c3623f0876eb1dd577936f1517f7a9ce6c809839` was
+   recorded and not written by cob. A later same-evening read-only check
    saw `996771deaf2f8aa28ce8c24ff505ed72d70ea53f0c9e2b978fa8e49c3f93147c`
    after the 0731 auto-compact stall (Desktop/user rewrite).
 1. **G11 catalog provenance / G12 search default / G13 Ollama boundary /
-   G14 timeouts / G15 hot-path** — shipped in cob **0.1.7** as isolated
-   coverage. Search defaults on for new/missing cob.toml; existing explicit
-   false is preserved. Live-proven only after the G11–G16 procedures in
-   LIVE-TESTING. G17/WP7 stays blocked on live G8 compact shrink.
-   Research on 2026-08-23 saw Desktop `26.818.41509` / bundled
-   `0.149.0-alpha.4.1` vs this file's 26.818.22352 / alpha.21 snapshot;
-   refresh WP0 before calling those gates shipped.
+   G14 timeouts / G15 hot-path / G16 integrity** — shipped in cob **0.1.7**
+   as isolated coverage and remain in **0.1.8**. Search defaults on for new/missing cob.toml;
+   existing explicit false is preserved. Live-proven only after the
+   G11–G16 procedures in LIVE-TESTING. G17 compares Stage 2+ candidates on
+   the same long-task corpus; do not claim it from the G8 shrink alone.
 2. **The next Desktop/Codex update** — re-verify picker + 0731 + spawn, or
    `cob status` explains the break. Do not pack cob for an app update that
    already kept overlay.

@@ -47,8 +47,8 @@ Desktop keeps talking to whatever process already bound that port.
 # From the checkout, if a workspace cob still owns ~/.codex:
 node dist/cli.js stop --live-home
 
-npm install -g ./codex-ollama-bridge-0.1.7.tgz   # use the version you packed
-cob version    # expect: cob 0.1.7 (global)
+npm install -g ./codex-ollama-bridge-0.1.8.tgz   # use the version you packed
+cob version    # expect: cob 0.1.8 (global)
 cob start
 cob status     # gateway health ok; desktop overlay ok or ready; catalog provenance fresh
 ```

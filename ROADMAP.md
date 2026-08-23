@@ -1,8 +1,8 @@
 # Roadmap — implementation plan
 
 **Date:** 2026-08-23
-**Status:** cob 0.1.7 packs isolated WP1–WP6 plus summarizer flatten; WP7 is blocked on live G8
-**Next live package:** G8 on installed 0.1.7 (handoff + shrink), then WP7; G11–G16 still need live traces
+**Status:** cob 0.1.8 packs isolated WP1–WP7; live G8 is on 0.1.7
+**Next live package:** G11–G16 traces; G17 on the same corpus (effort / max / threshold stay opt-in)
 
 This document is the implementation contract for the next development cycle.
 It replaces the earlier proposal list with decisions verified against the current
@@ -53,16 +53,17 @@ and cob did not write it. A later read-only check the same evening saw SHA
   `cob-catalog.meta.json` sidecar, so provenance is unknown to unreleased WP1.
 - Live `cob status` first line was `cob: ok` (installed 0.1.6 cannot emit
   `stale` / `unknown`). Overlay still `ok`. Isolated `--dev` home was absent.
-- Isolated merge gate after WP1–WP6 plus the G8 tool-call fail-closed
-  lock and remaining isolated fixtures: `npx tsc --noEmit` and `npm test`
-  (284 passed, 0 failed, 3 skipped).
-- The highest-value unresolved live proof remains current-build G8 compact
-  shrink. **2026-08-23 20:15** identified the failure stage: after a correct
-  no-tools summarizer request (`tools_n=0`, `wire_bytes=1121005`) on a
-  0731 auto-compact (`input_n=365`, 146 tool pairs, decoded ~1.14MB), the
-  model called a tool and cob fail-closed with `compaction_summary_invalid`
-  / `requires_full_context`. No handoff, no follow-up, no `replay_ratio`.
-  Mock coverage is not a substitute for a later successful shrink trace.
+- Isolated merge gate after WP1–WP6, the G8 flatten lock, and WP7 Stages
+  2–4 fixtures: `npx tsc --noEmit` and `npm test` (292 passed, 0 failed,
+  6 skipped).
+- Live G8 compact shrink passed on cob **0.1.7** at **2026-08-23 20:29**
+  after the 20:15 0.1.6 extract failure. Flatten summarizer
+  `wire_bytes=266304` `tools_n=0`; first continuation `b_input=32885` /
+  `input_n=7`; `replay_ratio ≈ 0.029`. Upstream exact tokens were omitted.
+  Isolated L5 and G11–G17 remain open. cob **0.1.8** packs WP7 Stages
+  2–4. Stage 3/4 defaults stay on the G8 path: summarizer effort omitted
+  (wire `high`), active catalog cap 256k, no cloud max advertisement, no
+  `auto_compact_token_limit`.
 
 This version skew is not proof of a current picker failure. It is proof that the
 catalog's producer and provenance are currently implicit, so a future update can
@@ -80,8 +81,8 @@ Isolated WP1–WP6 are in the working tree. The remaining live-proof points:
 - Catalog file-identity cache, one-stringify metrics, and SSE reference-equality
   passthrough are isolated-only. G15 is not a live claim.
 - Checkpoint identity is recomputed on read. G16 is unrun.
-- G8 failed at summarizer extract on 2026-08-23 (tool call after `tools_n=0`).
-  WP7 Stages 2–4 stay blocked.
+- G8 passed on installed 0.1.7 (2026-08-23 20:29). WP7 Stages 2–4 are
+  packed in cob **0.1.8**. G17 remains the live acceptance gate.
 
 ## Upstream facts that constrain the plan
 
@@ -156,7 +157,7 @@ Every work package must preserve these rules:
 | Release `[DONE]` before state publication | **Reject** | A visible completed response must already be continuable. |
 | Persist a cross-request checkpoint cache | **Defer** | It can hide external tampering; reuse within one operation first. |
 | Copy-on-write SSE rewriting | **Do after protocol tests** | It removes serialization work only when strict no-op equivalence is proven. |
-| Rewrite compaction immediately | **Defer until current G8** | First establish live shrink and continuation on the unchanged path. |
+| Rewrite compaction immediately | **G8 passed; Stage 2+** | Unchanged-path shrink is recorded. Later stages stay separate toggles. |
 
 ## Delivery rules
 
@@ -820,13 +821,13 @@ Primary files after the baseline passes: `src/compaction.ts`,
 `src/gateway.ts`, `src/compaction.test.ts`, `src/state-gateway.test.ts`,
 `COMPACTION.md`, and the G8/G17 sections of `LIVE-TESTING.md`.
 
-Current unchanged-path blocker (2026-08-23 20:15, live cob 0.1.6): the
-summarizer request already omitted `tools` (`tools_n=0`) and the model still
-returned a tool call. cob fail-closed. Unreleased in-tree now flattens
-function-call history to notes and keeps mixed handoff text; that is not a
-prompt/effort/threshold change and is not live until a packed global
-install. Do not start Stages 2–4 until a later run on the installed build
-produces a text handoff and a measured follow-up shrink.
+Unchanged-path G8 passed (2026-08-23 20:29, live cob 0.1.7 flatten handoff
+after the 20:15 0.1.6 extract failure). Recorded bytes: pre-compact
+`b_input=1121805` / last-turn wire `1167851`; compact request
+`wire_bytes=266304`; first continuation `b_input=32885` / next Ollama wire
+`48206`; checkpoint `cob_cmp_6bebd81b54f9377ddb3de5bcac3647ff` with `cob1.`
+and `provenance.source=ollama-summary`. Upstream tokens omitted.
+Continuation resumed tool calls. Isolated L5 still unrun.
 
 G8 must record:
 
@@ -861,24 +862,29 @@ not log summary text.
 ### Stage 3 — Effort experiment
 
 Compare supported `none` (if the pinned model/version truly supports it) and
-`low` against the current behavior. The likely candidate is `low`, but no
-default changes without a quality/latency trace. A malformed or incomplete
-skeleton fails closed with `requires_full_context`; do not automatically resend
-the full history because that doubles the most expensive input.
+`low` against the current behavior. Isolated: `compaction.ollama_effort`
+accepts `none` / `low` / `high` / `max`. Omit the key to keep the current G8
+wire (`high` after `prepareOllamaWire`). The likely candidate is `low`, but
+no default changes without a quality/latency trace. A malformed or incomplete
+skeleton fails closed with `compaction_summary_incomplete` /
+`requires_full_context`; cob does not automatically resend the full history
+because that doubles the most expensive input.
 
 ### Stage 4 — Separate maximum from active threshold
 
 Keep the default active context at 256k during the experiment.
 
-- For verified cloud tags, test exposing their actual supported
-  `max_context_window` without changing the active compact threshold.
-- Keep local model rows conservative unless their runtime/tag proves a larger
-  limit.
-- Test the current Desktop and PATH schemas before adding
-  `auto_compact_token_limit`; bundled rows currently omit it even though the
-  field exists in Codex internals.
-- If an explicit threshold is needed to preserve current behavior, begin near
-  90% of 256k (`230400`) and verify it in an isolated catalog.
+- For verified cloud tags (`:cloud` / `-cloud` / `remote_host`),
+  `catalog.advertise_cloud_max_context = true` exposes tag
+  `max_context_window` without raising `context_window`. Default is off.
+- Local rows stay conservative (`max` equals active) even when the tag
+  reports 1M.
+- Desktop and PATH bundled rows currently omit `auto_compact_token_limit`.
+  cob emits that field only when the native skeleton already has it and
+  `catalog.auto_compact_token_limit` is set. Isolated experiment value is
+  `230400` (90% of 256k).
+- `catalog.active_context_window` can raise the active cap; never infer it
+  from `max_context_window`.
 - Larger active contexts are opt-in until G17 shows lower total cost or materially
   better task success. Never infer benefit from maximum context alone.
 

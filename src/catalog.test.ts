@@ -5,13 +5,16 @@ import {
   assertOllamaRowsSafe,
   assignFeaturedPriorities,
   buildOllamaEntry,
+  isVerifiedCloudOllamaTag,
   listVisibleTopSlugs,
+  loadBundledCatalog,
+  ollamaCatalogWindows,
   loadOllamaTags,
   mergeCatalog,
   mergeCatalogWithFallback,
 } from "./catalog.js";
-import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS } from "./constants.js";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./constants.js";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogFile, JsonObject, OllamaTag } from "./types.js";
@@ -157,6 +160,45 @@ describe("catalog merge", () => {
       20,
     );
     assert.equal(entry.context_window, 8192);
+    assert.equal(entry.max_context_window, 8192);
+  });
+
+  it("keeps the 256k active window when exposing a verified cloud maximum", () => {
+    assert.equal(isVerifiedCloudOllamaTag(tags[1]!), true);
+    assert.equal(isVerifiedCloudOllamaTag({ name: "qwen2.5:7b" }), false);
+    const windows = ollamaCatalogWindows({
+      tagLength: 1048576,
+      cloud: true,
+      advertiseCloudMax: true,
+    });
+    assert.equal(windows.contextWindow, 256000);
+    assert.equal(windows.maxContextWindow, 1048576);
+    const entry = buildOllamaEntry(tags[1]!, bundled().models[2]!, 3, { advertiseCloudMaxContext: true });
+    assert.equal(entry.context_window, 256000);
+    assert.equal(entry.max_context_window, 1048576);
+    assert.equal("auto_compact_token_limit" in entry, false);
+    const local = buildOllamaEntry(
+      { name: "qwen2.5:7b", capabilities: ["completion"], details: { context_length: 1048576 } },
+      bundled().models[2]!,
+      20,
+      { advertiseCloudMaxContext: true },
+    );
+    assert.equal(local.context_window, 256000);
+    assert.equal(local.max_context_window, 256000);
+  });
+
+  it("omits auto_compact_token_limit unless the native skeleton already has it", () => {
+    const skeleton = bundled().models[2]!;
+    assert.equal("auto_compact_token_limit" in skeleton, false);
+    const omitted = buildOllamaEntry(tags[1]!, skeleton, 3, {
+      autoCompactTokenLimit: OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT,
+    });
+    assert.equal("auto_compact_token_limit" in omitted, false);
+    const isolated = buildOllamaEntry(tags[1]!, { ...skeleton, auto_compact_token_limit: 180000 }, 3, {
+      autoCompactTokenLimit: OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT,
+    });
+    assert.equal(isolated.auto_compact_token_limit, 230400);
+    assert.equal(isolated.context_window, 256000);
   });
 
   it("encodes slash-containing Ollama ids instead of failing the merge", () => {
@@ -319,6 +361,30 @@ describe("catalog merge", () => {
     const listed = on.models.find((model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud");
     assert.equal(listed?.supports_search_tool, true);
     assertOllamaRowsSafe(on, { allowSearchTool: true });
+  });
+});
+
+describe("Desktop and PATH catalog schemas", () => {
+  it("does not add auto_compact_token_limit while current bundled rows omit it", () => {
+    const bins = [
+      process.env.COB_CODEX_BIN,
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "/opt/homebrew/bin/codex",
+    ].filter((bin): bin is string => typeof bin === "string" && bin.length > 0 && existsSync(bin));
+    if (bins.length === 0) return;
+    for (const bin of [...new Set(bins)]) {
+      let catalog: CatalogFile;
+      try {
+        catalog = loadBundledCatalog(bin);
+      } catch {
+        continue;
+      }
+      assert.equal(
+        catalog.models.some((model) => "auto_compact_token_limit" in model),
+        false,
+        `${bin} advertised auto_compact_token_limit`,
+      );
+    }
   });
 });
 

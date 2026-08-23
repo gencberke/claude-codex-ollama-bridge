@@ -50,7 +50,7 @@ user-owned.
 
 ```bash
 npm run pack
-npm install -g ./codex-ollama-bridge-0.1.7.tgz
+npm install -g ./codex-ollama-bridge-0.1.8.tgz
 cob start
 cob status
 codex --profile cob
@@ -106,7 +106,10 @@ changes. Native GPT rows are not "repaired" from a different Codex version.
 
 Ollama rows are discovered from `/api/tags` on every start/sync. The picker **lists** `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and the first spawnable Ollama slug from `cob.toml` `[subagents].models` (default `ollama/deepseek-v4-flash:0731-cloud`). Other native and discovered Ollama rows stay in `cob-catalog.json` with `visibility=hide` so routing still works. Ollama `display_name` equals the catalog slug (`ollama/...`). Do not steal GPT ids (`nativeAlias`). Ollama rows get cob-owned `base_instructions` and a child-only capability profile; GPT personality templates and unproven tool capabilities are not copied onto them.
 
-Thinking Ollama rows advertise `none` / `low` / `high` / `max` (DeepSeek V4 ladder; default `high`). Codex `medium` and `xhigh` map to `high` on the Ollama wire; `xhigh` does not become `max`. The Ollama request is clipped to the reviewed Responses fields. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)`. Desktop’s used-% bar is that advertised window: a short 0731 first turn meters ~61k here (~26% of 243k) versus ~17–20k on native GPT; that is not cob merging an older thread. Live notes: [STATUS.md](./STATUS.md).
+Thinking Ollama rows advertise `none` / `low` / `high` / `max` (DeepSeek V4 ladder; default `high`). Codex `medium` and `xhigh` map to `high` on the Ollama wire; `xhigh` does not become `max`. The Ollama request is clipped to the reviewed Responses fields. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)` unless
+`catalog.active_context_window` opts in to a different active cap.
+`max_context_window` stays equal to that active window unless
+`catalog.advertise_cloud_max_context = true` on a verified cloud tag. Desktop’s used-% bar is that advertised window: a short 0731 first turn meters ~61k here (~26% of 243k) versus ~17–20k on native GPT; that is not cob merging an older thread. Live notes: [STATUS.md](./STATUS.md).
 
 The V1 spawn window is the first five `visibility=list` rows (priority ASC). With the four listed models, all of them sit in that window:
 
@@ -136,6 +139,7 @@ Policy lives in cob-owned `~/.codex/cob.toml` (not the Codex profile):
 provider = "native"
 ollama_threads = "summarize"
 # ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
+# ollama_effort = "low"
 
 [subagents]
 models = [
@@ -147,6 +151,9 @@ models = [
 # wire shape and promotes discovered leaves onto the next Ollama tools[]
 # (aliased). Set false to send the full tool list every turn.
 # supports_search_tool = false
+# advertise_cloud_max_context = true
+# active_context_window = 256000
+# auto_compact_token_limit = 230400
 ```
 
 `provider = "ollama"` and `provider = "disabled"` are no longer valid; cob reports a migration error instead of converting them silently. `--compaction-model` is still accepted (native ChatGPT slug). `--compaction-provider`, if passed, must be `native`. Envelope details: [COMPACTION.md](./COMPACTION.md).

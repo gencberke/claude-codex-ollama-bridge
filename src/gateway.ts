@@ -26,7 +26,10 @@ import {
   resolveCompactPlan,
   isResponseEnvelope,
   buildOllamaSummarizerPayload,
+  compactHandoffSectionFlags,
+  incompleteOllamaCompactHandoffError,
   extractOllamaCompactSummary,
+  formatCompactSectionFlags,
   unsupportedOllamaCompactMediaError,
   ollamaSummaryHandoffItem,
   ollamaFollowUpInputError,
@@ -190,6 +193,7 @@ async function handleRequest(
         model: compaction.model ?? null,
         ollama_threads: compaction.ollamaThreads ?? "summarize",
         ollama_model: compaction.ollamaModel ?? null,
+        ollama_effort: compaction.ollamaEffort ?? null,
       },
     });
     return;
@@ -544,7 +548,11 @@ async function handleOllamaSummaryCompact(
     jsonError(res, 400, "compaction_context_required", followUpError, { requires_full_context: true });
     return;
   }
-  const summarizerPayload = buildOllamaSummarizerPayload({ compactModel, history });
+  const summarizerPayload = buildOllamaSummarizerPayload({
+    compactModel,
+    history,
+    effort: options.compaction?.ollamaEffort,
+  });
   const preparedSummarizer = prepareOllamaPayload(summarizerPayload);
   if (isOllamaReject(preparedSummarizer)) {
     json(res, preparedSummarizer.status, preparedSummarizer.body);
@@ -553,6 +561,7 @@ async function handleOllamaSummaryCompact(
   console.error(
     `[cob] compaction_trigger target=${threadModel} compaction provider: ${compactionHeader("ollama", compactModel)}`,
   );
+  const compactStarted = Date.now();
   const forwarded = await forwardOllamaResponses({
     payload: preparedSummarizer,
     ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
@@ -599,6 +608,19 @@ async function handleOllamaSummaryCompact(
     jsonError(res, 400, extracted.code, extracted.message, { requires_full_context: true });
     return;
   }
+  const incomplete = incompleteOllamaCompactHandoffError(extracted.text);
+  if (incomplete) {
+    console.error(`[cob] ollama compact failed code=${incomplete.code}`);
+    jsonError(res, 400, incomplete.code, incomplete.message, { requires_full_context: true });
+    return;
+  }
+  logOllamaCompactOk({
+    latencyMs: Date.now() - compactStarted,
+    summaryBytes: Buffer.byteLength(extracted.text, "utf8"),
+    sections: compactHandoffSectionFlags(extracted.text),
+    effort: options.compaction?.ollamaEffort ?? "high",
+    usage: extractOllamaUsage(summarizerResponse),
+  });
   let envelope: string;
   try {
     envelope = encodeCobCompactEnvelope(extracted.text);
@@ -662,6 +684,19 @@ async function handleOllamaSummaryCompact(
     return;
   }
   json(res, 200, response, extra);
+}
+
+function logOllamaCompactOk(opts: {
+  latencyMs: number;
+  summaryBytes: number;
+  sections: ReturnType<typeof compactHandoffSectionFlags>;
+  effort: string;
+  usage: ReturnType<typeof extractOllamaUsage>;
+}): void {
+  const usage = opts.usage ? formatOllamaUsage(opts.usage) : "tokens=omitted";
+  console.error(
+    `[cob] ollama compact ok latency_ms=${opts.latencyMs} summary_bytes=${opts.summaryBytes} effort=${opts.effort} sections=${formatCompactSectionFlags(opts.sections)} ${usage}`,
+  );
 }
 
 function ollamaSummarizerHttpError(status: number, raw: Buffer): string {
