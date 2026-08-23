@@ -32,12 +32,27 @@ Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG
   ChatGPT native quota is exhausted, **for GPT-thread compact**. Ollama-thread
   summarize compact does not need ChatGPT quota.
 - Advertise `supports_search_tool` on Ollama rows unless cob.toml
-  `[catalog] supports_search_tool = true`. That flag is opt-in; cob translates
+  `[catalog] supports_search_tool = false`. Default is on; cob translates
   `tool_search_call` ↔ function_call and promotes discovered leaf tools onto
   the next Ollama `tools[]` as namespace-aware aliases. Do not set `tool_mode`.
-  Do not hand-edit `cob-catalog.json` to force the flag.
+  Do not hand-edit `cob-catalog.json` to force the flag. Do not rewrite an
+  existing explicit false.
 - Install launchd, a Login Item, or any OS supervisor for cob. After reboot
   or a dead gateway, recovery is `cob start`.
+- Enable Multi-Agent V2 for Ollama children, advertise `multi_agent_version`
+  other than `v1` on Ollama rows, or call `followup_task` / encrypted
+  collaboration payloads. Ollama stays V1. Fernet never goes to Ollama.
+
+## Orchestration
+
+Parent spawn policy for Desktop/CLI is user-owned `~/.codex/AGENTS.md`. Do
+not treat this file as that policy.
+
+Ollama children stay V1. Spawn slot is `cob.toml` `[subagents].models`
+(default `ollama/deepseek-v4-flash:0731-cloud`). Do not add
+`~/.codex/agents/*.toml` for discovery. Do not steal native GPT ids.
+Thinking Ollama default is `high`; leftover Codex `medium` / `xhigh` map to
+`high` on the Ollama wire.
 
 ## Activation split
 
@@ -53,7 +68,13 @@ Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG
 ## Ship standard
 
 `npx tsc --noEmit` and `npm test` are a merge gate. Ship decisions follow
-**live traces** (LIVE-TESTING G1–G10), not mock coverage.
+**live traces** (LIVE-TESTING G1–G10, plus G11+ when that package is
+live-authorized), not mock coverage.
+
+Live catalog generation prefers Desktop's bundled Codex; `cob status` must
+explain producer/consumer skew via `cob-catalog.meta.json` without spawning
+Codex. First-line kinds include `stale` and `unknown`. Do not claim Desktop
+hot-reloaded the catalog; say fully quit and reopen ChatGPT Desktop.
 
 English identifiers in code. Picker allowlist, 256k catalog cap, and Ollama
 effort levels are implemented; do not reopen them as cosmetics. Default to
@@ -62,8 +83,8 @@ compact shrink is specified in [COMPACTION.md](./COMPACTION.md). Do not
 implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
-Durability (STATUS: ChatGPT quit–reopen and `codex update`) is an **important**
-subtask, not deferred cosmetics. Do not patch the app binary or use
-`nativeAlias` to paper over an update. After lifecycle tests, picker + 0731
-routing must still hit cob, or `cob status` must say why not. Reboot is not
-cob autostart; `cob start` brings the gateway back.
+The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
+child on cob 0.1.6). Current cut is cob **0.1.7**. Future app updates can still drop overlay or hide
+`ollama/...`; then `cob status` must say why. Do not patch the app binary or
+use `nativeAlias` to paper over an update. Reboot is not cob autostart;
+`cob start` brings the gateway back.

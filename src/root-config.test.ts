@@ -241,6 +241,33 @@ describe("desktop overlay assessment", () => {
       summarizeCobStatus({ liveHome: false, overlay: "broken", gatewayHealthy: true }),
       { kind: "broken", ok: false },
     );
+    assert.deepEqual(
+      summarizeCobStatus({
+        liveHome: true,
+        overlay: "ok",
+        gatewayHealthy: true,
+        catalogFreshness: "stale",
+      }),
+      { kind: "stale", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({
+        liveHome: true,
+        overlay: "ready",
+        gatewayHealthy: false,
+        catalogFreshness: "unknown",
+      }),
+      { kind: "unknown", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({
+        liveHome: true,
+        overlay: "broken",
+        gatewayHealthy: true,
+        catalogFreshness: "stale",
+      }),
+      { kind: "broken", ok: false },
+    );
   });
 
   it("rejects a non-loopback openai_base_url", () => {

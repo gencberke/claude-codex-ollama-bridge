@@ -12,7 +12,9 @@ import {
   syncCatalog,
 } from "./lifecycle.js";
 import { listVisibleTopSlugs, parseCatalogJson } from "./catalog.js";
+import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./catalog-provenance.js";
 import { CobConfigError } from "./cob-config.js";
+import { readFileBufferOrNull } from "./atomic.js";
 import { runSmoke } from "./smoke.js";
 
 type StartCompaction = { provider: "native"; model?: string };
@@ -47,6 +49,7 @@ async function main(argv: string[]): Promise<void> {
         return;
       }
       mkdirSync(paths.codexHome, { recursive: true });
+      const catalogBefore = readFileBufferOrNull(paths.catalog);
       const logFd = openSync(paths.log, "a", 0o600);
       try {
         chmodSync(paths.log, 0o600);
@@ -107,6 +110,12 @@ async function main(argv: string[]): Promise<void> {
         `compaction: provider=${runtime.compaction?.provider ?? "native"}${runtime.compaction?.model ? ` model=${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction?.ollamaThreads ?? "summarize"}`,
       );
       console.log(`featured picker: ${top.join(", ")}`);
+      if (
+        !started.alreadyRunning &&
+        shouldPrintDesktopRestartHint(!isolated, catalogBytesChanged(catalogBefore, readFileBufferOrNull(paths.catalog)))
+      ) {
+        console.log(LIVE_DESKTOP_RESTART_HINT);
+      }
       printLaunchHint(isolated, paths.codexHome);
       return;
     }
@@ -127,7 +136,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "restore": {
       await restoreCob(paths);
-      console.log("removed cob profile, catalog, cob.toml, gateway pid, and cob state");
+      console.log("removed cob profile, catalog, catalog metadata, cob.toml, gateway pid, and cob state");
       console.log("root config.toml left unchanged");
       return;
     }
@@ -144,6 +153,9 @@ async function main(argv: string[]): Promise<void> {
           ? `wrote ${paths.catalog} (${result.catalog.models.length} models, ${result.ollamaCount} ollama)`
           : `catalog unchanged (${result.catalog.models.length} models)`,
       );
+      if (shouldPrintDesktopRestartHint(!isolated, result.wrote)) {
+        console.log(LIVE_DESKTOP_RESTART_HINT);
+      }
       return;
     }
     case "status": {
@@ -162,6 +174,12 @@ async function main(argv: string[]): Promise<void> {
         process.exitCode = 1;
       }
   }
+}
+
+function catalogBytesChanged(before: Buffer | null, after: Buffer | null): boolean {
+  if (before === null && after === null) return false;
+  if (before === null || after === null) return true;
+  return !before.equals(after);
 }
 
 function startCompaction(flags: { compactionProvider?: string; compactionModel?: string }): StartCompaction | undefined {
@@ -224,10 +242,12 @@ Launch Codex against the live bridge:
 
 cob status read-only inspects root config.toml for Desktop overlay keys
 (openai_base_url, model_catalog_json, model_provider) against the live gateway.
-The first line is cob: ok|ready|broken|absent|unreadable. Exit 0 only when
-this Codex home needs no cob action; otherwise exit 1. It never writes that
-file and does not spawn Codex or probe Ollama. After a reboot or a dead
-gateway, run cob start. cob restore does not revert a user-owned Desktop trial.
+The first line is cob: ok|ready|broken|absent|unreadable|stale|unknown. Exit 0
+only when this Codex home needs no cob action; otherwise exit 1. It never
+writes that file and does not spawn Codex or probe Ollama. A stale or
+unknown catalog is non-ready even if the gateway is healthy; run cob sync
+or cob start to regenerate it. After a reboot or a dead gateway, run cob
+start. cob restore does not revert a user-owned Desktop trial.
 
 Compaction is native ChatGPT passthrough for GPT threads. Ollama threads
 summarize via Ollama /v1/responses (not /compact). --compaction-model still
@@ -240,7 +260,7 @@ Spawnable Ollama children are listed in cob.toml:
   models = ["ollama/deepseek-v4-flash:0731-cloud"]
 
   [catalog]
-  supports_search_tool = false
+  supports_search_tool = true
 
 cob never writes ~/.codex/config.toml. restore deletes cob overlays and the
 private cob-state conversation archive.

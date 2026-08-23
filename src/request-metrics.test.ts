@@ -111,6 +111,38 @@ describe("request-metrics", () => {
     assert.match(line, /prompt_eval_ms=1500/);
   });
 
+  it("maps exact prompt_eval_count/eval_count and omits invented usage", () => {
+    const mapped = extractOllamaUsage({
+      prompt_eval_count: 12,
+      eval_count: 3,
+    });
+    assert.deepEqual(mapped?.inputTokens, 12);
+    assert.deepEqual(mapped?.outputTokens, 3);
+    assert.deepEqual(mapped?.totalTokens, 15);
+    assert.equal(extractOllamaUsage({ output: [] }), undefined);
+  });
+
+  it("keeps large-tool snapshot output stable while serializing each field once", () => {
+    const tools = Array.from({ length: 80 }, (_, index) => ({
+      type: "function",
+      name: `tool_${index}`,
+      description: "schema-secret-must-not-appear",
+      parameters: { type: "object", properties: { q: { type: "string" } } },
+    }));
+    const payload = {
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      instructions: "short cob instructions",
+      tools,
+      input: [{ type: "message", role: "user", content: "hey" }],
+    };
+    const first = formatRequestMetrics(summarizeRequest(payload, 50_000));
+    const second = formatRequestMetrics(summarizeRequest(payload, 50_000));
+    assert.equal(first, second);
+    assert.equal(first.includes("schema-secret-must-not-appear"), false);
+    assert.match(first, /tools_n=80/);
+    assert.match(first, /tool_bytes=tool_/);
+  });
+
   it("jsonUtf8Bytes matches Buffer length of JSON.stringify", () => {
     const value = { a: 1, b: ["x"] };
     assert.equal(jsonUtf8Bytes(value), Buffer.byteLength(JSON.stringify(value), "utf8"));
@@ -130,11 +162,19 @@ describe("request-metrics", () => {
       skippedInvalid: 0,
       skippedUnsupported: 0,
       collisions: 0,
+      aliasSha: "deadbeef",
+      aliasesAdded: 1,
+      aliasesRemoved: 0,
+      aliasesReplaced: 0,
+      usedAliasMissing: 0,
     });
     assert.match(line, /wire_bytes=2048/);
     assert.match(line, /tools_n=18/);
     assert.match(line, /promoted_n=1/);
     assert.match(line, /promoted_bytes=6800/);
+    assert.match(line, /alias_sha=deadbeef/);
+    assert.match(line, /alias_added=1/);
+    assert.match(line, /used_alias_missing=0/);
     assert.match(line, /tool_bytes=multi_agent_v1__spawn_agent:6800/);
     assert.equal(line.includes("Spawn a sub-agent"), false);
     assert.equal(line.includes("previous_response_id"), false);

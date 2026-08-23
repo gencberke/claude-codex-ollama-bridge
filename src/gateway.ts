@@ -1,8 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { readFileSync } from "node:fs";
 import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL } from "./constants.js";
-import { parseCatalogJson } from "./catalog.js";
+import { loadCatalogFile } from "./catalog.js";
 import { decodeRequestBody, RequestDecodeError } from "./decode.js";
 import { forwardNativeResponses, type HeaderMap, type UpstreamFetch } from "./native.js";
 import {
@@ -12,6 +11,7 @@ import {
   ollamaSseTransform,
   prepareOllamaPayload,
 } from "./ollama.js";
+import { normalizeOllamaErrorBody } from "./ollama-boundary.js";
 import { assertLoopbackBindHost } from "./loopback.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "./route.js";
 import type { CompactionPolicy } from "./cob-config.js";
@@ -40,8 +40,9 @@ import {
 import {
   BodyAbortedError,
   BodyLimitError,
-  CONNECT_TIMEOUT_MS,
   IDLE_TIMEOUT_MS,
+  NATIVE_HEADERS_TIMEOUT_MS,
+  OLLAMA_HEADERS_TIMEOUT_MS,
   MAX_DECODED_BODY_BYTES,
   MAX_RAW_BODY_BYTES,
   MAX_UPSTREAM_BODY_BYTES,
@@ -56,7 +57,7 @@ import {
   sseDoneTerminal,
   sseErrorTerminal,
 } from "./relay.js";
-import { ConnectTimeoutError, IdleTimeoutError } from "./timeouts.js";
+import { HeadersTimeoutError, IdleTimeoutError } from "./timeouts.js";
 import { sseRewriteTransform, type SseObserver } from "./sse.js";
 import type { CatalogFile, JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
@@ -101,6 +102,10 @@ export type GatewayOptions = {
   ollamaFetch?: UpstreamFetch;
   nonce?: string;
   compaction?: CompactionPolicy;
+  headersMs?: number;
+  nativeHeadersMs?: number;
+  ollamaHeadersMs?: number;
+  /** @deprecated one-release alias for headersMs */
   connectMs?: number;
   idleMs?: number;
   stateDir?: string;
@@ -138,7 +143,7 @@ export function createGateway(options: GatewayOptions): Server {
         jsonError(res, error.status, error.code, error.message);
         return;
       }
-      if (error instanceof UpstreamLimitError || error instanceof ConnectTimeoutError || error instanceof IdleTimeoutError) {
+      if (error instanceof UpstreamLimitError || error instanceof HeadersTimeoutError || error instanceof IdleTimeoutError) {
         jsonError(res, error.status, error.code, error.message);
         return;
       }
@@ -334,8 +339,13 @@ async function handleResponsesPost(
       ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
       fetchImpl: options.ollamaFetch,
       signal: abort.signal,
-      connectMs: options.connectMs ?? CONNECT_TIMEOUT_MS,
+      headersMs: resolveOllamaHeadersMs(options),
+      supportsReasoning: catalogRowSupportsReasoning(resolveCatalog(options), catalogModel),
     });
+    if (isOllamaReject(forwarded)) {
+      json(res, forwarded.status, forwarded.body);
+      return;
+    }
     await relayOllama(forwarded.response, res, catalogModel, abort, options, {
       state: stateStore(options),
       originalPayload: payload,
@@ -355,7 +365,7 @@ async function handleResponsesPost(
     contentType: headerValue(req.headers["content-type"]) ?? "application/json",
     fetchImpl: options.nativeFetch,
     signal: abort.signal,
-    connectMs: options.connectMs ?? CONNECT_TIMEOUT_MS,
+    headersMs: resolveNativeHeadersMs(options),
   });
   await relay(upstream, res, abort, options);
 }
@@ -483,7 +493,7 @@ async function handleOllamaCompactionTrigger(
     url: NATIVE_RESPONSES_URL,
     fetchImpl: options.nativeFetch,
     signal: abort.signal,
-    connectMs: options.connectMs ?? CONNECT_TIMEOUT_MS,
+    headersMs: resolveNativeHeadersMs(options),
   });
   await relayNativeOllamaCompaction(
     upstream,
@@ -543,13 +553,19 @@ async function handleOllamaSummaryCompact(
   console.error(
     `[cob] compaction_trigger target=${threadModel} compaction provider: ${compactionHeader("ollama", compactModel)}`,
   );
-  const { response: upstream } = await forwardOllamaResponses({
+  const forwarded = await forwardOllamaResponses({
     payload: preparedSummarizer,
     ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
     fetchImpl: options.ollamaFetch,
     signal: abort.signal,
-    connectMs: options.connectMs ?? CONNECT_TIMEOUT_MS,
+    headersMs: resolveOllamaHeadersMs(options),
+    supportsReasoning: catalogRowSupportsReasoning(resolveCatalog(options), compactModel),
   });
+  if (isOllamaReject(forwarded)) {
+    json(res, forwarded.status, forwarded.body);
+    return;
+  }
+  const { response: upstream } = forwarded;
   const extra: Record<string, string> = {
     "x-cob-compaction": compactionHeader("ollama", compactModel),
   };
@@ -579,6 +595,7 @@ async function handleOllamaSummaryCompact(
   }
   const extracted = extractOllamaCompactSummary(summarizerResponse);
   if (extracted.kind === "error") {
+    console.error(`[cob] ollama compact failed code=${extracted.code}`);
     jsonError(res, 400, extracted.code, extracted.message, { requires_full_context: true });
     return;
   }
@@ -1206,7 +1223,10 @@ function logRequest(
 
 function logOllamaUsage(envelope: JsonObject | undefined): void {
   const usage = extractOllamaUsage(envelope);
-  if (!usage) return;
+  if (!usage) {
+    console.error("[cob] ollama usage omitted (upstream did not supply exact token counts)");
+    return;
+  }
   console.error(`[cob] ollama usage ${formatOllamaUsage(usage)}`);
 }
 
@@ -1334,6 +1354,15 @@ async function relayOllama(
     idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
     signal: abort.signal,
   });
+  if (upstream.status < 200 || upstream.status >= 300) {
+    const retryAfter = upstream.headers.get("retry-after") ?? undefined;
+    const body = normalizeOllamaErrorBody(upstream.status, raw, retryAfter);
+    const headers = copyUpstreamHeaders(upstream);
+    headers["content-type"] = "application/json";
+    res.writeHead(upstream.status, headers);
+    res.end(JSON.stringify(body));
+    return;
+  }
   try {
     const parsed: unknown = JSON.parse(raw.toString("utf8"));
     const candidate = completedResponseEnvelope(parsed);
@@ -1357,10 +1386,23 @@ async function relayOllama(
   }
 }
 
+function resolveNativeHeadersMs(options: GatewayOptions): number {
+  return options.nativeHeadersMs ?? options.headersMs ?? options.connectMs ?? NATIVE_HEADERS_TIMEOUT_MS;
+}
+
+function resolveOllamaHeadersMs(options: GatewayOptions): number {
+  return options.ollamaHeadersMs ?? options.headersMs ?? options.connectMs ?? OLLAMA_HEADERS_TIMEOUT_MS;
+}
+
+function catalogRowSupportsReasoning(catalog: CatalogFile | undefined, model: string): boolean {
+  const row = catalog?.models.find((item) => String(item.slug) === model);
+  return Array.isArray(row?.supported_reasoning_levels) && row.supported_reasoning_levels.length > 0;
+}
+
 function resolveCatalog(options: GatewayOptions): CatalogFile | undefined {
   if (options.catalogPath) {
     try {
-      return parseCatalogJson(readFileSync(options.catalogPath, "utf8"));
+      return loadCatalogFile(options.catalogPath);
     } catch {
       return options.catalog;
     }

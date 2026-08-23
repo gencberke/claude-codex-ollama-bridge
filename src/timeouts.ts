@@ -8,12 +8,12 @@ type TimedFetch = (
   },
 ) => Promise<Response>;
 
-export class ConnectTimeoutError extends Error {
+export class HeadersTimeoutError extends Error {
   readonly status = 504;
-  readonly code = "connect_timeout";
-  constructor(message = "Upstream connect timed out") {
+  readonly code = "upstream_headers_timeout";
+  constructor(message = "Upstream response headers timed out") {
     super(message);
-    this.name = "ConnectTimeoutError";
+    this.name = "HeadersTimeoutError";
   }
 }
 
@@ -26,20 +26,20 @@ export class IdleTimeoutError extends Error {
   }
 }
 
-export async function fetchWithConnectTimeout(
+export async function fetchWithHeadersTimeout(
   fetchImpl: TimedFetch,
   url: string,
   init: Parameters<TimedFetch>[1],
-  connectMs: number,
+  headersMs: number,
 ): Promise<Response> {
-  const connect = new AbortController();
-  const timer = setTimeout(() => connect.abort(), connectMs);
-  const signal = combineSignals(init.signal, connect.signal);
+  const headers = new AbortController();
+  const timer = setTimeout(() => headers.abort(), headersMs);
+  const signal = combineSignals(init.signal, headers.signal);
   try {
     return await fetchImpl(url, { ...init, signal });
   } catch (error) {
-    if (connect.signal.aborted && !init.signal?.aborted) {
-      throw new ConnectTimeoutError();
+    if (headers.signal.aborted && !init.signal?.aborted) {
+      throw new HeadersTimeoutError();
     }
     throw error;
   } finally {

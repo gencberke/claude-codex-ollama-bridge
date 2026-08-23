@@ -1,6 +1,6 @@
 import { FORWARD_HEADERS, NATIVE_RESPONSES_URL } from "./constants.js";
-import { CONNECT_TIMEOUT_MS } from "./limits.js";
-import { fetchWithConnectTimeout } from "./timeouts.js";
+import { NATIVE_HEADERS_TIMEOUT_MS } from "./limits.js";
+import { fetchWithHeadersTimeout } from "./timeouts.js";
 
 export type HeaderMap = Record<string, string | string[] | undefined>;
 
@@ -49,10 +49,12 @@ export async function forwardNativeResponses(opts: {
   url?: string;
   fetchImpl?: UpstreamFetch;
   signal?: AbortSignal;
+  headersMs?: number;
+  /** @deprecated one-release alias for headersMs */
   connectMs?: number;
 }): Promise<Response> {
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as UpstreamFetch);
-  return fetchWithConnectTimeout(
+  return fetchWithHeadersTimeout(
     fetchImpl,
     opts.url ?? NATIVE_RESPONSES_URL,
     {
@@ -61,6 +63,6 @@ export async function forwardNativeResponses(opts: {
       body: opts.body,
       signal: opts.signal,
     },
-    opts.connectMs ?? CONNECT_TIMEOUT_MS,
+    opts.headersMs ?? opts.connectMs ?? NATIVE_HEADERS_TIMEOUT_MS,
   );
 }

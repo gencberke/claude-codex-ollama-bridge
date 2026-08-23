@@ -129,6 +129,11 @@ export class ConversationStateError extends Error {
   }
 }
 
+// Clone audit (WP6D): keep structuredClone at mutation boundaries only.
+// - validateHistory / resolve / mergeStateHistory clone so callers cannot
+//   mutate stored or shared items.
+// - stateHistoryValues clones because gateway may project the returned array.
+// Do not remove these without a read-only type and a corpus test.
 export function stateHistoryValues(history: readonly StateHistoryItem[]): unknown[] {
   return history.map((item) => structuredClone(item.value));
 }
@@ -173,9 +178,19 @@ export function mergeStateHistory(
   additions: readonly StateHistoryItem[],
 ): StateHistoryItem[] {
   const merged = base.map(cloneHistoryItem);
+  const identities = new Set(merged.map((item) => item.identity));
+  const valuesByItemId = new Map<string, string>();
+  for (const item of merged) {
+    if (item.provenance.itemId) valuesByItemId.set(item.provenance.itemId, JSON.stringify(item.value));
+  }
   for (const addition of additions) {
-    if (historyContainsIdentity(merged, addition)) continue;
-    merged.push(cloneHistoryItem(addition));
+    if (identities.has(addition.identity)) continue;
+    const itemId = addition.provenance.itemId;
+    if (itemId && valuesByItemId.get(itemId) === JSON.stringify(addition.value)) continue;
+    const cloned = cloneHistoryItem(addition);
+    merged.push(cloned);
+    identities.add(cloned.identity);
+    if (itemId) valuesByItemId.set(itemId, JSON.stringify(cloned.value));
     if (merged.length > MAX_STATE_HISTORY_ITEMS) {
       throw new ConversationStateError(
         "state_checkpoint_too_large",
@@ -388,7 +403,7 @@ export class ConversationStateStore {
       }
       writeImmutable(target, serializeCheckpoint(node));
       void removed;
-      this.removeOrphanedArchives();
+      this.removeOrphanedArchives(all.filter((entry) => !removed.has(entry.node.responseId)));
     });
   }
 
@@ -410,8 +425,8 @@ export class ConversationStateStore {
         removedNodes += 1;
         removedBytes += entry.size;
       }
-      this.removeOrphanedArchives();
-      const remaining = this.readValidCheckpoints();
+      const remaining = entries.filter((entry) => retained.has(entry.node.responseId));
+      this.removeOrphanedArchives(remaining);
       return {
         removedNodes,
         removedBytes,
@@ -598,8 +613,8 @@ export class ConversationStateStore {
     }
   }
 
-  private removeOrphanedArchives(): void {
-    const retained = new Set(this.readValidCheckpoints().map((entry) => entry.node.responseId));
+  private removeOrphanedArchives(known?: ReadonlyArray<{ node: ConversationCheckpoint }>): void {
+    const retained = new Set((known ?? this.readValidCheckpoints()).map((entry) => entry.node.responseId));
     let names: string[];
     try {
       names = readdirSync(this.compactArchiveDir);
@@ -834,7 +849,6 @@ function validateHistory(value: unknown, label: string): StateHistoryItem[] {
         `${label}[${index}] has an invalid or duplicate identity; resend the full context without previous_response_id`,
       );
     }
-    identities.add(item.identity);
     if (!isRecord(item.provenance)) {
       throw new ConversationStateError(
         "state_checkpoint_corrupt",
@@ -861,15 +875,24 @@ function validateHistory(value: unknown, label: string): StateHistoryItem[] {
       );
     }
     const normalizedOrdinal = ordinal as number;
+    const normalizedProvenance: HistoryProvenance = {
+      source: provenance.source,
+      sourceResponseId: provenance.sourceResponseId,
+      ordinal: normalizedOrdinal,
+      ...(typeof provenance.itemId === "string" ? { itemId: provenance.itemId } : {}),
+    };
+    const computed = itemIdentity(item.value, normalizedProvenance);
+    if (item.identity !== computed) {
+      throw new ConversationStateError(
+        "state_checkpoint_corrupt",
+        `${label}[${index}] identity does not match its value and provenance; resend the full context without previous_response_id`,
+      );
+    }
+    identities.add(computed);
     return {
-      identity: item.identity,
+      identity: computed,
       value: structuredClone(item.value),
-      provenance: {
-        source: provenance.source,
-        sourceResponseId: provenance.sourceResponseId,
-        ordinal: normalizedOrdinal,
-        ...(typeof provenance.itemId === "string" ? { itemId: provenance.itemId } : {}),
-      },
+      provenance: normalizedProvenance,
     };
   });
 }
@@ -910,17 +933,8 @@ function serializeCheckpoint(node: ConversationCheckpoint & { rawCompactBody?: B
 }
 
 function sameHistory(left: readonly StateHistoryItem[], right: readonly StateHistoryItem[]): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function historyContainsIdentity(history: readonly StateHistoryItem[], addition: StateHistoryItem): boolean {
-  if (history.some((item) => item.identity === addition.identity)) return true;
-  const itemId = addition.provenance.itemId;
-  if (!itemId) return false;
-  const encoded = JSON.stringify(addition.value);
-  return history.some(
-    (item) => item.provenance.itemId === itemId && JSON.stringify(item.value) === encoded,
-  );
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => item.identity === right[index]?.identity);
 }
 
 function cloneHistoryItem(item: StateHistoryItem): StateHistoryItem {
@@ -929,6 +943,11 @@ function cloneHistoryItem(item: StateHistoryItem): StateHistoryItem {
     value: structuredClone(item.value),
     provenance: { ...item.provenance },
   };
+}
+
+/** Canonical history-item identity. Recomputed on every checkpoint read. */
+export function historyItemIdentity(value: unknown, provenance: HistoryProvenance): string {
+  return itemIdentity(value, provenance);
 }
 
 function itemIdentity(value: unknown, provenance: HistoryProvenance): string {

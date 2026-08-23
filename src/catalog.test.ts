@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  assertConsumersAcceptCatalog,
   assertOllamaRowsSafe,
   assignFeaturedPriorities,
   buildOllamaEntry,
@@ -10,7 +11,11 @@ import {
   mergeCatalogWithFallback,
 } from "./catalog.js";
 import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS } from "./constants.js";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CatalogFile, JsonObject, OllamaTag } from "./types.js";
+import type { CodexBinaryRecord } from "./catalog-provenance.js";
 
 function native(partial: JsonObject): JsonObject {
   return {
@@ -274,7 +279,7 @@ describe("catalog merge", () => {
       { effort: "high", description: "leaked" },
       { effort: "medium", description: "ok" },
     ];
-    leaked.default_reasoning_level = "high";
+    leaked.default_reasoning_level = "max";
     const fallback = mergeCatalogWithFallback(bundled(), [], previous, true);
     const rebuilt = fallback.models.find((model) => model.slug === "ollama/deepseek-v4-flash:cloud");
     assert.ok(rebuilt);
@@ -314,6 +319,28 @@ describe("catalog merge", () => {
     const listed = on.models.find((model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud");
     assert.equal(listed?.supports_search_tool, true);
     assertOllamaRowsSafe(on, { allowSearchTool: true });
+  });
+});
+
+describe("consumer catalog validation", () => {
+  it("accepts a candidate from every distinct consumer and names the failing consumer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-catalog-consumers-"));
+    const accept = join(dir, "accept");
+    const reject = join(dir, "reject");
+    writeFileSync(accept, "#!/bin/sh\nprintf '%s\\n' 'ok'\n");
+    writeFileSync(reject, "#!/bin/sh\necho 'bad field context_window' >&2\nexit 1\n");
+    chmodSync(accept, 0o755);
+    chmodSync(reject, 0o755);
+    const file = { dev: "1", ino: "1", size: 1, mtime_ms: 1 };
+    const consumers: CodexBinaryRecord[] = [
+      { kind: "desktop", path: accept, version: "desktop", file: { ...file, ino: "1" } },
+      { kind: "path", path: reject, version: "path", file: { ...file, ino: "2" } },
+    ];
+    assert.doesNotThrow(() => assertConsumersAcceptCatalog({ models: [{ slug: "gpt-x" }] }, [consumers[0]!]));
+    assert.throws(
+      () => assertConsumersAcceptCatalog({ models: [{ slug: "gpt-x" }] }, consumers),
+      /rejected cob catalog \(path .*bad field context_window/,
+    );
   });
 });
 

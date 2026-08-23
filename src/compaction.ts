@@ -99,12 +99,7 @@ export function buildOllamaSummarizerPayload(opts: {
   };
 }
 
-const OLLAMA_SUMMARIZER_KEEP_TYPES = new Set([
-  "message",
-  "function_call",
-  "function_call_output",
-  "reasoning",
-]);
+const OLLAMA_SUMMARIZER_KEEP_TYPES = new Set(["message", "reasoning"]);
 
 const OLLAMA_SUMMARIZER_DROP_TYPES = new Set([
   "item_reference",
@@ -114,8 +109,9 @@ const OLLAMA_SUMMARIZER_DROP_TYPES = new Set([
 
 /**
  * Ollama /v1/responses 400s on Codex-only input types (item_reference,
- * web_search_call, …). Keep an allowlist; drop pointer-only items; flatten
- * other tool/search records to a short text note for the summarizer.
+ * web_search_call, …). Keep messages and reasoning; drop pointer-only items;
+ * flatten tool/search records to a short text note. Live function_call items
+ * prime 0731 to keep calling tools on a no-tools compact request.
  */
 export function projectOllamaSummarizerHistory(history: unknown[]): unknown[] {
   const next: unknown[] = [];
@@ -147,13 +143,25 @@ function isEmptyReasoningItem(value: JsonObject): boolean {
 function compactUnknownItemNote(item: JsonObject): string {
   const type = String(item.type);
   const parts = [`[compact item ${type}]`];
-  for (const key of ["name", "query", "action", "status", "output", "text"]) {
-    const value = item[key];
-    if (typeof value !== "string" || value.trim().length === 0) continue;
-    const clipped = value.length > 500 ? `${value.slice(0, 500)}…` : value;
-    parts.push(`${key}=${clipped}`);
+  for (const key of ["name", "call_id", "query", "action", "status", "arguments", "output", "text"]) {
+    const clipped = clipCompactNoteValue(item[key]);
+    if (clipped) parts.push(`${key}=${clipped}`);
   }
   return parts.join(" ");
+}
+
+function clipCompactNoteValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return undefined;
+    return trimmed.length > 500 ? `${trimmed.slice(0, 500)}…` : trimmed;
+  }
+  if (Array.isArray(value) || isRecord(value)) {
+    const json = JSON.stringify(value);
+    if (!json || json === "{}" || json === "[]") return undefined;
+    return json.length > 500 ? `${json.slice(0, 500)}…` : json;
+  }
+  return undefined;
 }
 
 export function ollamaSummaryHandoffItem(summary: string): JsonObject {
@@ -198,21 +206,15 @@ export function extractOllamaCompactSummary(value: unknown): OllamaSummaryExtrac
       message: "Ollama compact summarizer response has no output array",
     };
   }
-  if (
-    envelope.output.some(
-      (item) => isRecord(item) && (item.type === "function_call" || item.type === "custom_tool_call"),
-    )
-  ) {
-    return {
-      kind: "error",
-      code: "compaction_summary_invalid",
-      message: "Ollama compact summarizer called a tool; cob refuses to treat that as a handoff",
-    };
-  }
   const texts: string[] = [];
   const reasoningTexts: string[] = [];
+  let calledTool = false;
   for (const item of envelope.output) {
     if (!isRecord(item)) continue;
+    if (item.type === "function_call" || item.type === "custom_tool_call") {
+      calledTool = true;
+      continue;
+    }
     if (item.type === "reasoning" && Array.isArray(item.summary)) {
       for (const part of item.summary) {
         if (isRecord(part) && part.type === "summary_text" && typeof part.text === "string") {
@@ -237,6 +239,13 @@ export function extractOllamaCompactSummary(value: unknown): OllamaSummaryExtrac
   }
   const text = texts.join("\n").trim() || reasoningTexts.join("\n").trim();
   if (text.length === 0) {
+    if (calledTool) {
+      return {
+        kind: "error",
+        code: "compaction_summary_invalid",
+        message: "Ollama compact summarizer called a tool; cob refuses to treat that as a handoff",
+      };
+    }
     return {
       kind: "error",
       code: "compaction_summary_empty",

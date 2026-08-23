@@ -4,13 +4,24 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { DEFAULT_OLLAMA_URL, DEFAULT_PORT } from "./constants.js";
 import {
-  assertCodexAcceptsCatalog,
+  assertConsumersAcceptCatalog,
+  CatalogConsumerRejectedError,
   loadBundledCatalog,
   loadOllamaTags,
   mergeCatalogWithFallback,
   parseCatalogJson,
   writeCatalogIfChanged,
 } from "./catalog.js";
+import {
+  LIVE_DESKTOP_RESTART_HINT,
+  assessCatalogProvenance,
+  discoverCodexBins,
+  resolveCatalogSources,
+  shouldPrintDesktopRestartHint,
+  writeCatalogProvenance,
+  type CatalogDiscovery,
+  type InspectCodexIo,
+} from "./catalog-provenance.js";
 import { listenGateway } from "./gateway.js";
 import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "./limits.js";
 import { assertLoopbackHttpUrl } from "./loopback.js";
@@ -26,6 +37,7 @@ import { resolvePaths, type CobPaths } from "./paths.js";
 import { detectInstall, formatInstallLine, isLiveCodexHome } from "./install.js";
 import {
   catalogSupportsSearchTool,
+  DEFAULT_CATALOG_POLICY,
   resolveCobConfig,
   resolveSpawnableOllamaSlugs,
   writeCobToml,
@@ -69,6 +81,8 @@ export type StartOptions = {
   compaction?: CompactionPolicy;
   cob?: CobFileConfig;
   locked?: boolean;
+  discovery?: CatalogDiscovery;
+  inspect?: InspectCodexIo;
 };
 
 export type RuntimeState = {
@@ -92,7 +106,7 @@ export type HealthWait = {
 };
 
 export function overlayStateFiles(paths: CobPaths): string[] {
-  return [paths.profile, paths.catalog, paths.cobConfig, paths.runtime, paths.pid];
+  return [paths.profile, paths.catalog, paths.catalogMeta, paths.cobConfig, paths.runtime, paths.pid];
 }
 
 export function snapshotOverlays(paths: CobPaths): OverlaySnapshot {
@@ -185,6 +199,8 @@ export async function syncCatalog(opts: {
   ollamaUrl: string;
   spawnableOllamaSlugs?: readonly string[];
   locked?: boolean;
+  discovery?: CatalogDiscovery;
+  inspect?: InspectCodexIo;
 }): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
   const run = () => syncCatalogUnlocked(opts);
   if (opts.locked) return run();
@@ -202,13 +218,23 @@ async function syncCatalogUnlocked(opts: {
   ollamaUrl: string;
   spawnableOllamaSlugs?: readonly string[];
   supportsSearchTool?: boolean;
+  discovery?: CatalogDiscovery;
+  inspect?: InspectCodexIo;
+  keepLastGoodOnReject?: boolean;
 }): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
   assertLoopbackHttpUrl(opts.ollamaUrl, "Ollama URL");
   const cob = resolveCobConfig({ paths: opts.paths });
   const spawnable =
     opts.spawnableOllamaSlugs ?? resolveSpawnableOllamaSlugs(cob);
   const supportsSearchTool = opts.supportsSearchTool ?? catalogSupportsSearchTool(cob);
-  const bundled = loadBundledCatalog();
+  const discovery =
+    opts.discovery ??
+    discoverCodexBins({
+      paths: opts.paths,
+      liveHome: isLiveCodexHome(opts.paths.codexHome),
+    });
+  const sources = resolveCatalogSources(discovery, opts.inspect);
+  const bundled = loadBundledCatalog(sources.producer.path);
   let tags: Awaited<ReturnType<typeof loadOllamaTags>> = [];
   let ollamaError: string | undefined;
   try {
@@ -227,9 +253,26 @@ async function syncCatalogUnlocked(opts: {
     supportsSearchTool,
   });
   if (process.env.COB_SKIP_CATALOG_CHECK !== "1") {
-    assertCodexAcceptsCatalog(catalog);
+    try {
+      assertConsumersAcceptCatalog(catalog, sources.validators);
+    } catch (error) {
+      if (error instanceof CatalogConsumerRejectedError && opts.keepLastGoodOnReject && previous) {
+        console.error(`[cob] ${error.message}`);
+        console.error("[cob] keeping last known-good catalog; run cob sync after consumers agree");
+        const runtime = readRuntime(opts.paths);
+        writeCobProfile(opts.paths, runtime?.port ?? DEFAULT_PORT);
+        const ollamaCount = previous.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
+        return { catalog: previous, wrote: false, ollamaCount, ollamaError: error.message };
+      }
+      throw error;
+    }
   }
   const wrote = writeCatalogIfChanged(opts.paths.catalog, catalog, { allowSearchTool: supportsSearchTool });
+  writeCatalogProvenance({
+    metaPath: opts.paths.catalogMeta,
+    catalogBytes: readFileSync(opts.paths.catalog),
+    sources,
+  });
   const runtime = readRuntime(opts.paths);
   writeCobProfile(opts.paths, runtime?.port ?? DEFAULT_PORT);
   const ollamaCount = catalog.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
@@ -241,6 +284,7 @@ export async function prepareProfileAndCatalog(opts: StartOptions = {}): Promise
   port: number;
   ollamaUrl: string;
   catalog: CatalogFile;
+  wrote: boolean;
   ollamaError?: string;
   compaction: CompactionPolicy;
   cob: CobFileConfig;
@@ -256,6 +300,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
   port: number;
   ollamaUrl: string;
   catalog: CatalogFile;
+  wrote: boolean;
   ollamaError?: string;
   compaction: CompactionPolicy;
   cob: CobFileConfig;
@@ -279,12 +324,15 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     ollamaUrl,
     spawnableOllamaSlugs: spawnable,
     supportsSearchTool: catalogSupportsSearchTool(cob),
+    discovery: opts.discovery,
+    inspect: opts.inspect,
+    keepLastGoodOnReject: true,
   });
   writeCobProfile(paths, port);
   writeCobToml(paths.cobConfig, {
     compaction: cob.compaction,
     subagents: { models: spawnable },
-    catalog: cob.catalog ?? { supportsSearchTool: false },
+    catalog: cob.catalog ?? DEFAULT_CATALOG_POLICY,
   });
   assertRootConfigUnchanged(paths, before);
   return {
@@ -292,6 +340,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     port,
     ollamaUrl,
     catalog: synced.catalog,
+    wrote: synced.wrote,
     ollamaError: synced.ollamaError,
     compaction: cob.compaction,
     cob,
@@ -314,6 +363,9 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
     let server: Awaited<ReturnType<typeof listenGateway>> | undefined;
     try {
       const next = await prepareUnlocked({ ...opts, paths });
+      if (shouldPrintDesktopRestartHint(isLiveCodexHome(next.paths.codexHome), next.wrote)) {
+        console.log(LIVE_DESKTOP_RESTART_HINT);
+      }
       const nonce = process.env.COB_RUNTIME_NONCE || randomBytes(16).toString("hex");
       server = await listenGateway({
         port: next.port,
@@ -503,6 +555,7 @@ export async function restoreCob(paths: CobPaths = resolvePaths()): Promise<{ ro
     for (const file of [
       paths.profile,
       paths.catalog,
+      paths.catalogMeta,
       paths.cobConfig,
       paths.pid,
       paths.log,
@@ -577,11 +630,15 @@ export type StatusReport = {
   text: string;
 };
 
-export async function statusReport(paths: CobPaths = resolvePaths()): Promise<StatusReport> {
+export async function statusReport(
+  paths: CobPaths = resolvePaths(),
+  opts?: { discovery?: CatalogDiscovery; inspect?: InspectCodexIo },
+): Promise<StatusReport> {
   const liveHome = isLiveCodexHome(paths.codexHome);
   const runtime = readRuntime(paths);
   const root = existsSync(paths.rootConfig);
   const install = detectInstall();
+  const discovery = opts?.discovery ?? discoverCodexBins({ paths, liveHome });
   const heading = [
     formatInstallLine(install),
     `cli: ${install.cliPath || "-"}`,
@@ -589,6 +646,7 @@ export async function statusReport(paths: CobPaths = resolvePaths()): Promise<St
     `root config present: ${root} (read-only for cob)`,
     `profile: ${existsSync(paths.profile) ? paths.profile : "missing"}`,
     `catalog: ${existsSync(paths.catalog) ? paths.catalog : "missing"}`,
+    `catalog meta: ${existsSync(paths.catalogMeta) ? paths.catalogMeta : "missing"}`,
     `state: ${existsSync(paths.stateDir) ? paths.stateDir : "missing"}`,
   ];
   if (!liveHome) {
@@ -597,6 +655,8 @@ export async function statusReport(paths: CobPaths = resolvePaths()): Promise<St
   if (!runtime) {
     return finishStatusReport(liveHome, heading, ["gateway: stopped"], paths, {
       gatewayHealthy: false,
+      discovery,
+      inspect: opts?.inspect,
     });
   }
   let health = "unknown";
@@ -640,6 +700,8 @@ export async function statusReport(paths: CobPaths = resolvePaths()): Promise<St
   return finishStatusReport(liveHome, heading, details, paths, {
     runtimePort: runtime.port,
     gatewayHealthy,
+    discovery,
+    inspect: opts?.inspect,
   });
 }
 
@@ -648,17 +710,31 @@ function finishStatusReport(
   heading: string[],
   details: string[],
   paths: CobPaths,
-  opts: { runtimePort?: number; gatewayHealthy: boolean },
+  opts: {
+    runtimePort?: number;
+    gatewayHealthy: boolean;
+    discovery: CatalogDiscovery;
+    inspect?: InspectCodexIo;
+  },
 ): StatusReport {
   const overlay = assessPathsOverlay(paths, opts);
+  const cob = resolveCobConfig({ paths });
+  const provenance = assessCatalogProvenance({
+    catalogPath: paths.catalog,
+    metaPath: paths.catalogMeta,
+    discovery: opts.discovery,
+    spawnableOllamaSlugs: resolveSpawnableOllamaSlugs(cob),
+    io: opts.inspect,
+  });
   const summary = summarizeCobStatus({
     liveHome,
     overlay: overlay.state,
     gatewayHealthy: opts.gatewayHealthy,
+    catalogFreshness: provenance.freshness,
   });
   return {
     ok: summary.ok,
-    text: [`cob: ${summary.kind}`, ...heading, ...details, ...overlay.lines].join("\n"),
+    text: [`cob: ${summary.kind}`, ...heading, ...details, ...overlay.lines, ...provenance.lines].join("\n"),
   };
 }
 

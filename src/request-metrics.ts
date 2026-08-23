@@ -40,32 +40,36 @@ export type OllamaUsageMetrics = {
 };
 
 export function jsonUtf8Bytes(value: unknown): number {
-  if (value === undefined) return 0;
-  return Buffer.byteLength(JSON.stringify(value), "utf8");
+  return snapshotJson(value).bytes;
 }
 
 export function sha256Hex8(value: unknown): string {
-  if (value === undefined) return "-";
-  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex").slice(0, SHA_HEX_LEN);
+  return sha256Hex8FromJson(snapshotJson(value).json);
 }
 
 export function summarizeRequest(payload: JsonObject, decodedBytes: number): RequestMetrics {
   const tools = payload.tools;
   const input = payload.input;
+  const instructions = snapshotJson(payload.instructions);
+  const toolsSnap = snapshotJson(tools);
+  const inputSnap = snapshotJson(input);
+  const text = snapshotJson(payload.text);
+  const reasoning = snapshotJson(payload.reasoning);
+  const metadata = snapshotJson(payload.metadata);
   return {
     decodedBytes,
-    instructionsBytes: jsonUtf8Bytes(payload.instructions),
-    toolsBytes: jsonUtf8Bytes(tools),
-    inputBytes: jsonUtf8Bytes(input),
-    textBytes: jsonUtf8Bytes(payload.text),
-    reasoningBytes: jsonUtf8Bytes(payload.reasoning),
-    metadataBytes: jsonUtf8Bytes(payload.metadata),
+    instructionsBytes: instructions.bytes,
+    toolsBytes: toolsSnap.bytes,
+    inputBytes: inputSnap.bytes,
+    textBytes: text.bytes,
+    reasoningBytes: reasoning.bytes,
+    metadataBytes: metadata.bytes,
     toolsCount: countTools(tools),
     inputCount: Array.isArray(input) ? input.length : input === undefined ? 0 : 1,
     previousResponseId: typeof payload.previous_response_id === "string" && payload.previous_response_id.trim().length > 0,
     reasoningEffort: readReasoningEffort(payload),
-    toolsSha: sha256Hex8(tools),
-    instructionsSha: sha256Hex8(payload.instructions),
+    toolsSha: sha256Hex8FromJson(toolsSnap.json),
+    instructionsSha: sha256Hex8FromJson(instructions.json),
     inputByType: countInputByType(input),
     toolBytesByName: toolBytesByName(tools),
   };
@@ -104,6 +108,11 @@ export type OllamaWireMetrics = {
   skippedInvalid: number;
   skippedUnsupported: number;
   collisions: number;
+  aliasSha: string;
+  aliasesAdded: number;
+  aliasesRemoved: number;
+  aliasesReplaced: number;
+  usedAliasMissing: number;
 };
 
 export function formatOllamaWireMetrics(metrics: OllamaWireMetrics): string {
@@ -119,6 +128,11 @@ export function formatOllamaWireMetrics(metrics: OllamaWireMetrics): string {
     `promotion_skipped_invalid=${metrics.skippedInvalid}`,
     `promotion_skipped_unsupported=${metrics.skippedUnsupported}`,
     `promotion_collisions=${metrics.collisions}`,
+    `alias_sha=${metrics.aliasSha}`,
+    `alias_added=${metrics.aliasesAdded}`,
+    `alias_removed=${metrics.aliasesRemoved}`,
+    `alias_replaced=${metrics.aliasesReplaced}`,
+    `used_alias_missing=${metrics.usedAliasMissing}`,
   ].join(" ");
 }
 
@@ -126,15 +140,24 @@ export function extractOllamaUsage(envelope: unknown): OllamaUsageMetrics | unde
   if (!isRecord(envelope)) return undefined;
   const usage = isRecord(envelope.usage) ? envelope.usage : undefined;
   const details = usage && isRecord(usage.input_tokens_details) ? usage.input_tokens_details : undefined;
+  const promptEvalCount = readFiniteNumber(envelope.prompt_eval_count) ?? readFiniteNumber(usage?.prompt_eval_count);
+  const evalCount = readFiniteNumber(envelope.eval_count) ?? readFiniteNumber(usage?.eval_count);
+  const inputTokens =
+    readFiniteNumber(usage?.input_tokens) ?? readFiniteNumber(usage?.prompt_tokens) ?? promptEvalCount;
+  const outputTokens =
+    readFiniteNumber(usage?.output_tokens) ?? readFiniteNumber(usage?.completion_tokens) ?? evalCount;
+  const totalTokens =
+    readFiniteNumber(usage?.total_tokens) ??
+    (inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined);
   const metrics: OllamaUsageMetrics = {
-    inputTokens: readFiniteNumber(usage?.input_tokens) ?? readFiniteNumber(usage?.prompt_tokens),
-    outputTokens: readFiniteNumber(usage?.output_tokens) ?? readFiniteNumber(usage?.completion_tokens),
+    inputTokens,
+    outputTokens,
     cachedInputTokens:
       readFiniteNumber(usage?.cached_input_tokens) ??
       readFiniteNumber(details?.cached_tokens) ??
       readFiniteNumber(usage?.prompt_cache_hit_tokens),
-    totalTokens: readFiniteNumber(usage?.total_tokens),
-    promptEvalCount: readFiniteNumber(envelope.prompt_eval_count) ?? readFiniteNumber(usage?.prompt_eval_count),
+    totalTokens,
+    promptEvalCount,
     promptEvalDurationMs: durationToMs(
       envelope.prompt_eval_duration ?? usage?.prompt_eval_duration,
     ),
@@ -167,11 +190,22 @@ function countTools(tools: unknown): number {
   return flattenTools(tools).length;
 }
 
+function snapshotJson(value: unknown): { json?: string; bytes: number } {
+  if (value === undefined) return { bytes: 0 };
+  const json = JSON.stringify(value);
+  return { json, bytes: Buffer.byteLength(json, "utf8") };
+}
+
+function sha256Hex8FromJson(json: string | undefined): string {
+  if (json === undefined) return "-";
+  return createHash("sha256").update(json, "utf8").digest("hex").slice(0, SHA_HEX_LEN);
+}
+
 function toolBytesByName(tools: unknown): NamedByteCount[] {
   const counts = new Map<string, number>();
   for (const tool of flattenTools(tools)) {
     const name = sanitizeToken(toolName(tool));
-    counts.set(name, (counts.get(name) ?? 0) + jsonUtf8Bytes(tool));
+    counts.set(name, (counts.get(name) ?? 0) + snapshotJson(tool).bytes);
   }
   return [...counts.entries()]
     .map(([name, bytes]) => ({ name, bytes }))

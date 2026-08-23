@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -81,8 +81,9 @@ describe("gateway", () => {
       service_tier: "priority",
     });
     assert.equal(sanitized.model, "deepseek-v4-flash:cloud");
-    assert.equal(sanitized.store, false);
+    assert.equal("store" in sanitized, false);
     assert.equal("service_tier" in sanitized, false);
+    assert.deepEqual(Object.keys(sanitized).sort(), ["input", "model", "reasoning"].sort());
   });
 
   it("maps Codex medium and xhigh reasoning onto DeepSeek high before Ollama", () => {
@@ -98,7 +99,8 @@ describe("gateway", () => {
       input: "hi",
       reasoning_effort: "xhigh",
     });
-    assert.equal(fromTopLevel.reasoning_effort, "high");
+    assert.equal("reasoning_effort" in fromTopLevel, false);
+    assert.deepEqual(fromTopLevel.reasoning, { effort: "high" });
 
     const passthrough = sanitizeOllamaPayload({
       model: "ollama/deepseek-v4-flash:0731-cloud",
@@ -396,6 +398,11 @@ describe("gateway", () => {
     });
     assert.equal("status" in prepared && "body" in prepared, true);
     assert.equal((prepared as { body: { error: { code: string } } }).body.error.code, "compaction_context_required");
+  });
+
+  it("returns the same object when an Ollama SSE event needs no rewrite", () => {
+    const event = { type: "response.output_text.delta", delta: "hi" };
+    assert.equal(normalizeOllamaResponse(event, "ollama/deepseek-v4-flash:cloud"), event);
   });
 
   it("rewrites bare Ollama model ids and drops response encrypted_content", () => {
@@ -792,6 +799,89 @@ describe("gateway", () => {
       assert.equal(ollamaHits, 2);
       assert.equal(nativeHits, 0);
     } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("fails closed when the Ollama summarizer calls a tool after a no-tools compact request", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-compact-tool-"));
+    const seen: { body?: Record<string, unknown> } = {};
+    let ollamaHits = 0;
+    let nativeHits = 0;
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      stateDir,
+      catalog: TEST_CATALOG,
+      nativeFetch: async () => {
+        nativeHits += 1;
+        return new Response("native must not compact Ollama threads", { status: 500 });
+      },
+      ollamaFetch: async (_url, init) => {
+        ollamaHits += 1;
+        seen.body = JSON.parse(init.body.toString("utf8")) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            id: "sum-tool",
+            object: "response",
+            status: "completed",
+            output: [{ type: "function_call", name: "exec_command", arguments: "{}" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:0731-cloud",
+          tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+          input: [
+            { type: "message", role: "user", content: [{ type: "input_text", text: "task" }] },
+            { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" },
+            { type: "function_call_output", call_id: "c1", output: "ok" },
+            { type: "compaction_trigger" },
+          ],
+        }),
+      });
+      const body = (await response.json()) as {
+        error?: { code?: string; message?: string; requires_full_context?: boolean };
+      };
+      assert.equal(response.status, 400);
+      assert.equal(body.error?.code, "compaction_summary_invalid");
+      assert.equal(
+        body.error?.message,
+        "Ollama compact summarizer called a tool; cob refuses to treat that as a handoff",
+      );
+      assert.equal(body.error?.requires_full_context, true);
+      assert.equal(nativeHits, 0);
+      assert.equal(ollamaHits, 1);
+      assert.equal("tools" in (seen.body ?? {}), false);
+      assert.equal(JSON.stringify(seen.body).includes("compaction_trigger"), false);
+      const summarizerInput = Array.isArray(seen.body?.input) ? seen.body.input : [];
+      assert.equal(
+        summarizerInput.some(
+          (item) => typeof item === "object" && item !== null && (item as { type?: string }).type === "function_call",
+        ),
+        false,
+      );
+      assert.match(JSON.stringify(summarizerInput), /compact item function_call/);
+      assert.match(JSON.stringify(summarizerInput), /compact item function_call_output/);
+      const failLine = logs.find((line) => line.includes("ollama compact failed"));
+      assert.equal(failLine, "[cob] ollama compact failed code=compaction_summary_invalid");
+      assert.equal(existsSync(join(stateDir, "checkpoints")), false);
+      assert.equal(existsSync(join(stateDir, "compact-archive")), false);
+    } finally {
+      console.error = originalError;
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
@@ -1484,6 +1574,422 @@ describe("gateway", () => {
       });
       assert.equal(ok.ok, true, await ok.text());
       assert.equal(nativeModel, "gpt-new");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("forwards native request bytes unchanged including unreviewed fields", async () => {
+    const requestBody = JSON.stringify({
+      model: "gpt-5.6-luna",
+      input: "hi",
+      foo_future: true,
+      conversation: { id: "keep-native" },
+    });
+    let seen: Buffer | undefined;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      nativeFetch: async (_url, init) => {
+        seen = init.body;
+        return new Response(JSON.stringify({ ok: "native" }), { status: 200 });
+      },
+      ollamaFetch: async () => new Response("must not hit Ollama", { status: 500 }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: requestBody,
+      });
+      assert.equal(response.ok, true);
+      assert.equal(seen?.toString("utf8"), requestBody);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("snapshots ordinary and tools Ollama outbound keys and rejects unknown fields", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      ollamaFetch: async (_url, init) => {
+        sent.push(JSON.parse(init.body.toString("utf8")) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ok: "ollama" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    try {
+      const ordinary = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: "hi",
+          store: false,
+          metadata: { x: 1 },
+        }),
+      });
+      assert.equal(ordinary.ok, true, await ordinary.text());
+
+      const tools = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: "hi",
+          tools: [{ type: "function", name: "shell" }],
+          parallel_tool_calls: true,
+        }),
+      });
+      assert.equal(tools.ok, true, await tools.text());
+
+      const unknown = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: "hi",
+          foo_future: true,
+        }),
+      });
+      assert.equal(unknown.status, 400);
+      assert.equal(await errorCode(unknown), "ollama_field_unsupported");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+    assert.deepEqual(Object.keys(sent[0]!).sort(), ["input", "model"]);
+    assert.deepEqual(Object.keys(sent[1]!).sort(), ["input", "model", "tools"]);
+  });
+
+  it("returns a 429 with one Ollama attempt and preserved Retry-After", async () => {
+    let attempts = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      ollamaFetch: async () => {
+        attempts += 1;
+        return new Response(JSON.stringify({ error: { message: "too many concurrent requests" } }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "7" },
+        });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi" }),
+      });
+      const payload = (await response.json()) as { error?: { code?: string; retry_after?: string; message?: string } };
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get("retry-after"), "7");
+      assert.equal(payload.error?.code, "ollama_rate_limited");
+      assert.equal(payload.error?.retry_after, "7");
+      assert.match(String(payload.error?.message), /retry later|concurrency/i);
+      assert.doesNotMatch(String(payload.error?.message), /cob start fixes/);
+      assert.equal(attempts, 1);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("omits untrusted usage instead of inventing token counts", async () => {
+    const lines: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(args.map((arg) => String(arg)).join(" "));
+    };
+    const port = await freePort();
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-nousage-"));
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(
+          JSON.stringify({
+            id: "resp_nousage",
+            object: "response",
+            output: [{ type: "message", content: "secret-output" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "secret-prompt" }),
+      });
+      assert.equal(response.ok, true, await response.text());
+      const joined = lines.join("\n");
+      assert.match(joined, /ollama usage omitted/);
+      assert.equal(joined.includes("secret-prompt"), false);
+      assert.equal(joined.includes("secret-output"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("times out native and Ollama header waits with upstream_headers_timeout", async () => {
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      nativeHeadersMs: 40,
+      ollamaHeadersMs: 200,
+      nativeFetch: async (_url, init) =>
+        new Promise((_, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          });
+        }),
+      ollamaFetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return new Response(JSON.stringify({ ok: "ollama" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    try {
+      const native = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "o3", input: "hi" }),
+      });
+      assert.equal(native.status, 504);
+      assert.equal(await errorCode(native), "upstream_headers_timeout");
+
+      const ollama = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi" }),
+      });
+      assert.equal(ollama.ok, true, await ollama.text());
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("succeeds when headers arrive just before the route deadline", async () => {
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      nativeHeadersMs: 80,
+      ollamaHeadersMs: 80,
+      nativeFetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return new Response(JSON.stringify({ ok: "native" }), { status: 200 });
+      },
+      ollamaFetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"ok":true}\n\n'));
+            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const native = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "o3", input: "hi" }),
+      });
+      assert.equal(native.ok, true, await native.text());
+      const ollama = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      assert.equal(ollama.ok, true, await ollama.text());
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("fails a local Ollama refusal immediately instead of waiting the headers deadline", async () => {
+    const closed = await freePort();
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      ollamaUrl: `http://127.0.0.1:${closed}`,
+      ollamaHeadersMs: 240_000,
+    });
+    try {
+      const started = Date.now();
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi" }),
+      });
+      assert.ok(Date.now() - started < 2000);
+      assert.notEqual(await errorCode(response), "upstream_headers_timeout");
+      assert.notEqual(response.status, 504);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("idles between SSE chunks and still emits one error terminal plus [DONE]", { timeout: 3_000 }, async () => {
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      idleMs: 40,
+      ollamaFetch: async () => {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"delta":"one"}\n\n'));
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const started = Date.now();
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      const text = await response.text();
+      assert.ok(Date.now() - started < 1500);
+      assert.match(text, /idle_timeout|Upstream idle timeout/);
+      assert.match(text, /data: \[DONE\]/);
+      assert.ok(text.indexOf("idle_timeout") < text.indexOf("data: [DONE]") || text.includes("data: [DONE]"));
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("cancels the upstream headers wait when the client aborts", async () => {
+    let aborted = false;
+    let entered!: () => void;
+    const sawFetch = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      ollamaFetch: async (_url, init) => {
+        entered();
+        return new Promise((_, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          });
+        });
+      },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port,
+            path: "/v1/responses",
+            method: "POST",
+            headers: { "content-type": "application/json" },
+          },
+          () => reject(new Error("should not complete")),
+        );
+        req.on("error", () => resolve());
+        req.end(JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi" }));
+        void sawFetch.then(() => req.destroy());
+      });
+      const deadline = Date.now() + 500;
+      while (!aborted && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(aborted, true);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not idle-timeout a backpressured client", { timeout: 10_000 }, async () => {
+    const idleMs = 80;
+    let cancelled = false;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      idleMs,
+      ollamaFetch: async () => {
+        const stream = new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: {"ok":true}\n\n${"x".repeat(64 * 1024)}`));
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port,
+            path: "/v1/responses",
+            method: "POST",
+            headers: { "content-type": "application/json" },
+          },
+          (res) => {
+            res.pause();
+            setTimeout(() => {
+              try {
+                assert.equal(cancelled, false);
+                res.destroy();
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            }, idleMs * 4);
+          },
+        );
+        req.on("error", reject);
+        req.end(JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }));
+      });
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

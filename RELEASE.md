@@ -25,8 +25,8 @@ not copy `config.toml`.
 ## Cut a release
 
 1. Merge-gate on the checkout: `npx tsc --noEmit` and `npm test`.
-2. Set `package.json` `"version"` (semver). `0.x` until STATUS durability is
-   proven. Do not jump to `1.0.0` to look finished.
+2. Set `package.json` `"version"` (semver). Stay on `0.x`. The 26.818 Desktop
+   hop is in STATUS; do not jump to `1.0.0` to look finished.
 3. Add a `## x.y.z` section at the top of [CHANGELOG.md](./CHANGELOG.md).
 4. `npm run pack` (or `cob pack` from the checkout). This is
    `tsc -p tsconfig.build.json` then `npm pack`. Tests and harnesses stay out
@@ -47,10 +47,10 @@ Desktop keeps talking to whatever process already bound that port.
 # From the checkout, if a workspace cob still owns ~/.codex:
 node dist/cli.js stop --live-home
 
-npm install -g ./codex-ollama-bridge-0.1.5.tgz   # use the version you packed
-cob version    # expect: cob 0.1.5 (global)
+npm install -g ./codex-ollama-bridge-0.1.7.tgz   # use the version you packed
+cob version    # expect: cob 0.1.7 (global)
 cob start
-cob status     # gateway health ok; desktop overlay ok or ready
+cob status     # gateway health ok; desktop overlay ok or ready; catalog provenance fresh
 ```
 
 `cob restore` still does not revert a user-owned Desktop overlay in
@@ -58,6 +58,11 @@ cob status     # gateway health ok; desktop overlay ok or ready
 by hand (backup on this machine:
 `~/.codex/config.toml.pre-cob-desktop-20260819`). Snapshot SHA before any
 real-home config experiment.
+
+After a live catalog write, fully quit and reopen ChatGPT Desktop before
+judging picker changes. `cob status` `stale` or `unknown` means regenerate
+with `cob sync` or `cob start`; it is not fixed by restarting the gateway
+alone if the producer/consumer binaries still disagree.
 
 After this, further product work uses `cob start --dev`. Bump + pack +
 `npm install -g` only when the live Desktop/CLI gateway should move.

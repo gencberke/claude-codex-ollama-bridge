@@ -298,12 +298,26 @@ describe("compaction v2", () => {
       }).kind,
       "error",
     );
-    assert.equal(
+    assert.deepEqual(
       extractOllamaCompactSummary({
         status: "completed",
         output: [{ type: "function_call", name: "shell", arguments: "{}" }],
-      }).kind,
-      "error",
+      }),
+      {
+        kind: "error",
+        code: "compaction_summary_invalid",
+        message: "Ollama compact summarizer called a tool; cob refuses to treat that as a handoff",
+      },
+    );
+    assert.deepEqual(
+      extractOllamaCompactSummary({
+        status: "completed",
+        output: [
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: "handoff" }] },
+          { type: "custom_tool_call", name: "exec_command", input: "{}" },
+        ],
+      }),
+      { kind: "ok", text: "handoff" },
     );
   });
 
@@ -339,7 +353,12 @@ describe("compaction v2", () => {
     assert.equal(projected[1]?.type, "reasoning");
     assert.match(JSON.stringify(projected), /compact item web_search_call/);
     assert.match(JSON.stringify(projected), /ollama compact/);
-    assert.equal(projected.some((item) => item.type === "function_call" && item.name === "shell"), true);
+    assert.equal(
+      projected.some((item) => item.type === "function_call" || item.type === "function_call_output"),
+      false,
+    );
+    assert.match(JSON.stringify(projected), /compact item function_call/);
+    assert.match(JSON.stringify(projected), /name=shell/);
     const payload = buildOllamaSummarizerPayload({
       compactModel: "ollama/x",
       history: [{ type: "item_reference", id: "rs_1" }, { type: "web_search_call", status: "completed" }],

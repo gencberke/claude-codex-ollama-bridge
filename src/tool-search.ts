@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { jsonUtf8Bytes } from "./request-metrics.js";
+import { jsonUtf8Bytes, sha256Hex8 } from "./request-metrics.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
 
@@ -37,6 +37,11 @@ export type ToolSearchBridge = {
   skippedInvalid: number;
   skippedUnsupported: number;
   collisions: number;
+  aliasSha: string;
+  aliasesAdded: number;
+  aliasesRemoved: number;
+  aliasesReplaced: number;
+  usedAliasMissing: number;
 };
 
 export type ToolSearchToOllamaOptions = {
@@ -53,6 +58,11 @@ export function emptyToolSearchBridge(): ToolSearchBridge {
     skippedInvalid: 0,
     skippedUnsupported: 0,
     collisions: 0,
+    aliasSha: "-",
+    aliasesAdded: 0,
+    aliasesRemoved: 0,
+    aliasesReplaced: 0,
+    usedAliasMissing: 0,
   };
 }
 
@@ -72,12 +82,15 @@ export function applyDeferredToolsToOllama(
   const bridge = emptyToolSearchBridge();
   const leafCap = options.leafCap ?? PROMOTED_LEAF_CAP;
   const bytesCap = options.bytesCap ?? PROMOTED_BYTES_CAP;
+  const priorAliases = Array.isArray(payload.tools) ? existingFunctionNames(payload.tools) : new Set<string>();
+  const usedAliases = collectUsedFunctionAliases(payload.input);
   if (requestHasToolSearchDefinition(payload.tools)) {
     promoteSearchOutputLeaves(payload, bridge, leafCap, bytesCap);
     flattenNamespacedHistoryCalls(payload, bridge);
   }
   if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(rewriteToolDefinition);
   if (Array.isArray(payload.input)) payload.input = payload.input.map(rewriteHistoryItemToOllama);
+  recordAliasMetrics(bridge, priorAliases, Array.isArray(payload.tools) ? existingFunctionNames(payload.tools) : new Set(), usedAliases);
   if (Array.isArray(payload.output)) payload.output = payload.output.map(rewriteHistoryItemToOllama);
   return bridge;
 }
@@ -88,14 +101,25 @@ export function rewriteToolSearchFromOllama(value: unknown, bridge?: ToolSearchB
 }
 
 function rewriteFromOllama(value: unknown, bridge: ToolSearchBridge): unknown {
-  if (Array.isArray(value)) return value.map((item) => rewriteFromOllama(item, bridge));
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const rewritten = rewriteFromOllama(item, bridge);
+      if (rewritten !== item) changed = true;
+      return rewritten;
+    });
+    return changed ? next : value;
+  }
   if (!isRecord(value)) return value;
   if (isFunctionCallItem(value)) return rewriteFunctionCallFromOllama(value, bridge);
+  let changed = false;
   const next: JsonObject = {};
   for (const [key, nested] of Object.entries(value)) {
-    next[key] = rewriteFromOllama(nested, bridge);
+    const rewritten = rewriteFromOllama(nested, bridge);
+    if (rewritten !== nested) changed = true;
+    next[key] = rewritten;
   }
-  return next;
+  return changed ? next : value;
 }
 
 function rewriteFunctionCallFromOllama(item: JsonObject, bridge: ToolSearchBridge): JsonObject {
@@ -227,8 +251,13 @@ function promoteSearchOutputLeaves(
       const alias = canonicalAlias(identity.namespace, identity.name);
       if (occupied.has(alias)) {
         const existing = bridge.aliases.get(alias);
-        if (existing && identityKey(existing) !== leafKey) bridge.collisions += 1;
-        else if (!existing) bridge.collisions += 1;
+        if (existing && identityKey(existing) !== leafKey) {
+          bridge.collisions += 1;
+          bridge.aliasesReplaced += 1;
+        } else if (!existing) {
+          bridge.collisions += 1;
+          bridge.aliasesReplaced += 1;
+        }
         continue;
       }
       const def = normalizePromotedFunction(leaf, identity, alias);
@@ -380,6 +409,51 @@ function existingFunctionNames(tools: unknown[]): Set<string> {
     if (name) names.add(name);
   }
   return names;
+}
+
+function collectUsedFunctionAliases(input: unknown): Set<string> {
+  const used = new Set<string>();
+  if (!Array.isArray(input)) return used;
+  for (const item of input) {
+    if (!isRecord(item) || !isFunctionCallItem(item)) continue;
+    const name = functionName(item);
+    if (name && name !== TOOL_SEARCH_NAME) used.add(name);
+  }
+  return used;
+}
+
+function recordAliasMetrics(
+  bridge: ToolSearchBridge,
+  prior: Set<string>,
+  after: Set<string>,
+  used: Set<string>,
+): void {
+  const priorLeaves = leafAliasSet(prior);
+  const afterLeaves = leafAliasSet(after);
+  let added = 0;
+  let removed = 0;
+  for (const name of afterLeaves) {
+    if (!priorLeaves.has(name)) added += 1;
+  }
+  for (const name of priorLeaves) {
+    if (!afterLeaves.has(name)) removed += 1;
+  }
+  let missing = 0;
+  for (const name of used) {
+    if (!afterLeaves.has(name) && !bridge.aliases.has(name)) missing += 1;
+  }
+  bridge.aliasesAdded = added;
+  bridge.aliasesRemoved = removed;
+  bridge.usedAliasMissing = missing;
+  bridge.aliasSha = afterLeaves.size > 0 ? sha256Hex8([...afterLeaves].sort()) : "-";
+}
+
+function leafAliasSet(names: Set<string>): Set<string> {
+  const leaves = new Set<string>();
+  for (const name of names) {
+    if (name !== TOOL_SEARCH_NAME) leaves.add(name);
+  }
+  return leaves;
 }
 
 function normalizePromotedFunction(

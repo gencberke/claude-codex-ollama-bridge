@@ -1,32 +1,31 @@
-# Status — 2026-08-20
+# Status — 2026-08-23
 
 Living checkpoint. Product contract stays in [README.md](./README.md). Live
 gold standards stay in [LIVE-TESTING.md](./LIVE-TESTING.md). Agents start at
 [AGENTS.md](./AGENTS.md). Release cut: [RELEASE.md](./RELEASE.md). History:
 [CHANGELOG.md](./CHANGELOG.md).
 
-Priority while this snapshot is current: **stability, performance, and
-throughput** of the path that already works. Catalog picker polish (sol /
-terra / luna / 0731, 256k cap, DeepSeek effort ladder) is **live on 0.1.2**.
-It is not native GPT gold.
+Priority: **stability and throughput** of the working Desktop+cob path.
+Picker polish, native GPT, GPT→0731 V1 spawn, and the 26.818 app hop are
+recorded below. Next live gap is G8 compact shrink.
 
-**Important subtask (not low-priority):** prove the working Desktop+cob path
-**survives Codex updates and ChatGPT/Codex quit–reopen**, without a one-shot
-manual overlay. Today the app binary is stock; durability is unproven. Desktop
-rewrites `config.toml`, `app-server` ignores `--profile cob`, and cob is a
-separate process on `openai_base_url`. After an update or a quit–reopen, picker
-and 0731 routing must still hit cob, or `cob status` must say why not. A dead
-gateway after reboot is recovered with `cob start` — cob does not install
-launchd or a login item. Do not patch ChatGPT.app or steal native slugs to
-“survive” an update.
+**This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
+`codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
+lists 0731, native parent and V1 child still hit cob **0.1.6**, overlay keys
+and user-owned `[agents]` defaults survived the app rewrite. cob pid did not
+change (gateway is not the app). A later update can still drop overlay or
+hide `ollama/...` (19694-class); then `cob status` must say why. Reboot
+recovery stays `cob start` — no launchd. Do not patch ChatGPT.app or steal
+native slugs to “survive” an update.
 
 ## Surfaces
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | loopback `127.0.0.1:18790` (live global **0.1.5**), Ollama-thread summarize compact. Dev isolate: `cob start --dev` → `~/.codex-cob-dev` port **18791**. |
+| cob gateway | loopback `127.0.0.1:18790` (live global **0.1.7**, pid **49194**), Ollama-thread summarize compact. Dev isolate: `cob start --dev` → `~/.codex-cob-dev` port **18791**. |
 | Codex CLI | 0.147.0 — `codex --profile cob` loads `~/.codex/cob.config.toml` |
-| ChatGPT Desktop | 26.810.52044, bundled `codex-cli 0.148.0-alpha.9` |
+| ChatGPT Desktop | **26.818.41509** (WP0 2026-08-23), bundled `codex-cli 0.149.0-alpha.4.1`. Earlier gold hop: 26.818.22352 / alpha.21 |
+| Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). 0.32.14→0.32.15 on 2026-08-21; cob unchanged. |
 | Spawn slot | `cob.toml` `[subagents].models` → `ollama/deepseek-v4-flash:0731-cloud` |
 
 Desktop starts `codex app-server` **without** `--profile cob`. Named-profile
@@ -44,9 +43,20 @@ revert a user-owned Desktop trial.
   `config.toml` (`model_provider = "openai"`, `openai_base_url`,
   `model_catalog_json`), Desktop listed `ollama/deepseek-v4-flash:0731-cloud`.
   [openai/codex#19694](https://github.com/openai/codex/issues/19694) did **not**
-  hide that slug on this build. OpenCodex `nativeAlias` (stealing a bare
-  `gpt-5.6-*` id) is **not** the picker fix here and must not become cob
-  default.
+  hide that slug on 26.810.52044 or on **26.818.22352**. OpenCodex
+  `nativeAlias` (stealing a bare `gpt-5.6-*` id) is **not** the picker fix
+  here and must not become cob default.
+- **Desktop update hop (2026-08-20 evening):** ChatGPT **26.818.22352** /
+  bundled `codex-cli 0.148.0-alpha.21` on live cob **0.1.6**. `cob: ok`,
+  overlay still `openai_base_url` + `model_catalog_json`, `[agents]`
+  `default_subagent_model` / `default_subagent_reasoning_effort` still
+  present, `multi_agent_v2 = false`. Desktop rewrote `config.toml` (SHA
+  changed; persisted `model = ollama/deepseek-v4-flash:0731-cloud` and
+  `model_reasoning_effort = "high"`). User: main chat, picker, and subagent
+  create still work. Wire: luna parent `target=native`; 0731 child
+  `target=ollama` first turn `input_n=3` `effort=high` `tools_n=15`
+  `instr_sha=a46b8e00`. Gateway pid **39122** unchanged across the app
+  update.
 - **Desktop native GPT (luna high, 2026-08-20 afternoon):** after ChatGPT
   credits returned, a `gpt-5.6-luna` `effort=high` thread hit cob
   `target=native` (`tools_n=0`, `b_tools=0`). Native body is byte-forwarded
@@ -54,6 +64,22 @@ revert a user-owned Desktop trial.
   `custom_tool_call` in `input_by`, not cob `tools[]`. Isolated CLI `exec` is
   still a separate trace. Picker success alone remains insufficient; this
   wire trace is the native gold that quota had blocked.
+- **Desktop GPT parent → 0731 V1 child (luna xhigh, 2026-08-20 evening):**
+  parent `gpt-5.6-luna` `effort=xhigh` `target=native` (stable zstd magic
+  `…80c37`, `tools_n=0`, `custom_tool_call` growing ~16→27 while decoded
+  ~220k→293k). Child `ollama/deepseek-v4-flash:0731-cloud` `target=ollama`,
+  `b_instr=17947` / `instr_sha=a46b8e00` / `tools_n=14` / `tools_sha=1d7fd3c9`
+  (Direct set, no 168-tool flatten). First child turn `input_n=3`; later
+  child turns used `function_call`. `[cob] ollama wire` published
+  (`promoted_n=0`); no `encrypted_content_unsupported`. Child `effort` was
+  `high` then `max` (spawn thinking, not cob mapping of parent `xhigh`).
+  Child `prev_id=0` (Desktop sent full child `input`, cob DAG unused).
+  Codex sidebar `threadId` is the luna parent; the child is an `agent_id`
+  observed via parent `send_input` / `wait_agent`, not `list_threads`.
+  Closing then reopening the same `agent_id` 404 is Codex lifecycle, not
+  cob. `agents/*.toml` was not required. Isolated L3 harness and G3 packet
+  dump of Ollama headers remain separate traces; cob still allowlists
+  Ollama headers in code.
 - **Desktop Ollama parent:** DeepSeek 0731 turns reach cob `target=ollama`.
   Simple chat ≈ one Ollama `/v1/responses`; a web-search turn ≈ two model
   calls plus a separate Codex `web search` meter. Codex Cloud usage attributes
@@ -104,18 +130,20 @@ Desktop may persist picker choice back into root `config.toml` (`model =`,
 
 ## Not proven / blocked
 
-- **Native GPT parent → Ollama V1 child** (LIVE-TESTING L3–L5: G1–G2, G7–G8,
-  G10) as a named Desktop gold. Same-afternoon cob log interleaved one 0731
-  request (`b_instr=17947`, `input_n=3`, `tools_n=14`) between luna-high
-  turns — spawn-shaped, not G2–G5 gold until the luna thread actually opens
-  `ollama/deepseek-v4-flash:0731-cloud` as a V1 child. Earlier CLI harness
-  spawn is not Desktop gold. Named files under `~/.codex/agents/` are **not**
-  required: 0731 is already in the catalog spawn window (`visibility=list`).
-  cob does not write `agents/*.toml`.
+- **Isolated L3 harness** and a header dump of the Ollama upstream request
+  (LIVE-TESTING G3) for this same GPT→0731 topology. Desktop cob logs already
+  show G1 + G2 + child tools and no encrypted Ollama reject. G7–G8 on the
+  **child** thread were not this run.
 - **G8 follow-up shrink** (`replay_ratio << 1` on the Ollama `/v1/responses`
-  cob emits). Post-compact Desktop turns exist; upstream item/byte counts
-  were not captured. Isolated L5 harness still unrun. Native GPT compact
-  stays ChatGPT passthrough.
+  cob emits). **2026-08-23 20:15 Desktop auto-compact** on 0731 (live cob
+  `0.1.6`, thread `edd` long-read goal) failed before a handoff: Codex sent
+  `compaction_trigger` on `input_n=365` (`function_call:146` /
+  `function_call_output:146`, decoded ~1.14MB, `effort=max`). The summarizer
+  wire was correct (`tools_n=0`, `wire_bytes=1121005`, no trigger). 0731
+  still emitted a tool call; cob returned
+  `compaction_summary_invalid` / `requires_full_context` and Desktop stalled
+  with that message. No envelope, no follow-up, no `replay_ratio`. Isolated
+  L5 harness still unrun. Native GPT compact stays ChatGPT passthrough.
 - **Ollama parent → GPT child** — out of product; still unsupported.
 
 ## Desktop trial (this machine)
@@ -127,24 +155,26 @@ User-owned, reversible, **not** a cob product path:
 - Revert: copy the backup over `config.toml`, fully quit and reopen ChatGPT.
 - Gateway must stay up on the port in `openai_base_url`.
 
-## Durability (important, not done)
+## Durability
 
-Must still work after:
+**26.810.52044 → 26.818.22352 is done** on this machine (picker, native
+parent, 0731 V1 child, overlay keys kept). Pin/re-verify the **current**
+ChatGPT build after the next upgrade.
 
-1. **ChatGPT / Codex fully quit and reopen** — cob process is not the app;
-   overlays and `cob-catalog.json` must still be the catalog Desktop loads;
-   port in `openai_base_url` must be the live gateway (or `cob start` recovers
-   it).
-2. **`codex update` / Desktop auto-update** — new bundled `app-server` must
-   keep listing `ollama/...` from `model_catalog_json` and routing through
-   loopback. A 19694-style allowlist regression is a compatibility break, not
-   a cob spawn-window bug. Pin/re-verify this ChatGPT build (26.810.52044)
-   after any upgrade.
-3. **Desktop config rewrite** — the app already persists `model` and
-   `model_reasoning_effort`. It must not silently drop `openai_base_url` /
-   `model_catalog_json`. If it does, that is the durability bug to fix
-   (detect + user-owned restore path), not cob writing `config.toml` as a
-   product default.
+Still true:
+
+1. **ChatGPT / Codex fully quit and reopen** (without an update) — cob is
+   not the app; this hop already relaunched Desktop while cob pid **39122**
+   stayed. A later cold quit is optional confirmation, not a blocker.
+2. **The next `codex update` / Desktop auto-update** — new bundled
+   `app-server` must keep listing `ollama/...` from `model_catalog_json`. A
+   19694-style allowlist regression is a compatibility break, not a cob
+   spawn-window bug.
+3. **Desktop config rewrite** — this hop persisted `model` /
+   `model_reasoning_effort` and **did not** drop `openai_base_url` /
+   `model_catalog_json` or the user-owned `[agents]` spawn defaults. If a
+   later rewrite drops those keys, that is the durability bug (detect +
+   user-owned restore), not cob writing `config.toml` as a product default.
 
 Reboot / a dead cob process is **not** an autostart product. Run `cob start`.
 
@@ -155,7 +185,7 @@ action. It read-only inspects root `model_provider`, `openai_base_url`, and
 or mismatched keys print `desktop overlay: broken` plus a user-owned restore
 hint. Gateway down with keys still pointing at cob prints
 `desktop overlay: ready` (`cob: ready`). Default `cob status` does not spawn
-Codex or probe Ollama. This is not live quit/reopen or update proof.
+Codex or probe Ollama.
 
 `cob restore` remaining overlay-only is still correct; durability is “the
 trial keeps working across app lifecycle,” not “cob owns root config.”
@@ -172,7 +202,7 @@ in the catalog with `visibility=hide`. Thinking Ollama rows advertise `none` /
 243200 on 0731). `nativeAlias` remains out of product.
 
 Desktop context **bar** is `used / advertised`, not a cob transcript merge.
-Same ChatGPT Desktop 0.148.0-alpha.9, first short turn:
+Same ChatGPT Desktop 0.148.0-alpha.9 (pre-26.818), first short turn:
 
 | Path | `input_tokens` | Advertised window | Bar |
 | --- | --- | --- | --- |
@@ -182,19 +212,39 @@ Same ChatGPT Desktop 0.148.0-alpha.9, first short turn:
 
 The ~61k 0731 first-turn meter was already there on 1M; 0.1.2 only shrank the
 denominator. Gateway zstd bodies match the split (~17–19 KB native vs ~50 KB
-0731). cob `base_instructions` on 0731 is 207 characters. Do not treat the
+0731). cob `base_instructions` on 0731 is cob-owned
+(`OLLAMA_BASE_INSTRUCTIONS`, 290 characters). Do not treat the
 26% bar as previous-chat leakage.
 
 ## Next live work
 
-0. **Durability** — ChatGPT quit–reopen and a Codex/Desktop update (or a
-   documented pin + re-verify). Picker + 0731 + spawn still hit cob, or
-   `cob status` explains the break. Reboot recovery is `cob start`, not a
-   cob-owned LaunchAgent.
-1. **G8 on the compacted 0731 thread** — observe in daily use; capture
-   Ollama input = handoff + later turns (`replay_ratio << 1`), no
-   `encrypted_content` / `cob1.` on Ollama. Isolated L5 still useful as a
-   recorded harness. Native GPT compact stays ChatGPT passthrough.
-2. **GPT parent → 0731 child** on the luna thread (catalog slug, not
-   `~/.codex/agents/*.toml`). Pass: G1–G5 on the wire. Take a versioned
-   build after that Desktop gold, not before.
+0. **G8 on the compacted 0731 thread** — cob **0.1.7** is installed
+   globally (pid **49194**, health ok; recut same evening to drop Codex
+   `client_metadata` / `stream_options`). Live `cob status` is `unknown`:
+   PATH Codex 0.147.0 rejects the Desktop 0.149 candidate (native row
+   missing `supports_parallel_tool_calls`). cob kept the last catalog and
+   wrote no sidecar. Overlay still `ok`. Do not repair native rows. G8 is
+   still the WP7 broker, now with a named failure stage: **summarizer
+   extract**, not tools leak or envelope leak.
+   2026-08-23 20:15 auto-compact: inbound `compaction_trigger` after ~1.14MB
+   / 146 tool pairs; outbound summarizer `tools_n=0`; 0731 called a tool;
+   cob refused the handoff. cob **0.1.7** flattens those tool items to notes
+   and accepts mixed text+tool output. Prompt, effort, 256k cap, and
+   threshold are unchanged. Isolated L5 still useful as a recorded harness.
+   Native GPT compact stays ChatGPT passthrough. WP0 2026-08-23 evening:
+   Desktop is now `26.818.41509` / bundled `0.149.0-alpha.4.1`. Root-config
+   SHA `1c4bacffddc1679d11f1c8b8c3623f0876eb1dd577936f1517f7a9ce6c809839`
+   was recorded and not written by cob. A later same-evening read-only check
+   saw `996771deaf2f8aa28ce8c24ff505ed72d70ea53f0c9e2b978fa8e49c3f93147c`
+   after the 0731 auto-compact stall (Desktop/user rewrite).
+1. **G11 catalog provenance / G12 search default / G13 Ollama boundary /
+   G14 timeouts / G15 hot-path** — shipped in cob **0.1.7** as isolated
+   coverage. Search defaults on for new/missing cob.toml; existing explicit
+   false is preserved. Live-proven only after the G11–G16 procedures in
+   LIVE-TESTING. G17/WP7 stays blocked on live G8 compact shrink.
+   Research on 2026-08-23 saw Desktop `26.818.41509` / bundled
+   `0.149.0-alpha.4.1` vs this file's 26.818.22352 / alpha.21 snapshot;
+   refresh WP0 before calling those gates shipped.
+2. **The next Desktop/Codex update** — re-verify picker + 0731 + spawn, or
+   `cob status` explains the break. Do not pack cob for an app update that
+   already kept overlay.

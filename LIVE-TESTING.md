@@ -49,6 +49,12 @@ inferred from Codex UI text.
 | G8 | cob envelope reaches Codex; follow-up Ollama `input` is the assistant handoff plus later turns (`replay_ratio << 1`); no envelope/Fernet on Ollama | Full pre-compact replay, ciphertext replay, or developer-note substitution |
 | G9 | `cob restore` deletes `cob-state/` and overlays; `config.toml` bytes unchanged | State leftover or root config mutate |
 | G10 | Real workspace effect: file created/edited on disk, or a tool call in the Ollama body succeeded | Model claimed a write with no inode change and no tool payload |
+| G11 | Packed global cob; sidecar names the Desktop producer and distinct validators; picker + native + Ollama routing after a full Desktop quit-and-reopen; `status` goes non-ready when only the recorded consumer identity is mutated, without spawning Codex; root-config SHA unchanged | Sidecar missing/wrong producer, status stays `ok` on stale identity, or Desktop judged without a full quit |
+| G12 | Three-turn Ollama sequence with one deferred MCP leaf and one V1 collaboration leaf; input/tool bytes and alias hashes by turn; explicit false is the rollback control | Picker-only success, missing promotion, or schemas/arguments in logs |
+| G13 | Redacted outbound key names and usage keys for one local and one cloud model, plus low/high/max reasoning; a 429 has one upstream attempt and preserved retry metadata | Extra retries, invented usage, ChatGPT headers on Ollama, or user text in logs |
+| G14 | Controlled header delay past 30s, one long cloud reasoning turn, and a quiet interval; record header latency vs first-event latency, max gap, timer category, continuation, and one client disconnect without a gateway crash | False idle while the client is backpressured, `connect_timeout` leftovers, or a hung gateway after abort |
+| G15 | For each kept hot-path optimization, 30 warm-up + 100 measured iterations of the large catalog/tool/SSE fixture; identical output hash and a repeatable win | Claimed speedup with changed bytes, or a no-op marked as a live pass |
+| G16 | Isolated three-turn and compact continuation; tamper value, provenance, and identity separately; each fails closed with full-context recovery and no new checkpoint | Tamper accepted, rewritten in place, or a successful-looking turn that cannot continue |
 
 Ollama child catalog rows advertise `shell_type=disabled` and no `apply_patch`.
 Record what Codex **actually** puts in the child `tools` array (G10). If the
@@ -118,6 +124,15 @@ Desktop 0731 parent `/compact` on this machine (2026-08-19) recorded G7
 (summarizer + `cob1.` envelope + replacement history). Isolated L5 and G8
 `replay_ratio` on the next turn remain the live shrink gate.
 
+2026-08-23 20:15 Desktop auto-compact on 0731 (live cob 0.1.6) is a named
+G8 failure, not a pass: inbound `compaction_trigger` after `input_n=365`
+and 146 tool pairs (decoded ~1.14MB); summarizer outbound `tools_n=0`
+`wire_bytes=1121005`; model returned a tool call; cob
+`compaction_summary_invalid` / `requires_full_context`; no envelope and no
+follow-up. Record `pre_compact_input_bytes`, summarizer `tools_n`, extract
+code, and whether a checkpoint was published. Do not change prompt, effort,
+256k cap, or threshold on the next unchanged-path retry.
+
 8k is a test lie. Production catalog cap is **256k** (0.1.2:
 `min(tag context_length, 256000)`), not 8k and not unbounded 1M. Desktop’s
 context bar is `used / advertised`. On this ChatGPT build a short native GPT
@@ -166,6 +181,76 @@ Interpret `replay_ratio`:
 
 Use L5 at 8k to force compact cheaply, then one run near the intended 256k cap
 once the 8k path is green. Do not tune cob from mock timings.
+
+## G11 — catalog provenance
+
+Live-home only after explicit authorization. Snapshot the user-owned root
+`config.toml` SHA first. Use the packed global tarball, not `dist/cli.js`.
+
+1. `cob start` / `cob sync` on live `~/.codex`.
+2. Read `cob-catalog.meta.json`: producer `kind=desktop` names the bundled
+   binary; validators include that Desktop file and PATH Codex when they are
+   distinct inodes.
+3. Fully quit and reopen ChatGPT Desktop. Prove picker, native GPT routing,
+   and Ollama routing (G1/G2 still apply).
+4. In an isolated copy of the sidecar, change only the recorded consumer
+   identity. `cob status` must become `stale` (or `unknown`) with exit 1 and
+   must not spawn Codex.
+5. Regenerate. Status returns to a non-stale first line when the gateway and
+   overlay are healthy.
+6. Root-config SHA is unchanged.
+
+Redact paths that are not needed; never record credentials or config
+contents. Aggregate token counts are allowed.
+
+## G12 — search default
+
+On the same packed build as G11, after Desktop quit-and-reopen:
+
+1. New/missing cob.toml should advertise search on Ollama rows (`tools_n` near
+   the deferred set, not the 168-tool flatten).
+2. Run three turns containing one deferred MCP leaf and one V1
+   `spawn_agent` leaf. Record input/tool bytes, `alias_sha`,
+   `alias_added`/`removed`/`replaced`, `used_alias_missing`, and that the
+   function executed.
+3. Repeat with `catalog.supports_search_tool = false` as the rollback control.
+4. Logs must not contain schemas, arguments, or outputs.
+
+## G13 — Ollama request boundary
+
+Capture redacted outbound key names and response usage keys for one local
+model and one cloud model, plus low/high/max reasoning. Force or fixture a
+429 at the gateway boundary and prove one upstream attempt and preserved
+`Retry-After`. Verify no user text, tool arguments, auth, or private state
+is logged.
+
+## G14 — Timeouts and backpressure
+
+Use a controlled loopback upstream to delay response headers past 30
+seconds, then run a long cloud reasoning turn and a stream with a
+deliberate quiet interval. Record response-header latency separately from
+first-event latency, maximum inter-event gap, completion state, timer
+category (`upstream_headers_timeout` vs `idle_timeout`), and continuation
+success. Also disconnect one client and prove upstream cancellation
+without a gateway crash.
+
+## G16 — Checkpoint identity
+
+In the isolated development home, run a normal three-turn continuation
+and a compact continuation, then tamper separately with stored value,
+provenance, and identity. Each tampered checkpoint must fail closed with
+the documented full-context recovery instruction and must not publish a
+new checkpoint. Restore the valid fixture and prove continuation still
+succeeds. Record checkpoint IDs, hashes, and transitions only.
+
+## G15 — Hot-path reductions
+
+For each retained optimization, run at least 30 warm-up and 100 measured
+iterations of the fixed large-catalog/tool/SSE fixture on the same Node
+version. Record median and p95 wall time, output hash, and fast-path hit
+rate. Keep the change only if output is identical and the improvement is
+outside run-to-run noise. Logs may record hit counts, never event or tool
+contents. If there is no measurable live claim, mark G15 not applicable.
 
 ## What static tests are for
 

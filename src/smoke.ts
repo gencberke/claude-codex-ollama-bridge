@@ -233,12 +233,19 @@ async function restoreLeavesRootUntouched(): Promise<void> {
     writeFileSync(paths.rootConfig, original);
     writeFileSync(paths.profile, "model_provider = \"openai\"\n");
     writeFileSync(paths.catalog, "{}\n");
+    writeFileSync(paths.catalogMeta, "{}\n");
     await restoreCob(paths);
     const after = readFileSync(paths.rootConfig, "utf8");
     if (after !== original) throw new Error("root config bytes changed");
     try {
       readFileSync(paths.profile);
       throw new Error("profile still present");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      readFileSync(paths.catalogMeta);
+      throw new Error("catalog metadata still present");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }

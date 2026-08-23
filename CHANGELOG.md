@@ -1,12 +1,70 @@
 # Changelog
 
-Versions follow [semver](https://semver.org/) on the `0.x` line until durability
-(ChatGPT quit–reopen / `codex update`) is proven. The git tag, `package.json`
-`version`, and `cob version` string must match. How to cut a release:
-[RELEASE.md](./RELEASE.md).
+Versions follow [semver](https://semver.org/) on the `0.x` line. The 26.818
+Desktop hop is in STATUS; do not jump to `1.0.0`. The git tag,
+`package.json` `version`, and `cob version` string must match. How to cut a
+release: [RELEASE.md](./RELEASE.md).
 
 Ship decisions still follow live traces in [LIVE-TESTING.md](./LIVE-TESTING.md),
 not this file.
+
+## Unreleased
+
+## 0.1.7 — 2026-08-23
+
+Intermediate patch: isolated WP1–WP6 plus the compact summarizer flatten.
+Live G8 / G11–G17 are not claimed by this cut.
+
+- Live `cob start` / `sync` generate native catalog rows with Desktop's
+  bundled Codex when that home is live macOS; `--dev` stays on
+  `COB_CODEX_BIN` / PATH. Every distinct consumer validates the candidate in
+  an isolated temporary `CODEX_HOME`.
+- `cob-catalog.meta.json` records producer/validators and the catalog SHA.
+  A crash between the two files is a detectable mismatch, not false freshness.
+- `cob status` first line also uses `stale` and `unknown`. A stale or
+  legacy-unprovenanced catalog is non-ready even if the gateway is healthy.
+  Status still does not spawn Codex. After a live catalog replacement it
+  tells you to fully quit and reopen ChatGPT Desktop.
+- V1 roster capacity is reported; overflow names omitted configured slugs.
+- `cob restore` deletes the sidecar with the other cob-owned artifacts.
+- New and missing `cob.toml` default `[catalog] supports_search_tool = true`.
+  An explicit false stays false and is not rewritten. Ollama wire logs add
+  alias hash/add/remove/replace counts, never schemas or arguments.
+- Ollama requests are clipped to the reviewed 0.32.15 Responses surface.
+  Unknown fields 400; advisory fields are dropped, including Codex
+  `client_metadata` and `stream_options`. `xhigh` still maps to `high`,
+  not `max`. 429 bodies keep `Retry-After` and are not retried.
+- Fetch-to-headers is a TTFB deadline (`upstream_headers_timeout`), not a
+  TCP connect timer: 30s native, 240s Ollama. Stream idle is 300s and pauses
+  while the Codex client applies write backpressure.
+- Gateway catalog reads cache the parsed file by inode/mtime/size. Request
+  metrics stringify each snapshot field once. Unchanged Ollama SSE events
+  keep the original `data:` bytes.
+- Checkpoint read recomputes history identity from value and provenance
+  and fails closed on mismatch. `sameHistory` then compares identity
+  sequences. Merge membership is set/map-keyed. Publish/cleanup reuse one
+  checkpoint listing. Clones stay at mutation boundaries.
+- Ollama summarizer history flattens `function_call` / `function_call_output`
+  to clipped notes. A tool call next to real handoff text is ignored;
+  tool-only output still fail-closes and logs `ollama compact failed code=…`.
+- `cob start` keeps the last known-good catalog when a detected consumer
+  rejects the new candidate (Desktop vs PATH schema skew). `cob sync` still
+  fails closed. No sidecar is written for the old implicit catalog.
+
+## 0.1.6 — 2026-08-20
+
+Fail-closed `cob status`, plus the Desktop GPT→0731 gold already on the wire.
+
+- `cob status` first line is `cob: ok|ready|broken|absent|unreadable`. Exit 0
+  only when this Codex home needs no action; otherwise exit 1. Default status
+  still spawns nothing. Isolated `--dev` homes do not treat a missing root
+  config as `absent`.
+- Ollama children stay V1. Parent spawn policy is user-owned
+  `~/.codex/AGENTS.md`; cob does not write that file or `agents/*.toml`.
+- Thinking catalog default remains `high` (`max` is still advertised).
+- Post-ship same evening: Desktop **26.818.22352** / `0.148.0-alpha.21` kept
+  picker, native parent, and 0731 V1 child on this gateway. Overlay keys and
+  user-owned `[agents]` defaults survived the app rewrite.
 
 ## 0.1.5 — 2026-08-20
 

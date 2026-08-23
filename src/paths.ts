@@ -6,6 +6,7 @@ export type CobPaths = {
   rootConfig: string;
   profile: string;
   catalog: string;
+  catalogMeta: string;
   cobConfig: string;
   pid: string;
   log: string;
@@ -25,6 +26,7 @@ export function resolvePaths(codexHome = resolveCodexHome()): CobPaths {
     rootConfig: join(codexHome, "config.toml"),
     profile: join(codexHome, "cob.config.toml"),
     catalog: join(codexHome, "cob-catalog.json"),
+    catalogMeta: join(codexHome, "cob-catalog.meta.json"),
     cobConfig: join(codexHome, "cob.toml"),
     pid: join(codexHome, "cob-gateway.pid"),
     log: join(codexHome, "cob-gateway.log"),

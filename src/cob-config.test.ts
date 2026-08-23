@@ -99,7 +99,7 @@ ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
     assert.equal(policy.compaction.provider, "native");
     assert.equal(policy.compaction.model, undefined);
     assert.equal(policy.compaction.ollamaThreads, "summarize");
-    assert.equal(policy.catalog?.supportsSearchTool, false);
+    assert.equal(policy.catalog?.supportsSearchTool, true);
     assert.deepEqual(resolveSpawnableOllamaSlugs(policy), ["ollama/deepseek-v4-flash:0731-cloud"]);
   });
 
@@ -121,10 +121,28 @@ ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
     assert.match(text, /ollama_threads = "summarize"/);
     assert.match(text, /model = "codex-mini"/);
     assert.match(text, /ollama\/deepseek-v4-flash:cloud/);
-    assert.match(text, /supports_search_tool = false/);
+    assert.match(text, /supports_search_tool = true/);
     const roundTrip = parseCobToml(text);
     assert.equal(roundTrip.compaction.ollamaThreads, "summarize");
-    assert.equal(roundTrip.catalog?.supportsSearchTool, false);
+    assert.equal(roundTrip.catalog?.supportsSearchTool, true);
+  });
+
+  it("honors explicit false and does not treat it as the new default", () => {
+    const parsed = parseCobToml(`[catalog]\nsupports_search_tool = false\n`);
+    assert.equal(parsed.catalog?.supportsSearchTool, false);
+    const dir = mkdtempSync(join(tmpdir(), "cob-toml-search-off-"));
+    const path = join(dir, "cob.toml");
+    writeCobToml(path, {
+      compaction: { provider: "native" },
+      subagents: {},
+      catalog: { supportsSearchTool: false },
+    });
+    const text = readFileSync(path, "utf8");
+    assert.match(text, /supports_search_tool = false/);
+    const resolved = resolveCobConfig({ paths: { cobConfig: path }, env: {} });
+    assert.equal(resolved.catalog?.supportsSearchTool, false);
+    writeCobToml(path, resolved);
+    assert.match(readFileSync(path, "utf8"), /supports_search_tool = false/);
   });
 
   it("parses catalog.supports_search_tool and prefers flags over file", () => {

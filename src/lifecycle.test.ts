@@ -24,6 +24,7 @@ import { assertCodexAcceptsCatalog } from "./catalog.js";
 import {
   isHealthyRuntime,
   isStartLeaseActive,
+  prepareProfileAndCatalog,
   readRuntime,
   readStartLease,
   restoreCob,
@@ -260,6 +261,7 @@ describe("lifecycle primitives", () => {
     const paths = resolvePaths(dir);
     writeFileSync(paths.profile, "stale-profile\n");
     writeFileSync(paths.catalog, "{}\n");
+    writeFileSync(paths.catalogMeta, "{}\n");
     writeFileSync(paths.cobConfig, "[compaction]\nprovider = \"native\"\n");
     mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
     writeFileSync(join(paths.stateDir, "secret-checkpoint"), "sensitive\n", { mode: 0o600 });
@@ -279,6 +281,7 @@ describe("lifecycle primitives", () => {
       assert.equal(finished, true);
       assert.equal(existsSync(paths.profile), false);
       assert.equal(existsSync(paths.catalog), false);
+      assert.equal(existsSync(paths.catalogMeta), false);
       assert.equal(existsSync(paths.cobConfig), false);
       assert.equal(existsSync(paths.stateDir), false);
       assert.equal(existsSync(paths.lock), false);
@@ -760,6 +763,42 @@ describe("overlay rollback and start lease", () => {
     }
   });
 
+  it("does not rewrite an existing supports_search_tool = false during sync", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-search-off-"));
+    const paths = resolvePaths(dir);
+    const bin = join(dir, "fake-codex");
+    writeFileSync(bin, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\",\"visibility\":\"list\"}]}'\n");
+    chmodSync(bin, 0o755);
+    writeFileSync(
+      paths.cobConfig,
+      `[compaction]\nprovider = "native"\n\n[catalog]\nsupports_search_tool = false\n`,
+    );
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    const previousBin = process.env.COB_CODEX_BIN;
+    process.env.COB_SKIP_CATALOG_CHECK = "1";
+    process.env.COB_CODEX_BIN = bin;
+    try {
+      await syncCatalog({
+        paths,
+        ollamaUrl: "http://127.0.0.1:1",
+        locked: true,
+        discovery: { liveHome: false, platform: "darwin", pathBin: bin },
+        inspect: { readVersion: () => "codex-cli test" },
+      });
+      assert.match(readFileSync(paths.cobConfig, "utf8"), /supports_search_tool = false/);
+      const catalog = JSON.parse(readFileSync(paths.catalog, "utf8")) as {
+        models: Array<{ slug?: string; supports_search_tool?: boolean }>;
+      };
+      const ollama = catalog.models.find((model) => String(model.slug).startsWith("ollama/"));
+      if (ollama) assert.equal(ollama.supports_search_tool, false);
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+      if (previousBin === undefined) delete process.env.COB_CODEX_BIN;
+      else process.env.COB_CODEX_BIN = previousBin;
+    }
+  });
+
   it("rolls back a failed detached start and restores previous overlays", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-start-rollback-"));
     const paths = resolvePaths(dir);
@@ -1042,10 +1081,59 @@ describe("cob status desktop overlay", () => {
     assert.match(report.text, /cob restore does not revert config.toml/);
   });
 
-  it("reports a ready Desktop overlay when root keys match cob and the gateway is stopped", async () => {
+  it("reports unknown provenance when a live catalog has no sidecar", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-unknown-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(
+      paths.catalog,
+      `${JSON.stringify({
+        models: [
+          { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+          { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+          { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+        ],
+      })}\n`,
+    );
+    writeFileSync(
+      paths.profile,
+      `model_provider = "openai"\nopenai_base_url = "http://127.0.0.1:18790/v1"\nmodel_catalog_json = ${JSON.stringify(paths.catalog)}\n`,
+    );
+    writeFileSync(
+      paths.rootConfig,
+      `model_provider = "openai"\nopenai_base_url = "http://127.0.0.1:18790/v1"\nmodel_catalog_json = ${JSON.stringify(paths.catalog)}\n`,
+    );
+    const report = await statusReport(paths, {
+      discovery: { liveHome: true, platform: "darwin", desktopBins: [], pathBin: undefined },
+    });
+    assert.equal(report.ok, false);
+    assert.match(report.text, /^cob: unknown\n/);
+    assert.match(report.text, /catalog provenance: unknown/);
+    assert.match(report.text, /cob sync or cob start/);
+  });
+
+  it("reports a ready Desktop overlay when root keys match cob, provenance is fresh, and the gateway is stopped", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-status-ready-"));
     const paths = resolvePaths(dir);
-    writeFileSync(paths.catalog, '{"models":[]}\n');
+    const bin = join(dir, "fake-codex");
+    writeFileSync(bin, "#!/bin/sh\nprintf '%s\\n' 'codex-cli test'\n");
+    chmodSync(bin, 0o755);
+    const catalog = {
+      models: [
+        { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+        { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+        { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+        { slug: "ollama/deepseek-v4-flash:0731-cloud", visibility: "list", priority: 3 },
+      ],
+    };
+    const catalogText = `${JSON.stringify(catalog, null, 2)}\n`;
+    writeFileSync(paths.catalog, catalogText);
+    const { resolveCatalogSources, writeCatalogProvenance } = await import("./catalog-provenance.js");
+    const discovery = { liveHome: true, platform: "darwin" as const, desktopBins: [], pathBin: bin };
+    writeCatalogProvenance({
+      metaPath: paths.catalogMeta,
+      catalogBytes: catalogText,
+      sources: resolveCatalogSources(discovery, { readVersion: () => "codex-cli test" }),
+    });
     writeFileSync(
       paths.profile,
       `model_provider = "openai"\nopenai_base_url = "http://127.0.0.1:18790/v1"\nmodel_catalog_json = ${JSON.stringify(paths.catalog)}\n`,
@@ -1062,12 +1150,16 @@ describe("cob status desktop overlay", () => {
       "",
     ].join("\n");
     writeFileSync(paths.rootConfig, original);
-    const report = await statusReport(paths);
+    const report = await statusReport(paths, {
+      discovery,
+      inspect: { readVersion: () => "" },
+    });
     assert.equal(readFileSync(paths.rootConfig, "utf8"), original);
     assert.equal(report.ok, false);
     assert.match(report.text, /^cob: ready\n/);
     assert.match(report.text, /gateway: stopped/);
     assert.match(report.text, /desktop overlay: ready \(gateway stopped; run cob start\)/);
+    assert.match(report.text, /catalog provenance: fresh/);
   });
 
   it("treats a stopped isolated home with no root config as ready, not absent", async () => {
@@ -1078,6 +1170,144 @@ describe("cob status desktop overlay", () => {
     assert.match(report.text, /^cob: ready\n/);
     assert.match(report.text, /isolated Codex home/);
     assert.match(report.text, /desktop overlay: no root config.toml/);
+  });
+
+  it("never invokes a Codex subprocess from status", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-nospawn-"));
+    const paths = resolvePaths(dir);
+    const marker = join(dir, "spawned");
+    const bin = join(dir, "fake-codex");
+    writeFileSync(bin, `#!/bin/sh\nprintf '' > ${JSON.stringify(marker)}\nprintf '%s\\n' 'codex-cli spawned'\n`);
+    chmodSync(bin, 0o755);
+    const catalog = {
+      models: [
+        { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+        { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+        { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+      ],
+    };
+    const catalogText = `${JSON.stringify(catalog, null, 2)}\n`;
+    writeFileSync(paths.catalog, catalogText);
+    const { resolveCatalogSources, writeCatalogProvenance } = await import("./catalog-provenance.js");
+    const discovery = { liveHome: false, platform: "darwin" as const, desktopBins: [], pathBin: bin };
+    writeCatalogProvenance({
+      metaPath: paths.catalogMeta,
+      catalogBytes: catalogText,
+      sources: resolveCatalogSources(discovery, { readVersion: () => "codex-cli test" }),
+    });
+    const report = await statusReport(paths, { discovery });
+    assert.equal(existsSync(marker), false);
+    assert.match(report.text, /catalog provenance: fresh/);
+  });
+
+  it("changes the first line and exit code when catalog provenance is stale", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-stale-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(
+      paths.catalog,
+      `${JSON.stringify({
+        models: [
+          { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+          { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+          { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+        ],
+      })}\n`,
+    );
+    writeFileSync(paths.catalogMeta, JSON.stringify({ schema_version: 1, catalog_sha256: "deadbeef" }));
+    const report = await statusReport(paths, {
+      discovery: { liveHome: false, platform: "darwin", desktopBins: [], pathBin: undefined },
+    });
+    assert.equal(report.ok, false);
+    assert.match(report.text, /^cob: stale\n/);
+    assert.match(report.text, /catalog provenance: stale/);
+  });
+
+  it("keeps the previous catalog and sidecar when a second consumer rejects", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-reject-"));
+    const paths = resolvePaths(dir);
+    const accept = join(dir, "accept");
+    const reject = join(dir, "reject");
+    writeFileSync(accept, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\"}]}'\n");
+    writeFileSync(reject, "#!/bin/sh\necho 'Codex rejected cob catalog: supports_parallel_tool_calls' >&2\nexit 1\n");
+    chmodSync(accept, 0o755);
+    chmodSync(reject, 0o755);
+    const previous = `${JSON.stringify({
+      models: [
+        { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+        { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+        { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+      ],
+    })}\n`;
+    writeFileSync(paths.catalog, previous);
+    writeFileSync(paths.catalogMeta, "PREV-META\n");
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    delete process.env.COB_SKIP_CATALOG_CHECK;
+    try {
+      await assert.rejects(
+        () =>
+          syncCatalog({
+            paths,
+            ollamaUrl: "http://127.0.0.1:1",
+            locked: true,
+            discovery: {
+              liveHome: true,
+              platform: "darwin",
+              desktopBins: [accept],
+              pathBin: reject,
+            },
+            inspect: { readVersion: () => "codex-cli test" },
+          }),
+        /rejected cob catalog/,
+      );
+      assert.equal(readFileSync(paths.catalog, "utf8"), previous);
+      assert.equal(readFileSync(paths.catalogMeta, "utf8"), "PREV-META\n");
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+    }
+  });
+
+  it("starts from the last known-good catalog when a second consumer rejects", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-start-keep-"));
+    const paths = resolvePaths(dir);
+    const accept = join(dir, "accept");
+    const reject = join(dir, "reject");
+    writeFileSync(accept, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\"}]}'\n");
+    writeFileSync(reject, "#!/bin/sh\necho 'Codex rejected cob catalog: supports_parallel_tool_calls' >&2\nexit 1\n");
+    chmodSync(accept, 0o755);
+    chmodSync(reject, 0o755);
+    const previous = `${JSON.stringify({
+      models: [
+        { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+        { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+        { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+      ],
+    })}\n`;
+    writeFileSync(paths.catalog, previous);
+    writeFileSync(paths.catalogMeta, "PREV-META\n");
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    delete process.env.COB_SKIP_CATALOG_CHECK;
+    try {
+      const prepared = await prepareProfileAndCatalog({
+        paths,
+        ollamaUrl: "http://127.0.0.1:1",
+        locked: true,
+        discovery: {
+          liveHome: true,
+          platform: "darwin",
+          desktopBins: [accept],
+          pathBin: reject,
+        },
+        inspect: { readVersion: () => "codex-cli test" },
+      });
+      assert.equal(prepared.wrote, false);
+      assert.equal(readFileSync(paths.catalog, "utf8"), previous);
+      assert.equal(readFileSync(paths.catalogMeta, "utf8"), "PREV-META\n");
+      assert.match(String(prepared.ollamaError), /supports_parallel_tool_calls/);
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+    }
   });
 });
 

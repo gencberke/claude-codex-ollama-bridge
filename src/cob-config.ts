@@ -25,7 +25,8 @@ export type SubagentPolicy = {
 export type CatalogPolicy = {
   /**
    * When true, Ollama catalog rows advertise `supports_search_tool` so Desktop
-   * defers MCP behind `tool_search`. cob translates the wire shape. Default false.
+   * defers MCP behind `tool_search`. cob translates the wire shape. Default true.
+   * An explicit false in cob.toml remains the escape hatch.
    */
   supportsSearchTool: boolean;
 };
@@ -36,7 +37,7 @@ export type CobFileConfig = {
   catalog?: CatalogPolicy;
 };
 
-export const DEFAULT_CATALOG_POLICY: CatalogPolicy = { supportsSearchTool: false };
+export const DEFAULT_CATALOG_POLICY: CatalogPolicy = { supportsSearchTool: true };
 
 export const DEFAULT_SPAWNABLE_OLLAMA_SLUGS = ["ollama/deepseek-v4-flash:0731-cloud"] as const;
 
@@ -167,7 +168,7 @@ export function parseCobToml(text: string): CobFileConfig {
       ollamaModel,
     }),
     subagents: subagentModels ? { models: subagentModels } : {},
-    catalog: { supportsSearchTool: supportsSearchTool ?? false },
+    catalog: { supportsSearchTool: supportsSearchTool ?? DEFAULT_CATALOG_POLICY.supportsSearchTool },
   };
 }
 
@@ -193,8 +194,8 @@ export function renderCobToml(config: CobFileConfig): string {
     "]",
     "",
     "[catalog]",
-    "# When true, Ollama rows advertise supports_search_tool; cob translates tool_search.",
-    `supports_search_tool = ${config.catalog?.supportsSearchTool === true ? "true" : "false"}`,
+    "# Default true. Set false to send the full tool list on every Ollama turn.",
+    `supports_search_tool = ${config.catalog?.supportsSearchTool !== false ? "true" : "false"}`,
     "",
   );
   return lines.join("\n");
@@ -246,7 +247,7 @@ export function resolveCobConfig(opts: {
     opts.supportsSearchTool ??
     parseEnvBool(env.COB_SUPPORTS_SEARCH_TOOL) ??
     file?.catalog?.supportsSearchTool ??
-    false;
+    DEFAULT_CATALOG_POLICY.supportsSearchTool;
   return {
     compaction: compactionPolicy({ provider, model, ollamaThreads, ollamaModel }),
     subagents: subagentModels ? { models: subagentModels } : {},

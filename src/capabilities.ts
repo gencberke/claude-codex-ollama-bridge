@@ -24,10 +24,12 @@ const OLLAMA_THINKING_LEVELS: readonly ReasoningLevel[] = [
   { effort: "none", description: "Thinking off. Fastest Ollama replies." },
   { effort: "low", description: "Light thinking for short coding turns." },
   { effort: "high", description: "Default DeepSeek thinking." },
-  { effort: "max", description: "Maximum thinking for the hardest problems." },
+  { effort: "max", description: "Maximum reasoning for architecture and hard analysis." },
 ];
 
 export const OLLAMA_REASONING_EFFORTS = ["none", "low", "high", "max"] as const;
+
+export const DEFAULT_OLLAMA_REASONING_EFFORT = "high" satisfies (typeof OLLAMA_REASONING_EFFORTS)[number];
 
 export function evidenceFromOllamaTag(tag: OllamaTag): OllamaCapabilityEvidence {
   const capabilities = new Set(tag.capabilities ?? []);
@@ -91,7 +93,8 @@ export function ollamaChildCatalogFields(opts: {
   };
   if (levels.length > 0) {
     fields.default_reasoning_level =
-      levels.find((level) => level.effort === "high")?.effort ?? levels[0]!.effort;
+      levels.find((level) => level.effort === DEFAULT_OLLAMA_REASONING_EFFORT)?.effort ??
+      levels[0]!.effort;
   }
   return fields;
 }

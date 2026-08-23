@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeOllamaResponse, prepareOllamaWire, sanitizeOllamaPayload } from "./ollama.js";
+import { isOllamaReject, normalizeOllamaResponse, prepareOllamaWire, sanitizeOllamaPayload } from "./ollama.js";
 import {
   applyDeferredToolsToOllama,
   rewriteToolSearchFromOllama,
@@ -426,6 +426,10 @@ describe("deferred tool promotion", () => {
     assert.equal(tools.some((tool) => tool.name === "codex_app__create_thread"), false);
     assert.equal(bridge.promotedN, 1);
     assert.equal(bridge.skippedCap >= 1, true);
+    assert.equal(bridge.aliasesAdded, 1);
+    assert.match(bridge.aliasSha, /^[0-9a-f]{8}$/);
+    assert.equal(bridge.aliasSha.includes("spawn"), false);
+    assert.equal(bridge.usedAliasMissing, 0);
   });
 
   it("skips invalid, incomplete, mismatched, duplicate, and colliding outputs", () => {
@@ -488,7 +492,10 @@ describe("deferred tool promotion", () => {
         },
       ],
     };
-    const { payload: wire, bridge } = prepareOllamaWire(payload);
+    const prepared = prepareOllamaWire(payload);
+    assert.equal(isOllamaReject(prepared), false);
+    if (isOllamaReject(prepared)) return;
+    const { payload: wire, bridge } = prepared;
     assert.equal((wire.tools as JsonObject[]).some((tool) => tool.name === "multi_agent_v1__spawn_agent"), true);
     const item = {
       type: "function_call",

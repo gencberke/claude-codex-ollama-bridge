@@ -73,7 +73,9 @@ export function rewriteSseLine(
   try {
     const parsed: unknown = JSON.parse(payload);
     observer?.onData?.({ value: parsed });
-    return `data: ${JSON.stringify(rewriteJson(parsed))}`;
+    const rewritten = rewriteJson(parsed);
+    if (rewritten === parsed) return line;
+    return `data: ${JSON.stringify(rewritten)}`;
   } catch {
     observer?.onData?.({ malformed: true });
     return line;

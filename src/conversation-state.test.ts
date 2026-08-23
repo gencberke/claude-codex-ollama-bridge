@@ -16,6 +16,7 @@ import {
   ConversationStateError,
   ConversationStateStore,
   createStateHistoryItems,
+  historyItemIdentity,
   mergeStateHistory,
   type StateHistoryItem,
 } from "./conversation-state.js";
@@ -230,9 +231,10 @@ describe("durable Ollama conversation state", () => {
     await store.publish(draft("unsafe", [{ id: "u", type: "message", text: "safe" }], []));
     const unsafePath = store.checkpointPath("unsafe");
     const unsafe = JSON.parse(readFileSync(unsafePath, "utf8")) as {
-      history: { value: unknown }[];
+      history: StateHistoryItem[];
     };
     unsafe.history[0]!.value = { type: "reasoning", encrypted_content: "gAAAAAsecret" };
+    unsafe.history[0]!.identity = historyItemIdentity(unsafe.history[0]!.value, unsafe.history[0]!.provenance);
     writeFileSync(unsafePath, `${JSON.stringify(unsafe)}\n`, { mode: 0o600 });
     chmodSync(unsafePath, 0o600);
     await assert.rejects(
@@ -253,4 +255,107 @@ describe("durable Ollama conversation state", () => {
     assert.equal(existsSync(store.checkpointPath("a")), false);
     await store.resolve("b");
   });
+
+  it("fails closed when a stored identity no longer matches value or provenance", async () => {
+    const store = newStore();
+    await store.publish(draft("tamper", [{ id: "u", type: "message", text: "original" }], []));
+    const path = store.checkpointPath("tamper");
+    const checkpoint = JSON.parse(readFileSync(path, "utf8")) as {
+      history: StateHistoryItem[];
+    };
+    checkpoint.history[0]!.value = { id: "u", type: "message", text: "mutated" };
+    writeFileSync(path, `${JSON.stringify(checkpoint)}\n`, { mode: 0o600 });
+    await assert.rejects(
+      () => store.resolve("tamper"),
+      (error: unknown) => error instanceof ConversationStateError && error.code === "state_checkpoint_corrupt",
+    );
+
+    const again = JSON.parse(readFileSync(path, "utf8")) as { history: StateHistoryItem[] };
+    again.history[0]!.value = { id: "u", type: "message", text: "original" };
+    again.history[0]!.provenance = { ...again.history[0]!.provenance, sourceResponseId: "other" };
+    writeFileSync(path, `${JSON.stringify(again)}\n`, { mode: 0o600 });
+    await assert.rejects(
+      () => store.resolve("tamper"),
+      (error: unknown) => error instanceof ConversationStateError && error.code === "state_checkpoint_corrupt",
+    );
+
+    const valid = createStateHistoryItems([{ id: "u", type: "message", text: "original" }], "tamper", "request");
+    const restored = JSON.parse(readFileSync(path, "utf8")) as { history: StateHistoryItem[] };
+    restored.history[0] = valid[0]!;
+    writeFileSync(path, `${JSON.stringify(restored)}\n`, { mode: 0o600 });
+    const resolved = await store.resolve("tamper");
+    assert.equal((resolved.history[0]?.value as { text?: string }).text, "original");
+  });
+
+  it("matches the reference merge membership rules on generated histories", () => {
+    const corpora: Array<{
+      base: Array<{ id?: string; type: string; text: string }>;
+      extra: Array<{ id?: string; type: string; text: string }>;
+    }> = [
+      {
+        base: [
+          { id: "same-1", type: "message", text: "same" },
+          { type: "message", text: "plain" },
+        ],
+        extra: [
+          { id: "same-1", type: "message", text: "same" },
+          { id: "same-1", type: "message", text: "changed" },
+          { type: "message", text: "plain" },
+        ],
+      },
+      {
+        base: [{ id: "a", type: "message", text: "one" }],
+        extra: [{ id: "b", type: "message", text: "two" }],
+      },
+      {
+        base: [
+          { id: "dup", type: "function_call", text: "{}" },
+          { id: "dup", type: "function_call", text: "{}" },
+        ],
+        extra: [{ id: "dup", type: "function_call", text: "{}" }],
+      },
+      {
+        base: [],
+        extra: [
+          { type: "message", text: "anon-1" },
+          { type: "message", text: "anon-2" },
+        ],
+      },
+      {
+        base: [{ id: "keep", type: "reasoning", text: "thought" }],
+        extra: [
+          { id: "keep", type: "reasoning", text: "thought" },
+          { id: "keep", type: "reasoning", text: "other" },
+        ],
+      },
+    ];
+    for (const [index, corpus] of corpora.entries()) {
+      const a = createStateHistoryItems(corpus.base, `resp-a-${index}`, "response");
+      const b = createStateHistoryItems(corpus.extra, `resp-b-${index}`, "request");
+      const merged = mergeStateHistory(a, b);
+      const reference = referenceMerge(a, b);
+      assert.deepEqual(
+        merged.map((item) => item.identity),
+        reference.map((item) => item.identity),
+        `corpus ${index}`,
+      );
+    }
+  });
 });
+
+function referenceMerge(base: readonly StateHistoryItem[], additions: readonly StateHistoryItem[]): StateHistoryItem[] {
+  const merged = [...base];
+  for (const addition of additions) {
+    const exists =
+      merged.some((item) => item.identity === addition.identity) ||
+      (addition.provenance.itemId !== undefined &&
+        merged.some(
+          (item) =>
+            item.provenance.itemId === addition.provenance.itemId &&
+            JSON.stringify(item.value) === JSON.stringify(addition.value),
+        ));
+    if (exists) continue;
+    merged.push(addition);
+  }
+  return merged;
+}

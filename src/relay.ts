@@ -50,8 +50,8 @@ export async function relayTransformed(
   res: ServerResponse,
   opts: { idleMs: number; abort: AbortController; endResponse?: boolean },
 ): Promise<boolean> {
-  const sink = responseSink(res, opts.endResponse !== false);
   const idle = watchIdle(source, opts.idleMs, opts.abort);
+  const sink = responseSink(res, opts.endResponse !== false, idle);
   try {
     await pipeline(source, transform, sink);
   } catch (error) {
@@ -69,8 +69,8 @@ async function relayThrough(
   res: ServerResponse,
   opts: { idleMs: number; abort: AbortController },
 ): Promise<boolean> {
-  const sink = responseSink(res);
   const idle = watchIdle(source, opts.idleMs, opts.abort);
+  const sink = responseSink(res, true, idle);
   try {
     await pipeline(source, sink);
   } catch (error) {
@@ -107,16 +107,30 @@ export function isBenignAbort(error: unknown): boolean {
   return record.name === "AbortError" || record.code === "ABORT_ERR" || record.code === "ERR_STREAM_PREMATURE_CLOSE";
 }
 
-function responseSink(res: ServerResponse, endResponse = true): PassThrough {
+export type IdleWatch = {
+  clear: () => void;
+  pause: () => void;
+  resume: () => void;
+};
+
+export function responseSink(
+  res: ServerResponse,
+  endResponse = true,
+  idle?: IdleWatch,
+): PassThrough {
   const sink = new PassThrough();
   const onDrain = (): void => {
+    idle?.resume();
     sink.resume();
   };
   res.on("drain", onDrain);
   sink.on("data", (chunk: Buffer) => {
     if (res.writableEnded) return;
     const ok = res.write(chunk);
-    if (!ok) sink.pause();
+    if (!ok) {
+      idle?.pause();
+      sink.pause();
+    }
   });
   const detach = (): void => {
     res.off("drain", onDrain);
@@ -130,21 +144,35 @@ function responseSink(res: ServerResponse, endResponse = true): PassThrough {
   return sink;
 }
 
-function watchIdle(
+export function watchIdle(
   source: Readable,
   idleMs: number,
   abort: AbortController,
-): { clear: () => void } {
+): IdleWatch {
+  let paused = false;
   let timer: NodeJS.Timeout | undefined;
   const trip = (): void => {
-    if (!abort.signal.aborted) abort.abort();
     source.destroy(new IdleTimeoutError());
   };
-  const bump = (): void => {
+  const arm = (): void => {
     if (timer) clearTimeout(timer);
+    timer = undefined;
+    if (paused || abort.signal.aborted) return;
     timer = setTimeout(trip, idleMs);
   };
-  bump();
+  const bump = (): void => {
+    if (paused) return;
+    arm();
+  };
+  arm();
+  abort.signal.addEventListener(
+    "abort",
+    () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    },
+    { once: true },
+  );
   source.on("data", bump);
   source.on("end", () => {
     if (timer) clearTimeout(timer);
@@ -156,6 +184,16 @@ function watchIdle(
     clear: () => {
       if (timer) clearTimeout(timer);
       source.off("data", bump);
+    },
+    pause: () => {
+      paused = true;
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    },
+    resume: () => {
+      if (!paused) return;
+      paused = false;
+      arm();
     },
   };
 }

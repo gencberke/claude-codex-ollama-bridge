@@ -4,7 +4,9 @@ Living design note. Product contract is [README.md](./README.md). Live gold
 is [LIVE-TESTING.md](./LIVE-TESTING.md) G7/G8 (summarizer + cob envelope +
 handoff replay). Mock coverage shipped with this path. Desktop `/compact` on
 0731 recorded G7 on 2026-08-19; G8 follow-up `replay_ratio` and isolated L5
-are still open.
+are still open. 2026-08-23 20:15 Desktop auto-compact reached the no-tools
+summarizer (`tools_n=0`) and failed at extract: 0731 called a tool on a
+~1.14MB / 146-pair history; cob refused the handoff.
 
 Reviewed as cob-appropriate (idea adapted, not OpenCodex source). OpenCodex
 remains a proof of the **idea**. Do not copy `nativeAlias`, root `config.toml`
@@ -56,7 +58,8 @@ ChatGPT/Codex build. Desktop `/compact` on 0731 proved G7 on this machine
    already hits cob when the user-owned root overlay points at loopback.
 2. cob strips the trigger (it must not reach Ollama). The summarizer request is
    an **allowlist**: thread model (or a dedicated Ollama compact slug),
-   provider-safe history, cob compact instructions. No tools, no structured
+   provider-safe history (tool calls flattened to clipped notes), cob compact
+   instructions. No tools, no structured
    output, no ChatGPT headers. Unsupported multimodal history **fails closed**
    rather than dropping images silently.
 3. cob calls **Ollama `/v1/responses`** (not `/compact`).
@@ -130,11 +133,12 @@ Record summarizer latency and pre/post Ollama prompt bytes.
 ## Implementation order
 
 1–3 and 5 are in cob (envelope, summarizer, handoff checkpoint, docs). Desktop
-`/compact` on 0731 recorded G7. Step 4 remainder: G8 follow-up shrink, then
+`/compact` on 0731 recorded G7. 2026-08-23 auto-compact confirmed the
+no-tools summarizer wire and failed G8 at extract (tool call). Step 4
+remainder: a later unchanged-path handoff plus follow-up shrink, then
 isolated L5 as a recorded harness.
 
-Out of scope: `nativeAlias`, writing root config, GPT→Ollama spawn gold,
-ChatGPT.app patches.
+Out of scope: `nativeAlias`, writing root config, ChatGPT.app patches.
 
 ## Risks (ordinary)
 

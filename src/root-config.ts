@@ -12,6 +12,10 @@ export type RootTomlKeys = Partial<Record<RootTomlKey, string>>;
 
 export type DesktopOverlayState = "ok" | "ready" | "broken" | "absent" | "unreadable";
 
+export type CobStatusKind = DesktopOverlayState | "stale" | "unknown";
+
+export type CatalogFreshnessInput = "fresh" | "stale" | "unknown" | "missing";
+
 export type DesktopOverlayInput = {
   /** `null` when config.toml is missing. */
   keys: RootTomlKeys | null;
@@ -142,20 +146,26 @@ export function assessDesktopOverlay(input: DesktopOverlayInput): DesktopOverlay
  * First-line `cob: …` kind plus whether `cob status` should exit 0.
  * Isolated homes (`--dev`) treat a missing root config as normal; live
  * `~/.codex` does not. Does not spawn Codex or probe Ollama.
+ *
+ * Catalog freshness is optional so overlay-only unit tests stay focused.
+ * Production status always passes it. Stale/unknown catalogs are
+ * non-ready even when the gateway is healthy.
  */
 export function summarizeCobStatus(input: {
   liveHome: boolean;
   overlay: DesktopOverlayState;
   gatewayHealthy: boolean;
-}): { kind: DesktopOverlayState; ok: boolean } {
-  const { liveHome, overlay, gatewayHealthy } = input;
-  const ok =
-    gatewayHealthy &&
-    overlay !== "broken" &&
-    overlay !== "unreadable" &&
-    (overlay === "ok" || (!liveHome && overlay === "absent"));
+  catalogFreshness?: CatalogFreshnessInput;
+}): { kind: CobStatusKind; ok: boolean } {
+  const { liveHome, overlay, gatewayHealthy, catalogFreshness } = input;
+  if (overlay === "broken" || overlay === "unreadable") {
+    return { kind: overlay, ok: false };
+  }
+  if (catalogFreshness === "stale") return { kind: "stale", ok: false };
+  if (catalogFreshness === "unknown") return { kind: "unknown", ok: false };
+  const overlayOk = overlay === "ok" || (!liveHome && overlay === "absent");
+  const ok = gatewayHealthy && overlayOk;
   if (liveHome) return { kind: overlay, ok };
-  if (overlay === "broken" || overlay === "unreadable") return { kind: overlay, ok };
   return { kind: gatewayHealthy ? "ok" : "ready", ok };
 }
 

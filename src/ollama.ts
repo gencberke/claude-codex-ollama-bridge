@@ -7,21 +7,27 @@ import {
   NON_STRING_ENCRYPTED_CONTENT,
   stripPlaintextEncryptedContent,
 } from "./encrypted.js";
-import type { JsonError } from "./encrypted.js";
 import { ollamaUpstreamModel } from "./route.js";
 import { isResponseEnvelope } from "./compaction.js";
 import { sseRewriteTransform, type SseObserver } from "./sse.js";
-import { fetchWithConnectTimeout } from "./timeouts.js";
-import { CONNECT_TIMEOUT_MS } from "./limits.js";
+import { fetchWithHeadersTimeout } from "./timeouts.js";
+import { OLLAMA_HEADERS_TIMEOUT_MS } from "./limits.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
 import type { UpstreamFetch } from "./native.js";
+import {
+  applyOllamaRequestBoundary,
+  normalizeOllamaReasoning,
+  type OllamaReject,
+} from "./ollama-boundary.js";
 import { formatOllamaWireMetrics, summarizeRequest } from "./request-metrics.js";
 import {
   applyDeferredToolsToOllama,
   rewriteToolSearchFromOllama,
   type ToolSearchBridge,
 } from "./tool-search.js";
+
+export type { OllamaReject } from "./ollama-boundary.js";
 
 const CHATGPT_HEADER_PREFIXES = ["chatgpt-", "x-codex-", "x-openai-", "x-oai-"];
 const CHATGPT_HEADER_NAMES = new Set([
@@ -35,25 +41,7 @@ const CHATGPT_HEADER_NAMES = new Set([
   "x-responsesapi-include-timing-metrics",
 ]);
 
-const DROP_OLLAMA_FIELDS = [
-  "previous_response_id",
-  "prompt_cache_key",
-  "prompt_cache_retention",
-  "safety_identifier",
-  "service_tier",
-] as const;
-
-const DEEPSEEK_WIRE_EFFORTS = new Set(["none", "low", "high", "max"]);
-
-/** Map Codex/Desktop leftovers onto DeepSeek V4 / Ollama Responses efforts. */
-export function mapOllamaReasoningEffort(effort: unknown): string | undefined {
-  if (typeof effort !== "string") return undefined;
-  if (effort === "medium" || effort === "xhigh") return "high";
-  if (DEEPSEEK_WIRE_EFFORTS.has(effort)) return effort;
-  return undefined;
-}
-
-export type OllamaReject = { status: number; body: JsonError };
+export { mapOllamaReasoningEffort } from "./ollama-boundary.js";
 
 export function isOllamaReject(value: JsonObject | OllamaReject): value is OllamaReject {
   return (
@@ -162,37 +150,30 @@ export type OllamaWireRequest = {
   bridge: ToolSearchBridge;
 };
 
-export function prepareOllamaWire(payload: JsonObject): OllamaWireRequest {
+export function prepareOllamaWire(
+  payload: JsonObject,
+  options: { supportsReasoning?: boolean } = {},
+): OllamaWireRequest | OllamaReject {
   const next = structuredClone(payload);
   if (typeof next.model === "string") {
     next.model = ollamaUpstreamModel(next.model);
   }
-  next.store = false;
-  for (const field of DROP_OLLAMA_FIELDS) {
-    delete next[field];
-  }
-  applyOllamaReasoningEffortMap(next);
+  normalizeOllamaReasoning(next, options.supportsReasoning ?? true);
   const bridge = applyDeferredToolsToOllama(next);
-  return { payload: next, bridge };
+  const bounded = applyOllamaRequestBoundary(next);
+  if (isOllamaReject(bounded)) return bounded;
+  return { payload: bounded.payload, bridge };
 }
 
-export function sanitizeOllamaPayload(payload: JsonObject): JsonObject {
-  return prepareOllamaWire(payload).payload;
-}
-
-function applyOllamaReasoningEffortMap(payload: JsonObject): void {
-  if (isRecord(payload.reasoning) && "effort" in payload.reasoning) {
-    const mapped = mapOllamaReasoningEffort(payload.reasoning.effort);
-    if (mapped !== undefined) {
-      payload.reasoning = { ...payload.reasoning, effort: mapped };
-    }
+export function sanitizeOllamaPayload(
+  payload: JsonObject,
+  options: { supportsReasoning?: boolean } = {},
+): JsonObject {
+  const wire = prepareOllamaWire(payload, options);
+  if (isOllamaReject(wire)) {
+    throw new Error(wire.body.error.message);
   }
-  if ("reasoning_effort" in payload) {
-    const mapped = mapOllamaReasoningEffort(payload.reasoning_effort);
-    if (mapped !== undefined) {
-      payload.reasoning_effort = mapped;
-    }
-  }
+  return wire.payload;
 }
 
 export function normalizeOllamaResponse(
@@ -207,25 +188,39 @@ export function normalizeOllamaResponse(
 }
 
 function stripEncryptedContentDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripEncryptedContentDeep);
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const rewritten = stripEncryptedContentDeep(item);
+      if (rewritten !== item) changed = true;
+      return rewritten;
+    });
+    return changed ? next : value;
+  }
   if (!isRecord(value)) return value;
+  let changed = false;
   const next: JsonObject = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (key === "encrypted_content") continue;
-    next[key] = stripEncryptedContentDeep(nested);
+    if (key === "encrypted_content") {
+      changed = true;
+      continue;
+    }
+    const rewritten = stripEncryptedContentDeep(nested);
+    if (rewritten !== nested) changed = true;
+    next[key] = rewritten;
   }
-  return next;
+  return changed ? next : value;
 }
 
 function rewriteEnvelopeModel(value: unknown, catalogModel: string): unknown {
   if (!isRecord(value)) return value;
+  const response = isRecord(value.response) ? rewriteEnvelopeModel(value.response, catalogModel) : value.response;
+  const modelNeedsRewrite =
+    isResponseEnvelope(value) && typeof value.model === "string" && value.model !== catalogModel;
+  if (!modelNeedsRewrite && response === value.response) return value;
   const next: JsonObject = { ...value };
-  if (isResponseEnvelope(next) && typeof next.model === "string") {
-    next.model = catalogModel;
-  }
-  if (isRecord(next.response)) {
-    next.response = rewriteEnvelopeModel(next.response, catalogModel);
-  }
+  if (modelNeedsRewrite) next.model = catalogModel;
+  if (response !== value.response) next.response = response;
   return next;
 }
 
@@ -251,11 +246,15 @@ export async function forwardOllamaResponses(opts: {
   ollamaUrl?: string;
   fetchImpl?: UpstreamFetch;
   signal?: AbortSignal;
+  headersMs?: number;
+  /** @deprecated one-release alias for headersMs */
   connectMs?: number;
-}): Promise<OllamaForwardResult> {
+  supportsReasoning?: boolean;
+}): Promise<OllamaForwardResult | OllamaReject> {
   const base = (opts.ollamaUrl ?? DEFAULT_OLLAMA_URL).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as UpstreamFetch);
-  const wire = prepareOllamaWire(opts.payload);
+  const wire = prepareOllamaWire(opts.payload, { supportsReasoning: opts.supportsReasoning });
+  if (isOllamaReject(wire)) return wire;
   const stream = wire.payload.stream === true;
   const body = Buffer.from(JSON.stringify(wire.payload), "utf8");
   const tools = summarizeRequest(wire.payload, body.length);
@@ -272,9 +271,14 @@ export async function forwardOllamaResponses(opts: {
       skippedInvalid: wire.bridge.skippedInvalid,
       skippedUnsupported: wire.bridge.skippedUnsupported,
       collisions: wire.bridge.collisions,
+      aliasSha: wire.bridge.aliasSha,
+      aliasesAdded: wire.bridge.aliasesAdded,
+      aliasesRemoved: wire.bridge.aliasesRemoved,
+      aliasesReplaced: wire.bridge.aliasesReplaced,
+      usedAliasMissing: wire.bridge.usedAliasMissing,
     })}`,
   );
-  const response = await fetchWithConnectTimeout(
+  const response = await fetchWithHeadersTimeout(
     fetchImpl,
     `${base}/v1/responses`,
     {
@@ -283,7 +287,7 @@ export async function forwardOllamaResponses(opts: {
       body,
       signal: opts.signal,
     },
-    opts.connectMs ?? CONNECT_TIMEOUT_MS,
+    opts.headersMs ?? opts.connectMs ?? OLLAMA_HEADERS_TIMEOUT_MS,
   );
   return { response, bridge: wire.bridge };
 }

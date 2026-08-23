@@ -75,7 +75,7 @@ describe("gateway durable Ollama state", () => {
       const response = await fetch(`http://127.0.0.1:${firstPort}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: "ollama/test", input: message("user-1", "one"), nested: { keep: true } }),
+        body: JSON.stringify({ model: "ollama/test", input: message("user-1", "one"), temperature: 0.2 }),
       });
       assert.equal(response.status, 200, await response.text());
       const second = await fetch(`http://127.0.0.1:${firstPort}/v1/responses`, {
@@ -85,7 +85,7 @@ describe("gateway durable Ollama state", () => {
           model: "ollama/test",
           previous_response_id: "resp-1",
           input: message("user-2", "two"),
-          nested: { preserve: { value: 2 } },
+          temperature: 0.7,
         }),
       });
       assert.equal(second.status, 200, await second.text());
@@ -114,7 +114,9 @@ describe("gateway durable Ollama state", () => {
       (last.input as JsonObject[]).map((item) => item.id),
       ["user-1", "assistant-1", "user-2", "assistant-2", "user-3"],
     );
-    assert.deepEqual(sent[1]?.nested, { preserve: { value: 2 } });
+    assert.equal(sent[1]?.temperature, 0.7);
+    assert.deepEqual(Object.keys(sent[1]!).sort(), ["input", "model", "temperature"]);
+    assert.equal("previous_response_id" in (sent[1] ?? {}), false);
   });
 
   it("replaces Ollama history with the summarizer handoff and archives the cob envelope", async () => {
@@ -217,6 +219,14 @@ describe("gateway durable Ollama state", () => {
     assert.deepEqual(followIds.filter(Boolean), ["user-2"]);
     assert.match(JSON.stringify(followBody?.input), /handoff after one/);
     assert.equal(readdirSync(join(stateDir, "compact-archive")).length, 1);
+    const summarizer = ollamaBodies.find((body) => JSON.stringify(body).includes("You are compacting"));
+    assert.ok(summarizer);
+    assert.deepEqual(Object.keys(summarizer).sort(), ["input", "instructions", "model", "stream"]);
+    assert.equal("store" in summarizer, false);
+    assert.equal("previous_response_id" in summarizer, false);
+    const preBytes = Buffer.byteLength(JSON.stringify(summarizer.input), "utf8");
+    const postBytes = Buffer.byteLength(JSON.stringify(followBody?.input), "utf8");
+    assert.ok(postBytes < preBytes, `isolated replay_ratio=${postBytes / preBytes}`);
   });
 
   it("prefers previous_response_id when a matching compaction item is also present", async () => {
