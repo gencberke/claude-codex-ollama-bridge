@@ -10,6 +10,107 @@ not this file.
 
 ## Unreleased
 
+Source checkpoint for installed cob 0.1.12: `tsc -p tsconfig.build.json`
+matches the 43-file tarball production JS byte-for-byte (SHA-256
+`684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`).
+Packed `README.md` / `CHANGELOG.md` / `RELEASE.md` later recorded the live
+`:18790` install and two-turn smoke; those doc-only diffs are in this tree
+and do not change the 0.1.12 artifact. Do not repack 0.1.12.
+
+## 0.1.12 — 2026-08-24
+
+Real Ollama 0.32.15 cloud SSE compatibility after the 0.1.11 live gate exposed
+that successful streams close after `response.completed` without an upstream
+`[DONE]` sentinel.
+
+- Dialect authority v2 records `[DONE]` as optional after a valid completed
+  envelope. cob publishes that checkpoint durably, then emits exactly one
+  client-facing `[DONE]` so continuation becomes resolvable.
+- `response.incomplete`, `response.failed`, malformed streams, guard failures,
+  and publication failures remain fail-closed and create no checkpoint.
+- When local `previous_response_id` replay expands an earlier top-level string
+  into `input[]`, cob promotes that shorthand to a typed user-message item.
+  The initial string request remains unchanged. This avoids Ollama 0.32.15's
+  `cannot unmarshal string` continuation rejection.
+- Added regression coverage for completed-without-DONE publication and
+  continuation, string-shorthand replay, plus incomplete-without-DONE
+  rejection. This fixes the live
+  0.1.11 sequence `response.completed` → `upstream_stream_error` → `[DONE]`
+  with no checkpoint.
+- Merge gate: `npx tsc --noEmit`; 340 tests, 337 passed, 3 intentional
+  skips, 0 failures. The inspected 43-file tarball SHA-256 is
+  `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`.
+  Its extracted runtime passed a real Ollama 0.32.15 two-turn gate with one
+  client `[DONE]`, checkpoint-before-terminal ordering, HTTP-200 continuation,
+  access-log delta 2, and checkpoint transition 1→2. An authorized live
+  install of this exact artifact later passed the same two-turn smoke on
+  `:18790`.
+
+## 0.1.11 — 2026-08-24
+
+Packed WP8 release candidate after the isolated G19 redaction failure on
+0.1.10. G19 passed on this artifact. It was later installed globally for the
+live gates, where the DONE-less Ollama SSE gap above was found.
+
+- Standard ingress and Ollama-wire diagnostics retain aggregate byte/count/SHA
+  fields and sorted top tool-definition byte sizes, but no longer print tool
+  names. Guard logs remain limited to stable code/kind, rejected-name
+  length/SHA, and final declaration count/SHA.
+- The WP8 dialect, final outbound declaration, JSON/SSE guard, fail-closed
+  checkpoint ordering, alias restoration, and continuation behavior are
+  otherwise unchanged from the 0.1.10 candidate.
+- Merge gate: `npx tsc --noEmit`; 337 tests, 334 passed, 3 intentional skips,
+  0 failures. Packed G19 passed 25/25 across protocol conformance, packed route,
+  and real Codex declared-tool continuation. The 43-file tarball SHA-256 is
+  `71b4e3f1963182d73097e5bac0e3ac67cd536e9f7ad5f4301dbca510fdc458db`.
+
+## 0.1.10 — 2026-08-24
+
+WP8 Ollama response integrity. This packed candidate was rejected by isolated
+G19 because standard request/wire diagnostics still printed tool names. It was
+never installed globally; live cob remains 0.1.9.
+
+- Versioned Ollama 0.32.15 Responses dialect is the single owner of the request
+  allowlist and reviewed client-executed call kinds.
+- Each Ollama turn snapshots the final outbound `tools[]` names after promotion
+  and allowlisting. Only those names may be called.
+- Non-stream JSON validates `output[]` before usage logging, checkpoint
+  publication, or client relay. Undeclared or invalid calls return HTTP 502
+  (`upstream_error`) and write no checkpoint.
+- SSE trips permanently on the first undeclared/invalid client tool in
+  `output_item.added` / `done` or a terminal snapshot, emits one
+  `response.failed` plus one `[DONE]`, and publishes no state.
+- Guard logs keep only code, kind, name length/SHA, and declaration count/SHA.
+
+## 0.1.9 — 2026-08-23
+
+Post-implementation audit fixes for WP1–WP7 plus standalone search routing.
+The cut itself is not a G11–G18 live claim; versioned live evidence is tracked
+separately in [STATUS.md](./STATUS.md).
+
+- Catalog validation failures are retained as redacted schema-v2 state in
+  `cob-catalog.meta.json`, including foreground/detached startup rollback.
+  The last-good catalog and provenance stay intact, legacy catalogs remain
+  `unknown`, missing catalogs are non-ready, and status stat-checks every
+  recorded validator without executing Codex. A successful sync returns the
+  sidecar to clean schema v1.
+- Ollama drops only `tool_choice = "auto"`; correctness-affecting or malformed
+  choices fail closed with a precise 400 error.
+- Compact handoffs require exact, ordered, non-empty headings. Prefixes,
+  duplicates, malformed Markdown, and empty sections return
+  `compaction_summary_incomplete` with full-context recovery guidance and no
+  automatic history resend.
+- State replay preserves the reference conflict rule for repeated item IDs by
+  retaining every previously observed serialized value.
+- Deferred-tool telemetry hashes only aliases actually appended in wire order,
+  reports append-only add/remove/replace counts truthfully, and checks used
+  alias availability against final outbound `tools[]`.
+- Exact `POST /v1/alpha/search` requests now pass through to ChatGPT's native
+  Codex search endpoint with the existing native auth allowlist, body limits,
+  cancellation, and timeout handling. Search never falls back to Ollama;
+  unknown `/v1/*` paths remain closed. This is distinct from deferred
+  `supports_search_tool` translation.
+
 ## 0.1.8 — 2026-08-23
 
 WP7 Stages 2–4 on the 0.1.7 G8 path. Isolated L5 / G11–G17 are still not

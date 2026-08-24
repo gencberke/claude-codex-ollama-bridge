@@ -4,6 +4,13 @@ Live ChatGPT Desktop and daily `codex --profile cob` run the **globally
 installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
+Current state (2026-08-24): live global is **0.1.12** on `:18790` after an
+authorized install of the exact tarball SHA-256
+`684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`.
+A live two-turn Ollama smoke through that listener passed. Do not repack
+0.1.11 or 0.1.12 under the same version. G11–G17 remain blocked/partial/unrun
+except that short smoke.
+
 ## Two homes
 
 | | Live | Develop |
@@ -47,10 +54,10 @@ Desktop keeps talking to whatever process already bound that port.
 # From the checkout, if a workspace cob still owns ~/.codex:
 node dist/cli.js stop --live-home
 
-npm install -g ./codex-ollama-bridge-0.1.8.tgz   # use the version you packed
-cob version    # expect: cob 0.1.8 (global)
+npm install -g ./codex-ollama-bridge-0.1.12.tgz   # only after explicit live authorization
+cob version    # expect: cob 0.1.12 (global)
 cob start
-cob status     # gateway health ok; desktop overlay ok or ready; catalog provenance fresh
+cob status     # health/overlay ok; provenance fresh, or explained fail-closed skew
 ```
 
 `cob restore` still does not revert a user-owned Desktop overlay in

@@ -149,7 +149,10 @@ recorded G8 (flatten handoff, `cob1.` envelope, follow-up
 `replay_ratio ≈ 0.03`). Isolated L5 remains a recorded harness. WP7 Stages 2–4
 (single instruction copy, required section headings, opt-in effort, split
 max vs active context) are packed in cob **0.1.8**.
-Incomplete skeletons fail closed. Defaults keep the G8 effort/cap/threshold.
+Incomplete or malformed skeletons fail closed: headings must be exact, ordered,
+unique, and non-empty (`None` is explicit content). cob returns full-context
+recovery guidance and never automatically resends history. Defaults keep the
+G8 effort/cap/threshold.
 
 Out of scope: `nativeAlias`, writing root config, ChatGPT.app patches.
 

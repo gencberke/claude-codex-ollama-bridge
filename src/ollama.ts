@@ -9,7 +9,7 @@ import {
 } from "./encrypted.js";
 import { ollamaUpstreamModel } from "./route.js";
 import { isResponseEnvelope } from "./compaction.js";
-import { sseRewriteTransform, type SseObserver } from "./sse.js";
+import { SSE_OMIT_LINE, sseRewriteTransform, type SseObserver } from "./sse.js";
 import { fetchWithHeadersTimeout } from "./timeouts.js";
 import { OLLAMA_HEADERS_TIMEOUT_MS } from "./limits.js";
 import type { JsonObject } from "./types.js";
@@ -20,6 +20,12 @@ import {
   normalizeOllamaReasoning,
   type OllamaReject,
 } from "./ollama-boundary.js";
+import {
+  declareOllamaWireTools,
+  inspectOllamaSseEvent,
+  type OllamaResponseGuardState,
+  type OllamaToolDeclaration,
+} from "./ollama-response-boundary.js";
 import { formatOllamaWireMetrics, summarizeRequest } from "./request-metrics.js";
 import {
   applyDeferredToolsToOllama,
@@ -148,6 +154,7 @@ export function rejectOllamaRequest(payload: unknown): OllamaReject | undefined 
 export type OllamaWireRequest = {
   payload: JsonObject;
   bridge: ToolSearchBridge;
+  declaration: OllamaToolDeclaration;
 };
 
 export function prepareOllamaWire(
@@ -162,7 +169,11 @@ export function prepareOllamaWire(
   const bridge = applyDeferredToolsToOllama(next);
   const bounded = applyOllamaRequestBoundary(next);
   if (isOllamaReject(bounded)) return bounded;
-  return { payload: bounded.payload, bridge };
+  return {
+    payload: bounded.payload,
+    bridge,
+    declaration: declareOllamaWireTools(bounded.payload),
+  };
 }
 
 export function sanitizeOllamaPayload(
@@ -228,17 +239,35 @@ export function ollamaSseTransform(
   catalogModel: string,
   observer?: SseObserver,
   bridge?: ToolSearchBridge,
+  declaration?: OllamaToolDeclaration,
+  guard?: OllamaResponseGuardState,
 ): Transform {
   return sseRewriteTransform(
-    (value) => normalizeOllamaResponse(value, catalogModel, bridge),
+    (value) => {
+      if (guard?.failure) return SSE_OMIT_LINE;
+      if (declaration && guard) {
+        const failure = inspectOllamaSseEvent(value, declaration);
+        if (failure) {
+          guard.failure = failure;
+          return SSE_OMIT_LINE;
+        }
+      }
+      return normalizeOllamaResponse(value, catalogModel, bridge);
+    },
     undefined,
-    observer,
+    {
+      onChunk: observer?.onChunk,
+      onData: observer?.onData,
+      suppressDone: observer?.suppressDone,
+      omitData: () => Boolean(guard?.failure),
+    },
   );
 }
 
 export type OllamaForwardResult = {
   response: Response;
   bridge: ToolSearchBridge;
+  declaration: OllamaToolDeclaration;
 };
 
 export async function forwardOllamaResponses(opts: {
@@ -276,7 +305,7 @@ export async function forwardOllamaResponses(opts: {
       aliasesRemoved: wire.bridge.aliasesRemoved,
       aliasesReplaced: wire.bridge.aliasesReplaced,
       usedAliasMissing: wire.bridge.usedAliasMissing,
-    })}`,
+    })} declared_n=${wire.declaration.count} declared_sha=${wire.declaration.sha8}`,
   );
   const response = await fetchWithHeadersTimeout(
     fetchImpl,
@@ -289,7 +318,7 @@ export async function forwardOllamaResponses(opts: {
     },
     opts.headersMs ?? opts.connectMs ?? OLLAMA_HEADERS_TIMEOUT_MS,
   );
-  return { response, bridge: wire.bridge };
+  return { response, bridge: wire.bridge, declaration: wire.declaration };
 }
 
 export function ollamaHeaders(stream = false): Record<string, string> {

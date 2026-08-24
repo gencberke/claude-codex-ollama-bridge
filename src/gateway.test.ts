@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -8,7 +8,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { zstdCompressSync } from "node:zlib";
 import { listenGateway } from "./gateway.js";
 import { pickForwardHeaders } from "./native.js";
-import { NATIVE_RESPONSES_URL } from "./constants.js";
+import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
 import { MAX_RAW_BODY_BYTES } from "./limits.js";
 import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton, ollamaFollowUpInputError } from "./compaction.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./ollama.js";
@@ -186,6 +186,162 @@ describe("gateway", () => {
     }
   });
 
+  it("forwards only standalone search to the native Codex endpoint with redacted logs", async () => {
+    const secretQuery = "private-search-query";
+    const requestBody = JSON.stringify({
+      id: "search-session",
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      commands: { search_query: [{ q: secretQuery }] },
+      settings: { external_web_access: "indexed" },
+    });
+    const seen: {
+      url?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      nativeHits: number;
+      ollamaHits: number;
+    } = { nativeHits: 0, ollamaHits: 0 };
+    const lines: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      nativeFetch: async (url, init) => {
+        seen.nativeHits += 1;
+        seen.url = url;
+        seen.headers = { ...init.headers };
+        seen.body = init.body.toString("utf8");
+        return new Response(JSON.stringify({ output: "search-ok", results: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json", "x-request-id": "req_search" },
+        });
+      },
+      ollamaFetch: async () => {
+        seen.ollamaHits += 1;
+        return new Response("ollama must not receive standalone search", { status: 500 });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/alpha/search`, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: "Bearer search-secret",
+          "chatgpt-account-id": "acct-search-secret",
+          "content-type": "application/json",
+          "content-encoding": "zstd",
+          cookie: "session=must-not-forward",
+          originator: "codex_cli_rs",
+          "x-codex-turn-metadata": "turn-metadata",
+          "x-evil": "must-not-forward",
+        },
+        body: zstdCompressSync(Buffer.from(requestBody, "utf8")),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-request-id"), "req_search");
+      assert.deepEqual(await response.json(), { output: "search-ok", results: [] });
+      assert.equal(seen.nativeHits, 1);
+      assert.equal(seen.ollamaHits, 0);
+      assert.equal(seen.url, NATIVE_SEARCH_URL);
+      assert.equal(seen.body, requestBody);
+      assert.equal(seen.headers?.authorization, "Bearer search-secret");
+      assert.equal(seen.headers?.["chatgpt-account-id"], "acct-search-secret");
+      assert.equal(seen.headers?.originator, "codex_cli_rs");
+      assert.equal(seen.headers?.["x-codex-turn-metadata"], "turn-metadata");
+      assert.equal(seen.headers?.accept, "application/json");
+      assert.equal(seen.headers?.["content-type"], "application/json");
+      assert.equal(seen.headers?.["content-encoding"], undefined);
+      assert.equal(seen.headers?.cookie, undefined);
+      assert.equal(seen.headers?.["x-evil"], undefined);
+      const logs = lines.join("\n");
+      assert.match(logs, /POST \/v1\/alpha\/search/);
+      assert.match(logs, /target=native-search/);
+      assert.equal(logs.includes(secretQuery), false);
+      assert.equal(logs.includes("search-secret"), false);
+      assert.equal(logs.includes("turn-metadata"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("preserves standalone search errors and never retries them through Ollama", async () => {
+    let nativeHits = 0;
+    let ollamaHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      nativeFetch: async () => {
+        nativeHits += 1;
+        return new Response(JSON.stringify({ error: { code: "search_rate_limited", message: "later" } }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "11" },
+        });
+      },
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response("no", { status: 500 });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/alpha/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "search-session", model: "gpt-5.6-luna", commands: {} }),
+      });
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get("retry-after"), "11");
+      assert.deepEqual(await response.json(), { error: { code: "search_rate_limited", message: "later" } });
+      assert.equal(nativeHits, 1);
+      assert.equal(ollamaHits, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("keeps every non-allowlisted search-like path and method closed", async () => {
+    let nativeHits = 0;
+    let ollamaHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      nativeFetch: async () => {
+        nativeHits += 1;
+        return new Response("unexpected native request", { status: 500 });
+      },
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response("unexpected Ollama request", { status: 500 });
+      },
+    });
+    try {
+      for (const path of ["/alpha/search", "/v1/alpha/search/", "/v1/alpha/search/child", "/v1/alpha/other"]) {
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        assert.equal(response.status, 404, path);
+        assert.equal(await errorCode(response), "not_found", path);
+      }
+      const wrongMethod = await fetch(`http://127.0.0.1:${port}/v1/alpha/search`);
+      assert.equal(wrongMethod.status, 404);
+      assert.equal(await errorCode(wrongMethod), "not_found");
+      assert.equal(nativeHits, 0);
+      assert.equal(ollamaHits, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("logs numeric request buckets without tool schemas or previous_response_id values", async () => {
     const lines: string[] = [];
     const originalError = console.error;
@@ -232,7 +388,8 @@ describe("gateway", () => {
       assert.match(joined, /tools_n=1/);
       assert.match(joined, /effort=high/);
       assert.match(joined, /prev_id=0/);
-      assert.match(joined, /tool_bytes=exec_command:/);
+      assert.match(joined, /tool_bytes_top=\d+/);
+      assert.equal(joined.includes("exec_command"), false);
       assert.match(joined, /\[cob\] ollama usage in=12 out=3/);
       assert.equal(joined.includes("schema-secret"), false);
       assert.equal(joined.includes("secret-output"), false);
@@ -334,7 +491,8 @@ describe("gateway", () => {
       assert.match(joined, /\[cob\] POST [^\n]*tools_n=1/);
       assert.match(joined, /\[cob\] ollama wire [^\n]*tools_n=2/);
       assert.match(joined, /\[cob\] ollama wire [^\n]*promoted_n=1/);
-      assert.match(joined, /multi_agent_v1__spawn_agent:/);
+      assert.match(joined, /tool_bytes_top=\d+(?:,\d+)*/);
+      assert.equal(joined.includes("multi_agent_v1__spawn_agent"), false);
       assert.equal(joined.includes("Spawn a sub-agent"), false);
     } finally {
       console.error = originalError;
@@ -2107,6 +2265,313 @@ describe("gateway", () => {
         req.on("error", reject);
         req.end(JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }));
       });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+function checkpointNames(stateDir: string): string[] {
+  const dir = join(stateDir, "checkpoints");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => name.endsWith(".json"));
+}
+
+function parseSsePayloads(text: string): unknown[] {
+  const events: unknown[] = [];
+  for (const block of text.split(/\n\n/)) {
+    const line = block.split("\n").find((entry) => entry.startsWith("data:"));
+    if (!line) continue;
+    const payload = line.slice("data:".length).trim();
+    if (payload === "[DONE]") {
+      events.push("[DONE]");
+      continue;
+    }
+    try {
+      events.push(JSON.parse(payload));
+    } catch {
+      events.push(payload);
+    }
+  }
+  return events;
+}
+
+describe("WP8 Ollama response integrity", () => {
+  it("rejects an undeclared JSON function_call with 502 and publishes no checkpoint", async () => {
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-wp8-json-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(
+          JSON.stringify({
+            id: "resp_bad",
+            object: "response",
+            status: "completed",
+            output: [{ type: "function_call", name: "apply_patch", arguments: { secret: "must-not-log" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          tools: [{ type: "function", name: "exec_command", parameters: { type: "object", properties: {} } }],
+          input: "hi",
+        }),
+      });
+      const body = (await response.json()) as { error?: { type?: string; code?: string; message?: string } };
+      assert.equal(response.status, 502);
+      assert.equal(body.error?.type, "upstream_error");
+      assert.equal(body.error?.code, "ollama_undeclared_tool_call");
+      assert.match(String(body.error?.message), /apply_patch/);
+      assert.deepEqual(checkpointNames(stateDir), []);
+      const joined = logs.join("\n");
+      assert.match(joined, /\[cob\] ollama guard rejected/);
+      assert.equal(joined.includes("must-not-log"), false);
+      assert.equal(joined.includes("apply_patch"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("accepts a declared function_call, restores a promoted alias, and continues from the checkpoint", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-wp8-ok-"));
+    let turn = 0;
+    const sent: { tools?: { name?: string }[]; input?: unknown }[] = [];
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async (_url, init) => {
+        turn += 1;
+        const parsed = JSON.parse(init.body.toString("utf8")) as { tools?: { name?: string }[]; input?: unknown };
+        sent.push(parsed);
+        if (turn === 1) {
+          return new Response(
+            JSON.stringify({
+              id: "resp_ok",
+              object: "response",
+              status: "completed",
+              output: [
+                {
+                  type: "function_call",
+                  name: "multi_agent_v1__spawn_agent",
+                  call_id: "spawn-1",
+                  arguments: "{}",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: "resp_ok2",
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: "continued" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          tools: [{ type: "tool_search", description: "Find tools." }],
+          input: [
+            { type: "message", role: "user", content: "spawn" },
+            {
+              type: "tool_search_call",
+              call_id: "search-1",
+              execution: "client",
+              arguments: { query: "spawn_agent" },
+            },
+            {
+              type: "tool_search_output",
+              call_id: "search-1",
+              status: "completed",
+              execution: "client",
+              tools: [
+                {
+                  type: "namespace",
+                  name: "multi_agent_v1",
+                  tools: [
+                    {
+                      type: "function",
+                      name: "spawn_agent",
+                      description: "Spawn a sub-agent.",
+                      parameters: { type: "object", properties: { task: { type: "string" } } },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      });
+      assert.equal(first.status, 200, await first.clone().text());
+      const firstBody = (await first.json()) as { output?: { name?: string; namespace?: string }[] };
+      assert.equal(firstBody.output?.[0]?.name, "spawn_agent");
+      assert.equal(firstBody.output?.[0]?.namespace, "multi_agent_v1");
+      assert.equal(checkpointNames(stateDir).length, 1);
+
+      const second = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          previous_response_id: "resp_ok",
+          input: [{ type: "function_call_output", call_id: "spawn-1", output: "ok" }],
+        }),
+      });
+      assert.equal(second.status, 200, await second.text());
+      assert.equal(turn, 2);
+      assert.equal(sent[0]?.tools?.some((tool) => tool.name === "multi_agent_v1__spawn_agent"), true);
+      assert.equal(checkpointNames(stateDir).length, 2);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects an undeclared SSE function_call with one failed terminal and no checkpoint", async () => {
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-wp8-sse-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () => {
+        const sse = [
+          'data: {"type":"response.created","response":{"id":"resp_sse"}}',
+          'data: {"type":"response.output_item.added","item":{"type":"function_call","name":"apply_patch","arguments":"{}"}}',
+          'data: {"type":"response.function_call_arguments.delta","delta":"secret-args"}',
+          'data: {"type":"response.completed","response":{"id":"resp_sse","object":"response","status":"completed","output":[]}}',
+          "data: [DONE]",
+        ].join("\n\n");
+        return new Response(`${sse}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          stream: true,
+          tools: [{ type: "function", name: "exec_command", parameters: { type: "object", properties: {} } }],
+          input: "hi",
+        }),
+      });
+      const text = await response.text();
+      const events = parseSsePayloads(text);
+      const failed = events.find(
+        (event) => event && typeof event === "object" && (event as { type?: string }).type === "response.failed",
+      ) as { response?: { error?: { message?: string; code?: string } } } | undefined;
+      assert.equal(response.headers.get("content-type")?.includes("text/event-stream"), true);
+      assert.equal(failed?.response?.error?.code, "ollama_undeclared_tool_call");
+      assert.match(String(failed?.response?.error?.message), /apply_patch/);
+      assert.equal(events.filter((event) => event === "[DONE]").length, 1);
+      assert.equal(
+        events.some((event) => event && typeof event === "object" && (event as { type?: string }).type === "response.completed"),
+        false,
+      );
+      assert.equal(text.includes("response.output_item.added"), false);
+      assert.equal(text.includes("secret-args"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+      const joined = logs.join("\n");
+      assert.match(joined, /\[cob\] ollama guard rejected/);
+      assert.equal(joined.includes("apply_patch"), false);
+      assert.equal(joined.includes("secret-args"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not change a parent checkpoint when a later undeclared JSON turn is refused", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-wp8-parent-"));
+    let turn = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () => {
+        turn += 1;
+        if (turn === 1) {
+          return new Response(
+            JSON.stringify({
+              id: "resp_parent",
+              object: "response",
+              status: "completed",
+              output: [{ type: "message", role: "assistant", content: "ok" }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: "resp_child",
+            object: "response",
+            status: "completed",
+            output: [{ type: "function_call", name: "apply_patch", arguments: "{}" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "one" }),
+      });
+      assert.equal(first.status, 200);
+      const before = checkpointNames(stateDir);
+      assert.equal(before.length, 1);
+      const second = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          previous_response_id: "resp_parent",
+          tools: [{ type: "function", name: "exec_command", parameters: { type: "object", properties: {} } }],
+          input: "two",
+        }),
+      });
+      assert.equal(second.status, 502);
+      assert.equal(await errorCode(second), "ollama_undeclared_tool_call");
+      assert.deepEqual(checkpointNames(stateDir), before);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

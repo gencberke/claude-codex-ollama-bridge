@@ -128,6 +128,50 @@ describe("Ollama request boundary", () => {
     assert.equal(format.body.error.code, "ollama_text_format_unsupported");
   });
 
+  it('drops only tool_choice="auto" and rejects every correctness-affecting choice', () => {
+    const automatic = applyOllamaRequestBoundary({
+      model: "m",
+      input: "hi",
+      tools: [{ type: "function", name: "shell" }],
+      tool_choice: "auto",
+    });
+    assert.equal(isOllamaReject(automatic), false);
+    if (isOllamaReject(automatic)) return;
+    assert.deepEqual(automatic.dropped, ["tool_choice"]);
+    assert.equal("tool_choice" in automatic.payload, false);
+
+    for (const toolChoice of [
+      "required",
+      "none",
+      { type: "function", name: "shell" },
+      { type: "custom", name: "shell" },
+    ]) {
+      const unsupported = applyOllamaRequestBoundary({
+        model: "m",
+        input: "hi",
+        tool_choice: toolChoice,
+      });
+      assert.equal(isOllamaReject(unsupported), true);
+      if (!isOllamaReject(unsupported)) continue;
+      assert.equal(unsupported.status, 400);
+      assert.equal(unsupported.body.error.code, "ollama_tool_choice_unsupported");
+      assert.match(unsupported.body.error.message, /will not change/);
+    }
+
+    for (const toolChoice of [undefined, null, "shell", "", 1, true, ["shell"]]) {
+      const malformed = applyOllamaRequestBoundary({
+        model: "m",
+        input: "hi",
+        tool_choice: toolChoice,
+      });
+      assert.equal(isOllamaReject(malformed), true);
+      if (!isOllamaReject(malformed)) continue;
+      assert.equal(malformed.status, 400);
+      assert.equal(malformed.body.error.code, "ollama_tool_choice_invalid");
+      assert.match(malformed.body.error.message, /must be "auto"/);
+    }
+  });
+
   it("maps reasoning per the contract and strips effort on non-reasoning rows", () => {
     assert.equal(mapOllamaReasoningEffort("none"), "none");
     assert.equal(mapOllamaReasoningEffort("low"), "low");

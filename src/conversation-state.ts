@@ -179,18 +179,28 @@ export function mergeStateHistory(
 ): StateHistoryItem[] {
   const merged = base.map(cloneHistoryItem);
   const identities = new Set(merged.map((item) => item.identity));
-  const valuesByItemId = new Map<string, string>();
+  const valuesByItemId = new Map<string, Set<string | undefined>>();
   for (const item of merged) {
-    if (item.provenance.itemId) valuesByItemId.set(item.provenance.itemId, JSON.stringify(item.value));
+    const itemId = item.provenance.itemId;
+    if (itemId === undefined) continue;
+    const values = valuesByItemId.get(itemId);
+    const serializedValue = JSON.stringify(item.value);
+    if (values) values.add(serializedValue);
+    else valuesByItemId.set(itemId, new Set([serializedValue]));
   }
   for (const addition of additions) {
     if (identities.has(addition.identity)) continue;
     const itemId = addition.provenance.itemId;
-    if (itemId && valuesByItemId.get(itemId) === JSON.stringify(addition.value)) continue;
+    const serializedValue = itemId === undefined ? undefined : JSON.stringify(addition.value);
+    if (itemId !== undefined && valuesByItemId.get(itemId)?.has(serializedValue)) continue;
     const cloned = cloneHistoryItem(addition);
     merged.push(cloned);
     identities.add(cloned.identity);
-    if (itemId) valuesByItemId.set(itemId, JSON.stringify(cloned.value));
+    if (itemId !== undefined) {
+      const values = valuesByItemId.get(itemId);
+      if (values) values.add(serializedValue);
+      else valuesByItemId.set(itemId, new Set([serializedValue]));
+    }
     if (merged.length > MAX_STATE_HISTORY_ITEMS) {
       throw new ConversationStateError(
         "state_checkpoint_too_large",

@@ -261,6 +261,15 @@ describe("desktop overlay assessment", () => {
     );
     assert.deepEqual(
       summarizeCobStatus({
+        liveHome: false,
+        overlay: "absent",
+        gatewayHealthy: true,
+        catalogFreshness: "missing",
+      }),
+      { kind: "stale", ok: false },
+    );
+    assert.deepEqual(
+      summarizeCobStatus({
         liveHome: true,
         overlay: "broken",
         gatewayHealthy: true,

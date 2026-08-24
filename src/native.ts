@@ -21,13 +21,17 @@ export function pickForwardHeaders(headers: HeaderMap): Record<string, string> {
   return out;
 }
 
-export function nativeRequestHeaders(headers: HeaderMap, contentType?: string): Record<string, string> {
+export function nativeRequestHeaders(
+  headers: HeaderMap,
+  contentType?: string,
+  defaultAccept = "text/event-stream, application/json",
+): Record<string, string> {
   const forwarded = pickForwardHeaders(headers);
   if (contentType && !forwarded["content-type"]) {
     forwarded["content-type"] = contentType;
   }
   if (!forwarded.accept) {
-    forwarded.accept = "text/event-stream, application/json";
+    forwarded.accept = defaultAccept;
   }
   return forwarded;
 }
@@ -46,6 +50,7 @@ export async function forwardNativeResponses(opts: {
   body: Buffer;
   headers: HeaderMap;
   contentType?: string;
+  defaultAccept?: string;
   url?: string;
   fetchImpl?: UpstreamFetch;
   signal?: AbortSignal;
@@ -59,7 +64,7 @@ export async function forwardNativeResponses(opts: {
     opts.url ?? NATIVE_RESPONSES_URL,
     {
       method: "POST",
-      headers: nativeRequestHeaders(opts.headers, opts.contentType),
+      headers: nativeRequestHeaders(opts.headers, opts.contentType, opts.defaultAccept),
       body: opts.body,
       signal: opts.signal,
     },

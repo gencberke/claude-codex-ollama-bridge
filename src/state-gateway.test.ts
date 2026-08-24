@@ -120,6 +120,83 @@ describe("gateway durable Ollama state", () => {
     assert.equal("previous_response_id" in (sent[1] ?? {}), false);
   });
 
+  it("promotes archived string shorthand to typed items only when replaying an Ollama continuation", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-gateway-string-replay-"));
+    const sent: JsonObject[] = [];
+    let responseNumber = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateDir,
+      ollamaFetch: async (_url, init) => {
+        const body = JSON.parse(init.body.toString("utf8")) as JsonObject;
+        sent.push(body);
+        responseNumber += 1;
+        return new Response(
+          JSON.stringify({
+            id: `string-resp-${responseNumber}`,
+            object: "response",
+            status: "completed",
+            model: "test",
+            output: [
+              {
+                id: `string-assistant-${responseNumber}`,
+                type: "message",
+                role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text: `answer-${responseNumber}` }],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const root = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/test", input: "one" }),
+      });
+      assert.equal(root.status, 200, await root.text());
+
+      const follow = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/test",
+          previous_response_id: "string-resp-1",
+          input: "two",
+        }),
+      });
+      assert.equal(follow.status, 200, await follow.text());
+    } finally {
+      await close(server);
+    }
+
+    assert.equal(sent[0]?.input, "one");
+    assert.deepEqual(sent[1]?.input, [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "one" }],
+      },
+      {
+        id: "string-assistant-1",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "input_text", text: "answer-1" }],
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "two" }],
+      },
+    ]);
+    assert.equal("previous_response_id" in (sent[1] ?? {}), false);
+  });
+
   it("replaces Ollama history with the summarizer handoff and archives the cob envelope", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "cob-compact-state-"));
     const ollamaBodies: JsonObject[] = [];
@@ -618,6 +695,93 @@ describe("gateway durable Ollama state", () => {
       assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 1);
       assert.equal(body.endsWith("data: [DONE]\n\n"), true);
       assert.equal(existsSync(join(stateDir, "checkpoints")), true);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("publishes and continues when Ollama closes after response.completed without upstream DONE", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-normal-stream-no-done-"));
+    let turn = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateDir,
+      ollamaFetch: async () => {
+        turn += 1;
+        if (turn === 1) {
+          return new Response(
+            'data: {"type":"response.completed","response":{"id":"normal-no-done","object":"response","status":"completed","output":[]}}\n\n',
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: "normal-after-no-done",
+            object: "response",
+            status: "completed",
+            output: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/test", stream: true, input: "one" }),
+      });
+      const firstBody = await first.text();
+      assert.equal(first.status, 200);
+      assert.equal(firstBody.includes('"code":"upstream_stream_error"'), false);
+      assert.equal([...firstBody.matchAll(/data: \[DONE\]/g)].length, 1);
+      assert.equal(firstBody.endsWith("data: [DONE]\n\n"), true);
+      assert.equal(readdirSync(join(stateDir, "checkpoints")).length, 1);
+
+      const second = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/test",
+          previous_response_id: "normal-no-done",
+          input: "two",
+        }),
+      });
+      assert.equal(second.status, 200, await second.clone().text());
+      assert.equal(turn, 2);
+      assert.equal(readdirSync(join(stateDir, "checkpoints")).length, 2);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("does not publish response.incomplete when upstream closes without DONE", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-incomplete-stream-no-done-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(
+          'data: {"type":"response.incomplete","response":{"id":"incomplete-no-done","object":"response","status":"incomplete","output":[]}}\n\n',
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/test", stream: true, input: "one" }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      assert.equal(body.includes("response.incomplete"), true);
+      assert.equal(body.includes('"code":"upstream_stream_error"'), true);
+      assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 1);
+      assert.equal(existsSync(join(stateDir, "checkpoints")), false);
     } finally {
       await close(server);
     }

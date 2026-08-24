@@ -17,6 +17,9 @@ codex --profile cob
   → cob gateway POST /v1/responses
        native catalog slugs → https://chatgpt.com/backend-api/codex/responses
        ollama/*             → http://127.0.0.1:11434/v1/responses
+  → cob gateway POST /v1/alpha/search
+       exact path only      → https://chatgpt.com/backend-api/codex/alpha/search
+       native-only byte passthrough; never Ollama
   → compaction_trigger on POST /v1/responses
        native thread        → native /responses byte passthrough
        ollama thread        → Ollama /v1/responses summarizer (not /compact);
@@ -25,6 +28,33 @@ codex --profile cob
                              keeps ChatGPT compact + full replay.
   → legacy POST /v1/responses/compact → structured legacy_compaction_unavailable
 ```
+
+Standalone hosted web search is separate from catalog
+`supports_search_tool`. The latter defers MCP/collaboration schemas; it does
+not serve Codex's `web.run` requests. cob allowlists only
+`POST /v1/alpha/search`, forwards the Codex JSON and allowlisted ChatGPT auth /
+turn headers to the native ChatGPT Codex endpoint, and relays the native status,
+headers, and body. It does not rewrite the request model or fall back to Ollama.
+Every other search-like or unknown `/v1/*` route remains closed.
+
+On the Ollama Responses path, cob snapshots the final outbound `tools[]` after
+deferred-tool promotion and the request allowlist. A client-executed
+`function_call` whose name is missing from that snapshot is refused with HTTP
+502 (JSON) or one `response.failed` plus `[DONE]` (SSE). The refused turn is
+not checkpointed. Known aliases are still restored for Codex after the name is
+authorized.
+
+Ollama 0.32.15 cloud may close a successful stream after
+`response.completed` without sending an OpenAI-style upstream `[DONE]`. cob
+treats only the valid completed envelope as success, publishes its checkpoint,
+then emits exactly one client-facing `[DONE]`. Incomplete, failed, malformed,
+or rejected streams still publish no state.
+
+Standard request/wire logs are content-free: they retain aggregate counts,
+sizes, and SHA fields plus sorted `tool_bytes_top` definition sizes, but never
+tool names, schemas, descriptions, arguments, outputs, user/response text,
+authorization, or account identifiers. Guard rejections record only stable
+code/kind, rejected-name length/SHA, and final declaration count/SHA.
 
 `cob` never writes `~/.codex/config.toml`. Plain `codex` keeps working. `cob restore` deletes cob's overlay files and private conversation state.
 
@@ -38,7 +68,7 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 
 - Node.js 22+
 - Codex CLI (developed against 0.147.0; this machine’s Desktop bundles
-  `codex-cli 0.148.0-alpha.21`)
+  `codex-cli 0.149.0-alpha.4.1`)
 - Ollama with `/v1/responses` (0.13.3+)
 
 ## Live vs develop
@@ -50,7 +80,7 @@ user-owned.
 
 ```bash
 npm run pack
-npm install -g ./codex-ollama-bridge-0.1.8.tgz
+npm install -g ./codex-ollama-bridge-0.1.12.tgz
 cob start
 cob status
 codex --profile cob
@@ -99,7 +129,11 @@ Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation, spawn
 
 Native GPT rows are copied from the Codex binary that will consume them
 (Desktop's bundled `codex` on a live macOS home; PATH / `COB_CODEX_BIN`
-otherwise). The sidecar `cob-catalog.meta.json` records that producer.
+otherwise). The sidecar `cob-catalog.meta.json` records that producer. If a
+consumer rejects a candidate, schema v2 retains only redacted failure metadata
+beside the unchanged last-good catalog; a later successful sync writes clean
+schema v1 again. Missing, stale, unknown, or last-failed catalog provenance is
+non-ready.
 A successful live catalog write is not visible in an already-open Desktop
 session — fully quit and reopen ChatGPT Desktop before judging picker
 changes. Native GPT rows are not "repaired" from a different Codex version.
@@ -121,6 +155,11 @@ The V1 spawn window is the first five `visibility=list` rows (priority ASC). Wit
 | 3 | first spawnable Ollama slug from `cob.toml` `[subagents].models` |
 
 Encrypted V2 child tasks return HTTP 400 and are never sent to Ollama. v1 is Responses-only: Chat Completions are not translated. For an Ollama `POST /v1/responses`, a top-level `previous_response_id` is resolved from cob's local checkpoint archive, provider-safe history is merged with the new input, and the field is removed before the Ollama request. Missing, corrupt, incompatible, or unsafe state fails closed with a structured 4xx response asking for full context. Native compaction is triggered only by one terminal `compaction_trigger` item; the trigger is transient and never enters Ollama history. Ollama threads summarize that history locally and return a cob-owned compaction envelope to Codex.
+
+Ollama accepts a string as a complete first-turn `input`, but replayed history
+uses `input[]`, whose entries must be typed items. cob preserves the first-turn
+shorthand on the wire and promotes archived strings to typed user-message
+items only when constructing a local `previous_response_id` continuation.
 
 ## Compaction
 
@@ -213,3 +252,4 @@ publication failure is sent as one terminal error event followed by one DONE.
 - Missing, corrupt, incompatible, or unsafe local state fails closed instead of silently dropping history
 - Gateway binds `127.0.0.1` only
 - No Codex binary shim, launchd, custom `[model_providers.ollama]`, or Chat Completions translator
+- Ollama client-executed tool calls must match the exact final outbound `tools[]` for that request. Undeclared or invalid names return HTTP 502 (`ollama_undeclared_tool_call` / `ollama_tool_call_invalid`) and do not create a checkpoint. There is no runtime opt-out.

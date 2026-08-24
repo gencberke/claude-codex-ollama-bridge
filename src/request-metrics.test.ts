@@ -53,6 +53,9 @@ describe("request-metrics", () => {
     assert.match(line, /effort=high/);
     assert.match(line, /prev_id=0/);
     assert.match(line, /input_by=message:developer:1,message:user:1/);
+    assert.match(line, /tool_bytes_top=\d+/);
+    assert.equal(line.includes("exec_command"), false);
+    assert.equal(line.includes("automation_update"), false);
     assert.equal(line.includes("secret-looking"), false);
     assert.equal(line.includes("app-context"), false);
   });
@@ -140,7 +143,8 @@ describe("request-metrics", () => {
     assert.equal(first, second);
     assert.equal(first.includes("schema-secret-must-not-appear"), false);
     assert.match(first, /tools_n=80/);
-    assert.match(first, /tool_bytes=tool_/);
+    assert.match(first, /tool_bytes_top=\d+/);
+    assert.doesNotMatch(first, /tool_\d+/);
   });
 
   it("jsonUtf8Bytes matches Buffer length of JSON.stringify", () => {
@@ -175,7 +179,8 @@ describe("request-metrics", () => {
     assert.match(line, /alias_sha=deadbeef/);
     assert.match(line, /alias_added=1/);
     assert.match(line, /used_alias_missing=0/);
-    assert.match(line, /tool_bytes=multi_agent_v1__spawn_agent:6800/);
+    assert.match(line, /tool_bytes_top=6800/);
+    assert.equal(line.includes("multi_agent_v1__spawn_agent"), false);
     assert.equal(line.includes("Spawn a sub-agent"), false);
     assert.equal(line.includes("previous_response_id"), false);
   });

@@ -1,12 +1,13 @@
-# Roadmap — implementation plan
+# Roadmap — implemented plan and remaining live gates
 
-**Date:** 2026-08-23
-**Status:** cob 0.1.8 packs isolated WP1–WP7; live G8 is on 0.1.7
-**Next live package:** G11–G16 traces; G17 on the same corpus (effort / max / threshold stay opt-in)
+**Date:** 2026-08-24
+**Status:** WP1–WP8 are implemented; global 0.1.12 passed its authorized install and two-turn Ollama smoke, but the live listener was later found down; remaining G11–G17 lanes stay blocked/partial/unrun
+**Next:** preserve the uncommitted 0.1.9–0.1.12 source in a user-authorized checkpoint, recover the global listener before live work, align incompatible Codex consumers without repairing native rows, then rerun the remaining gates
 
-This document is the implementation contract for the next development cycle.
-It replaces the earlier proposal list with decisions verified against the current
-code, the current Codex Desktop/CLI installation, and upstream documentation.
+This document records the implemented contract and the remaining live-proof
+queue. It replaces the earlier proposal list with decisions verified against
+the current code, the current Codex Desktop/CLI installation, upstream
+documentation, and the 0.1.9 live cut.
 
 `README.md` remains the product contract. `STATUS.md` records live evidence,
 `LIVE-TESTING.md` defines the gold gates, and `RELEASE.md` defines the only
@@ -44,14 +45,14 @@ and cob did not write it. A later read-only check the same evening saw SHA
   `/Applications/ChatGPT.app/Contents/Resources/codex`
   (`sha256=09db9560…`, inode `3913629`).
 - PATH Codex: `0.147.0` at `/opt/homebrew/bin/codex`.
-- Globally installed cob: `0.1.6` at `/opt/homebrew/bin/cob`; gateway pid
+- Historical pre-roadmap snapshot: globally installed cob `0.1.6` at `/opt/homebrew/bin/cob`; gateway pid
   `39122` on `127.0.0.1:18790` reported health `ok`.
 - Ollama client: `0.32.15`; daemon answered `ollama ps` with an empty table.
-- Live `cob-catalog.json` SHA-256
+- Historical live `cob-catalog.json` SHA-256
   `07c189597516dec8ec8fa7e04c6a7179a0a460f8935f056db44710188731b016`
-  (mtime 17:35, before the 18:22 Desktop binary). There is no
-  `cob-catalog.meta.json` sidecar, so provenance is unknown to unreleased WP1.
-- Live `cob status` first line was `cob: ok` (installed 0.1.6 cannot emit
+  (mtime 17:35, before the 18:22 Desktop binary). At that snapshot there was no
+  `cob-catalog.meta.json` sidecar, so provenance was unknown before WP1.
+- Historical `cob status` first line was `cob: ok` (installed 0.1.6 cannot emit
   `stale` / `unknown`). Overlay still `ok`. Isolated `--dev` home was absent.
 - Isolated merge gate after WP1–WP6, the G8 flatten lock, and WP7 Stages
   2–4 fixtures: `npx tsc --noEmit` and `npm test` (292 passed, 0 failed,
@@ -65,25 +66,134 @@ and cob did not write it. A later read-only check the same evening saw SHA
   (wire `high`), active catalog cap 256k, no cloud max advertisement, no
   `auto_compact_token_limit`.
 
-This version skew is not proof of a current picker failure. It is proof that the
-catalog's producer and provenance are currently implicit, so a future update can
-silently leave Desktop on stale model semantics.
+Current live release update (2026-08-23 22:44–22:50 local):
+
+- Packed tarball `codex-ollama-bridge-0.1.9.tgz` SHA-256 is
+  `90682ad1d9924140ad82df7bec402223868d8498383198a706bc5a794f016f99`;
+  it contains 41 production/package files, no test harness, and remains
+  `private: true` (no npm publish).
+- Final merge gate: `npx tsc --noEmit` passed; `npm test` reported 316 tests,
+  313 passed, 3 intentional skips, and 0 failures.
+- Global `/opt/homebrew/bin/cob` reports **0.1.9**. The live gateway is pid
+  **86967** on `127.0.0.1:18790`; health and Desktop overlay are `ok`.
+- `cob status` is fail-closed `unknown` (exit 1), not a gateway outage. Schema-v2
+  provenance retained the last-good catalog (`07c189597516…`) and recorded
+  that PATH Codex 0.147 rejected the Desktop 0.149 candidate near
+  `supports_parallel_tool_calls`. Native catalog rows were not repaired.
+- G18 passed: real `web__run` returned a usable official OpenAI docs result via
+  the exact native-search route; all three neighboring paths returned 404 and
+  produced no upstream search hit. Global `cob smoke --live` also passed.
+- Root `config.toml` SHA-256 was
+  `6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`
+  before and after install, G18, and smoke. cob did not write it.
+
+Current packed candidate update (2026-08-24):
+
+- cob **0.1.10** was packed for the first isolated G19 run and rejected because
+  ordinary ingress/wire diagnostics still disclosed tool names. It was never
+  installed globally and must not be shipped or repacked under the same
+  version.
+- cob **0.1.11** removes clear tool names from standard logs while preserving
+  aggregate counts/SHA and sorted tool-definition byte sizes. The merge gate
+  passed: `npx tsc --noEmit`; `npm test` reported 337 tests, 334 passed, 3
+  intentional skips, and 0 failures.
+- The inspected 43-file `codex-ollama-bridge-0.1.11.tgz` SHA-256 is
+  `71b4e3f1963182d73097e5bac0e3ac67cd536e9f7ad5f4301dbca510fdc458db`.
+  It contains production/package documentation only, not tests, source, or the
+  G19 harness.
+- Packed isolated G19 passed **25/25**: 21 protocol-conformance lanes, 3
+  packed live-route lanes, and 1 real Codex task-effectiveness lane. Rejected
+  turns created no checkpoint; direct, deferred search, V1, and MCP aliases
+  continued; valid SSE published state before success `[DONE]`; logs stayed
+  content-free. The root config SHA above was unchanged and port 18791 was
+  stopped. Exact 0.1.11 was subsequently installed globally; live gateway is
+  pid **7869** on `:18790` with health `ok`.
+- The first G11–G17 execution found a real 0.1.11 stream defect: Ollama 0.32.15
+  emits `response.completed` and may close without `[DONE]`, but cob required
+  both and appended `upstream_stream_error` without a checkpoint. After fixing
+  that, a real follow-up exposed a second dialect boundary: a first-turn string
+  is valid as the whole `input`, but must become a typed item when replayed
+  inside `input[]`.
+- Packed cob **0.1.12** owns only those compatibility fixes. Its merge gate is
+  `npx tsc --noEmit` plus 340 tests (337 pass, 3 intentional skips, 0 fail).
+  The inspected 43-file tarball SHA-256 is
+  `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`.
+  Exact packed runtime against real Ollama completed the DONE-less stream,
+  published before one client `[DONE]`, promoted string history, and completed
+  the HTTP-200 continuation; Ollama access-log delta 2, checkpoints 1→2.
+  The same artifact was then installed globally and passed the authorized
+  two-turn smoke; its listener was later found down as recorded below.
+
+Post-release review audit (2026-08-24):
+
+- Git `HEAD` is still `64a0274` (the 0.1.8 checkpoint). The 0.1.9–0.1.12
+  source is present only in the dirty worktree: 35 tracked files are modified
+  and four source/test files are untracked. This is the largest verified
+  reproducibility risk. Exact 0.1.9, rejected 0.1.10, 0.1.11, and 0.1.12
+  tarballs are present locally with their recorded hashes; the contrary claim
+  that the later tarballs are absent is false. The next source-control action
+  requires explicit user authorization. Preserve the current 0.1.12 source
+  first; do not invent retroactive 0.1.9/0.1.11 source commits from production
+  tarballs that intentionally omit TypeScript and tests.
+- A read-only parser experiment confirmed the schema diagnosis behind live
+  `cob status`: Desktop 0.149 emits native rows without
+  `supports_parallel_tool_calls`, PATH 0.147 requires that field, and adding
+  either boolean value makes both parsers accept the candidate. This proves a
+  syntactic superset is possible, not that cob knows the correct per-model
+  value. Native-row backfill therefore remains rejected; align the consumers
+  instead. `unknown` remains exit 1 by design because catalog readiness is a
+  different signal from `/health` and overlay readiness.
+- A later read-only recheck found global cob 0.1.12 still installed but
+  `:18790` closed; pid 21099 was stale and `/health` was unreachable. The
+  earlier install smoke remains valid historical evidence, not current
+  liveness. Recovery before further live gates is the documented global
+  `cob start`; do not use a workspace start against the live home.
+
+This version skew is not proof of a current picker failure. Live 0.1.12 makes
+the candidate producer and validator rejection explicit; the retained legacy
+catalog remains `unknown` until the consumers agree on its schema. Future skew
+is therefore reported rather than silently accepted.
 
 ## Code evidence map
 
-Isolated WP1–WP7 are packed in cob **0.1.8**. The remaining live-proof points:
+Isolated WP1–WP7 were packed in cob **0.1.8**; 0.1.9 added the audit fixes and
+0.1.11 added WP8. Global 0.1.12 is installed, although its listener was found
+down after the recorded live smoke. Gate disposition is evidence-specific:
 
 - Catalog producer/sidecar/status kinds are implemented (`catalog-provenance.ts`).
-  Live `cob status` can emit `stale` / `unknown`. G11 is still the live
-  procedure, not a claim from the pack.
-- Search defaults on; newest-first promotion is unchanged. G12 is unrun.
-- Ollama allowlist is pinned to 0.32.15 `ResponsesRequest` fields. G13 is unrun.
-- Headers/idle/backpressure split is implemented. G14 is unrun.
+  Failed candidates are recorded redacted in the same versioned sidecar,
+  missing catalogs are non-ready, and every recorded validator identity is
+  checked without spawning Codex.
+  Live `cob status` can emit `stale` / `unknown`. G11 controlled lanes passed,
+  but successful live regeneration is blocked by PATH 0.147 vs Desktop 0.149
+  schema skew.
+- Search defaults on; newest-first promotion is unchanged and turn-local alias
+  metrics now describe actual outbound mutations. G12 is blocked pending the
+  full Desktop restart and real deferred MCP/V1 function sequence.
+- Standalone `web.run` now has one exact native-only `/v1/alpha/search`
+  compatibility route. This is not `supports_search_tool`; G18 passed on the
+  packed global 0.1.9 build.
+- Ollama allowlist is pinned to 0.32.15 `ResponsesRequest` fields;
+  correctness-affecting `tool_choice` values fail closed. G13 cloud
+  low/high/max and deterministic error-boundary lanes passed; its local-model
+  lane is unavailable because only cloud tags are installed.
+- Headers/idle/backpressure controlled lanes passed. G14 found the 0.1.11
+  DONE-less stream defect; exact packed 0.1.12 passes real stream + continuation,
+  while the full long-cloud installed gate remains pending.
 - Catalog file-identity cache, one-stringify metrics, and SSE reference-equality
-  passthrough are isolated-only. G15 is not a live claim.
-- Checkpoint identity is recomputed on read. G16 is unrun.
+  passthrough are isolated-only. G15 measured WP5A as a repeatable win; WP5B
+  was slower and WP5C equal, so there is no blanket performance pass.
+- Checkpoint identity is recomputed on read and repeated-ID replay matches the
+  reference merge rule. G16 passed its isolated tamper/restore matrix.
 - G8 passed on installed 0.1.7 (2026-08-23 20:29). WP7 Stages 2–4 are
-  packed in cob **0.1.8**. G17 remains the live acceptance gate.
+  packed in cob **0.1.8**; 0.1.9 strictly validates the required handoff
+  skeleton. G17 remains the live acceptance gate.
+- The Ollama response path restores known deferred-tool aliases and now
+  rejects an unknown `function_call.name` against the exact final outbound
+  `tools[]` before alias restoration or checkpoint publication. Non-stream
+  JSON validates first; SSE trips permanently on the first invalid client
+  tool. WP8 first shipped globally in 0.1.11 and isolated G19 passed; 0.1.12
+  preserves that guard while fixing the two real Ollama continuation dialect gaps.
 
 ## Upstream facts that constrain the plan
 
@@ -111,6 +221,36 @@ Only primary sources are normative for upstream behavior.
   core usage counts. The bridge should version-test and normalize this contract,
   not forward arbitrary future Codex fields or fabricate token estimates.
   ([Ollama 0.32.15 Responses source](https://github.com/ollama/ollama/blob/v0.32.15/openai/responses.go))
+- Codex models `response.completed.usage` as optional: an absent or top-level
+  `null` usage is accepted, while a present but incomplete nested usage object
+  can fail parsing. Ollama 0.32.15 constructs a complete integer-valued usage
+  object. The current exact-or-omit policy is therefore correct; a speculative
+  top-level-null rewrite is not justified by the pinned dialect.
+  ([Codex Responses SSE parser](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/sse/responses.rs),
+  [Ollama 0.32.15 Responses source](https://github.com/ollama/ollama/blob/v0.32.15/openai/responses.go))
+- Ollama's Responses translator accepts `text.format.type = "json_schema"`,
+  but Ollama's current documentation says Cloud does not support structured
+  outputs. `structuredTextJsonSchema` is therefore translator-level evidence,
+  not a Cloud capability claim. cob must not silently downgrade the request;
+  any future Cloud-specific preflight needs its own pinned contract and tests.
+  ([Ollama 0.32.15 Responses source](https://github.com/ollama/ollama/blob/v0.32.15/openai/responses.go),
+  [Ollama structured outputs](https://github.com/ollama/ollama/blob/main/docs/capabilities/structured-outputs.mdx))
+- OpenAI Responses treats `tools` as the set of tools the model may call,
+  exposes ordered response output items, and uses `previous_response_id` for
+  multi-turn state. Stateless reasoning replay can include
+  `reasoning.encrypted_content`. cob therefore must validate provider output
+  before it becomes Codex-visible continuation state; switching the Ollama path
+  to Chat Completions would discard the product's native protocol boundary.
+  ([OpenAI Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create))
+
+OpenCodex was reviewed only as non-normative comparative evidence at commit
+[`6ae83b1f`](https://github.com/lidge-jun/opencodex/tree/6ae83b1f189c353935d4977bb01227484fbdb52b).
+Its transferable ideas are exact wire capability scoping, response-side
+undeclared-tool rejection, deterministic negative controls, and separation of
+protocol conformance from live-route and task-effectiveness evidence. Its broad
+provider registry, Chat-default Ollama route, account pooling, sidecars,
+autostart, native impersonation, and opaque-state degradation are not cob
+product requirements and must not be copied.
 
 ## Non-negotiable guardrails
 
@@ -136,6 +276,9 @@ Every work package must preserve these rules:
    succeeds.
 10. Do not raise the catalog cap, compact threshold, or reasoning cost merely
     because an upstream maximum is larger.
+11. Treat Ollama output as untrusted provider data. A client-executed tool call
+    must match the exact final tool catalog sent on that request before alias
+    restoration or checkpoint publication.
 
 ## Decision register
 
@@ -159,6 +302,12 @@ Every work package must preserve these rules:
 | Persist a cross-request checkpoint cache | **Defer** | It can hide external tampering; reuse within one operation first. |
 | Copy-on-write SSE rewriting | **Do after protocol tests** | It removes serialization work only when strict no-op equivalence is proven. |
 | Rewrite compaction immediately | **G8 passed; Stage 2+** | Unchanged-path shrink is recorded. Later stages stay separate toggles. |
+| Switch Ollama to Chat Completions by default | **Reject** | It adds a lossy Responses↔Chat translation layer and breaks the Codex-native state/tool/compact contract. |
+| Add a multi-provider adapter registry | **Reject** | cob has one reviewed third-party destination; a general registry adds unused policy surface. |
+| Version the Ollama Responses dialect | **Do narrowly in WP8A** | Request, response, terminal, usage, and state assumptions are version-specific and should have one testable authority. |
+| Reject undeclared Ollama client tools | **Do before remaining live gates** | Unknown model-generated tool names must not reach Codex or continuation state. |
+| Add provider terminal/item-ID repair | **Conditional** | Only a named live Ollama trace may justify a model/version-scoped repair; no speculative heuristics. |
+| Add a runtime `allow_undeclared_tools` escape hatch | **Reject** | The guard is a safety boundary; rollback is a versioned code revert, not a silent unsafe mode. |
 
 ## Delivery rules
 
@@ -374,7 +523,7 @@ Candidate validation failure must leave the old pair intact. A crash between the
 two final renames may leave a detectable mismatch; rerunning `sync` repairs it
 from the same validated inputs.
 
-## WP2 — Make tool deferral the safe default
+## WP2 — Make deferred tool discovery the safe default
 
 - **Priority:** second behavior package
 - **Risk:** medium; tool availability and prompt cost
@@ -449,6 +598,31 @@ false as the rollback control. Picker visibility alone does not pass G12.
 
 Set `catalog.supports_search_tool = false`; no catalog hand-editing and no
 `tool_mode` fallback.
+
+### Compatibility addendum — standalone hosted web search
+
+This is a different Codex protocol from WP2. `supports_search_tool` controls
+deferred MCP/collaboration schemas (`tool_search_call`); Codex `web.run` sends
+an independent `POST /v1/alpha/search` request because the built-in OpenAI
+provider base URL points at cob.
+
+Live 0.1.9 allowlists that one exact method/path and forwards
+it only to `https://chatgpt.com/backend-api/codex/alpha/search`. The request
+body is not rewritten, ChatGPT auth and turn headers use the existing native
+allowlist, and the native response status/headers/body pass through. Search is
+never sent to Ollama and no generic `/v1/*` proxy exists. This contract follows
+Codex's [`codex-api` `SearchClient`](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/search.rs)
+(`alpha/search`) and the built-in
+[`CHATGPT_CODEX_BASE_URL`](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs).
+The official [web-search](https://learn.chatgpt.com/docs/web-search) and
+[advanced configuration](https://learn.chatgpt.com/docs/config-file/config-advanced)
+pages confirm that standalone search is a hosted provider capability and that
+`openai_base_url` replaces the built-in provider base. G18 passed on
+2026-08-23: a real docs search was usable, the log stayed content-free, the
+three neighboring paths failed closed without an upstream hit, and root-config
+SHA was unchanged.
+Unit coverage proves zstd body handling, header filtering/log redaction, error
+transfer, Ollama non-use, and fail-closed neighboring paths.
 
 ## WP3 — Enforce the Ollama request/response boundary
 
@@ -676,10 +850,10 @@ status.
 Keep inbound metrics and post-rewrite Ollama wire metrics as two distinct
 snapshots; they measure different payloads. Within each snapshot, serialize each
 field once and reuse the bytes for its count/hash/detail calculations. Pass the
-snapshot to log formatters. Preserve the live per-tool byte breakdown used to
-diagnose schema bloat. If high-cardinality details are hidden behind debug mode,
-keep aggregate counts and the top offenders available in the standard redacted
-log.
+snapshot to log formatters. Keep per-tool accounting internally to diagnose
+schema bloat, but standard logs expose only aggregate counts/hashes and sorted
+top definition byte sizes, never tool names. This preserves size diagnostics
+without conflicting with G19 redaction.
 
 Add a microbenchmark fixture with a large tool list. Ship only if it reduces
 serialization/hash work without changing log output or logging sensitive values.
@@ -902,13 +1076,284 @@ regression.
 Prompt, effort, maximum advertisement, and active threshold are separate toggles.
 Revert the failing dimension only; retain the proven current G8 path.
 
+## WP8 — Ollama response integrity and dialect conformance
+
+- **Priority:** implementation/G19 complete and live in 0.1.11; install the
+  separately packed 0.1.12 compatibility fix, then rerun affected live lanes
+- **Risk:** high; streaming terminal semantics, tool dispatch, and checkpoint
+  publication
+- **Depends on:** WP2 alias mapping, WP3 request boundary, WP4 streaming
+  behavior, and WP6 state integrity
+- **Live gate:** G19 passed on packed isolated 0.1.11
+- **Release:** original WP8 artifact was live as 0.1.11 before 0.1.12
+  superseded it, tarball SHA-256
+  `71b4e3f1963182d73097e5bac0e3ac67cd536e9f7ad5f4301dbca510fdc458db`;
+  compatibility successor is packed 0.1.12, SHA-256
+  `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`;
+  do not repack either version
+
+### Goal
+
+Treat Ollama Responses as one versioned provider dialect and refuse any
+client-executed tool call that was not present in the exact final `tools[]`
+catalog sent for that request. A refused or malformed provider turn must never
+become a checkpoint, a valid `previous_response_id`, or a successful-looking
+terminal.
+
+This package hardens the existing Responses-only path. It does not add Chat
+Completions, another provider, a generic adapter registry, terminal repair,
+item-ID invention, retries, or a user-facing compatibility toggle.
+
+Primary files:
+
+- new `src/ollama-dialect.ts`;
+- new `src/ollama-response-boundary.ts`;
+- `src/ollama-boundary.ts`, `src/ollama.ts`, `src/gateway.ts`, and only if the
+  chosen SSE design requires it, `src/sse.ts`;
+- focused `ollama-dialect`, response-boundary, gateway, state, SSE, and
+  acceptance tests;
+- `README.md`, `STATUS.md`, `LIVE-TESTING.md`, `CHANGELOG.md`, and this file.
+  Isolated implementation, packing, and G19 are complete; global installation
+  remains a separate authorization.
+
+Do not split `gateway.ts` merely for line count. New modules must own a distinct
+contract that can be tested without starting the gateway.
+
+### WP8A — One machine-readable Ollama dialect authority
+
+Create a small immutable contract and make existing boundary constants consume
+it rather than duplicating lists. At minimum it records:
+
+- reviewed upstream: Ollama `0.32.15`, source path
+  `openai/responses.go`, endpoint `/v1/responses`;
+- provider state: stateless; cob owns `previous_response_id` expansion and
+  checkpoint persistence;
+- accepted, advisory-dropped, and correctness-rejected request fields;
+- successful JSON envelope and SSE terminal expectations;
+- `usage` optionality — absence is never fabricated into zero;
+- reviewed client-executed output call kinds and the rule that their names must
+  come from the final outbound catalog;
+- exact capabilities that remain unknown or unsupported.
+
+The contract is a source/test authority, not runtime provider discovery. Normal
+requests and `cob status` must not call `/api/version`, spawn `ollama`, or block
+traffic merely because the installed version string differs. G19 records the
+observed version and classifies a mismatch as `dialect_untested`; promoting new
+behavior requires a new source review plus fixtures.
+
+Exit criteria:
+
+- request-field lists have one owner;
+- every contract row has at least one positive or negative test;
+- no production dependency or runtime JSON manifest is added;
+- no current accepted request changes behavior in WP8A alone.
+
+### WP8B — Capture the exact request-visible wire tool catalog
+
+Derive the declared-name set from `prepareOllamaWire`'s final bounded payload,
+after `tool_search` conversion, newest-first leaf promotion, namespace aliasing,
+collision handling, model-prefix removal, and request allowlisting. Never infer
+authorization from the original Codex body or from historical state.
+
+Contract:
+
+- only names actually present in final outbound `tools[]` are declared;
+- promoted aliases such as `multi_agent_v1__spawn_agent` are declared under the
+  wire alias and may later be restored through the request-local bridge;
+- a skipped/colliding/over-cap leaf is not declared;
+- `tool_search` is declared only when its converted function definition reached
+  Ollama;
+- an empty outbound catalog authorizes no client-executed function call;
+- tool schemas, descriptions, arguments, outputs, and user text are never kept
+  in the guard state or diagnostic log.
+
+Extend the Ollama forward result with an immutable request-local declaration
+snapshot. It may include a deterministic SHA-8/count for diagnostics, but not
+the tool bodies. Keep the current alias bridge separate: authorization answers
+“may this wire name be called?” while the bridge answers “how is an authorized
+alias restored for Codex?”.
+
+WP8B must not introduce recursive rejection of all non-function tool
+definitions yet. First lock the actual G12 corpus. A new request tool-type
+allowlist is a separate future change unless the pinned Ollama source and live
+wire both establish it without breaking Codex tools.
+
+### WP8C — Non-stream JSON response guard
+
+Validate a successful Ollama JSON response before normalization, usage logging,
+checkpoint publication, or client relay.
+
+Rules:
+
+1. Inspect response `output[]` for client-executed call items. At minimum,
+   `function_call` is guarded. Any additional call kind must be present in the
+   dialect contract before it is accepted.
+2. A non-empty call name must match the exact final wire declaration set.
+3. A missing, empty, non-string, or unreviewed call name/type is a provider
+   compatibility failure, not a message and not a repair opportunity.
+4. Validate the upstream wire name before namespace/alias restoration.
+5. On failure return HTTP 502 with type `upstream_error` and stable code
+   `ollama_undeclared_tool_call` or `ollama_tool_call_invalid`. The client-facing
+   diagnostic may contain a safely JSON-escaped, 100-character maximum tool
+   name; logs contain only failure kind, bounded length, and SHA-8 — never the
+   name, arguments, body, or response text.
+6. Do not publish a checkpoint. If the request used a valid
+   `previous_response_id`, that prior checkpoint remains valid and can be used
+   to retry the turn.
+
+Validation must move ahead of the current non-stream checkpoint write. A guard
+failure must not fall through to the raw-body compatibility catch or be relayed
+with upstream status 200.
+
+### WP8D — Sticky SSE response guard and state ordering
+
+Guard these output-bearing shapes on the Ollama wire:
+
+- `response.output_item.added`;
+- `response.output_item.done`;
+- terminal `response.completed` and `response.incomplete` snapshots when they
+  carry `response.output`.
+
+The first invalid client tool trips the turn permanently:
+
+- relay no offending event and no later delta, item, completed, or upstream
+  `[DONE]`;
+- emit exactly one Codex-facing `response.failed` with the same stable guard
+  code, then exactly one `[DONE]`;
+- do not publish a normal or compact checkpoint;
+- do not let a later empty terminal snapshot clear the rejection;
+- cancel or drain the upstream only through the existing bounded relay policy;
+  do not leave the gateway or client waiting;
+- preserve byte-identical output for valid events unless existing alias/model
+  normalization already requires a rewrite.
+
+The raw provider event must be authorized before alias restoration. The
+checkpoint capture may retain valid provider-wire history as today, but it must
+share a request-local rejection verdict with the client relay so observer order
+cannot publish a response the client was refused. Do not release a success
+`[DONE]` until a valid completed candidate is durably published. A guard failure
+does not need a checkpoint and may close with its failure `[DONE]` immediately.
+
+Prefer a narrow Ollama response transform. Change the generic SSE utility only
+if focused tests prove a reusable drop/replace primitive preserves all existing
+CRLF, comments, malformed-line, line-budget, backpressure, and reference-
+equality behavior.
+
+### WP8E — Deterministic conformance and negative controls
+
+Add a compact table-driven suite; do not copy OpenCodex's multi-provider lab.
+Classify every case as one of:
+
+- `protocol_conformance`: deterministic fixture against the pinned dialect;
+- `live_route_compatibility`: packed gateway against controlled/real upstream;
+- `task_effectiveness`: real Codex tool dispatch and continuation.
+
+Required positive fixtures:
+
+- JSON message response with and without exact usage;
+- SSE created/delta/item/completed/`[DONE]` sequence;
+- declared direct function call;
+- declared `tool_search` call;
+- promoted V1 and MCP namespace aliases restored to their Codex identities;
+- declared tool call checkpoint followed by matching
+  `function_call_output` continuation;
+- valid stream remains byte-identical outside existing rewrites.
+
+Required negative controls:
+
+- undeclared function call in JSON output;
+- undeclared call in `output_item.added`, `output_item.done`, and a
+  terminal-only snapshot;
+- invalid/empty/non-string call name;
+- empty outbound tool catalog followed by a client function call;
+- name declared in the original request but removed by final wire collision,
+  cap, or filtering;
+- invalid event followed by an empty `response.completed` and upstream
+  `[DONE]`;
+- missing, malformed, duplicate, or contradictory terminal/`[DONE]` shapes;
+- `response.failed` and `response.incomplete` handling;
+- oversized/control-character tool name and argument-shaped secret markers to
+  prove logs remain content-free;
+- rejected JSON and SSE turns create no checkpoint and do not change the parent
+  checkpoint;
+- failure stream contains one `response.failed` and one `[DONE]` only.
+
+Each deliberately broken fixture must fail for the intended stable code, not
+merely throw. Fixture digests are optional; add them only if fixtures move to
+external files and silent mutation becomes a real review problem.
+
+### WP8F — Performance and compatibility budget
+
+The valid hot path already parses response JSON/SSE for model rewriting,
+capture, and alias restoration. Reuse that parse; do not add a second full-body
+parse or a second streaming buffer.
+
+Acceptance:
+
+- non-stream response is parsed once and serialized once after validation;
+- SSE guard is request-local and bounded by the existing line/body limits;
+- declaration storage is `O(number of final tool names)` with no schemas;
+- the existing WP5 large SSE fixture has identical output hash;
+- G15 measures the guard-on valid path on the same Node/build. A measurable
+  regression requires profiling and simplification, not disabling the guard.
+
+### G19 — packed response-integrity acceptance
+
+Run only after isolated typecheck/tests pass and a tarball is packed. Use the
+packed CLI in the development home first; global installation and Desktop
+reopen remain separately authorized release actions.
+
+Controlled live-route matrix:
+
+1. JSON upstream returns an undeclared function: 502 stable code, zero new
+   checkpoint.
+2. SSE upstream announces an undeclared function then later completes: client
+   sees one failed terminal and one `[DONE]`, no completed event, zero new
+   checkpoint.
+3. Terminal-only SSE snapshot contains an undeclared function: same failure.
+4. Empty tool catalog plus function call and malformed tool names fail closed.
+5. A declared direct function, `tool_search`, one promoted V1 alias, and one MCP
+   alias pass; restored identities are correct and a second-turn
+   `function_call_output` continues from the published checkpoint.
+6. Logs contain route/status/code, declaration count/SHA, and rejected-name SHA
+   only. Injected newlines, arguments, secret markers, schemas, and response text
+   are absent.
+
+The declared positive lane may reuse the same packed-build G12 trace if it
+records the new guard/declaration evidence. Negative lanes use a controlled
+loopback upstream because asking a model to hallucinate an undeclared tool is
+not deterministic. Record the packed cob version, reviewed/observed Ollama
+version for each lane, dialect authority version, state-directory before/after
+hashes, and root-config SHA when a live-home cut is authorized.
+
+G19 passes only when protocol, live-route, and task-effectiveness layers are
+reported separately. A green mock suite is not a live-route pass; a real model
+calling a declared tool is not proof that negative controls reject undeclared
+ones.
+
+### Rollback and release discipline
+
+- There is no unsafe runtime opt-out.
+- If a valid wire alias is falsely rejected, fix the final-catalog collector or
+  alias mapping with a reproducing fixture; do not broadly allow unknown names.
+- If the SSE implementation regresses framing/backpressure, revert WP8D alone
+  while keeping WP8A/B/C fixtures and the non-stream guard when safe.
+- No checkpoint schema migration is expected because rejected turns write
+  nothing and valid checkpoint values remain unchanged.
+- After a fix, rerun typecheck, all tests, pack-manifest checks, G19, and only
+  the affected G12/G13/G15/G16 evidence.
+- A shipped rollback is another patch version. Do not overwrite or repack the
+  same version.
+- No npm publish (`private: true`), tag, push, root-config write, or live global
+  install is implied by implementation readiness.
+
 ## Documentation and release integration
 
 Every behavior package updates the relevant documents in the same change:
 
 - `README.md`: stable user contract and configuration defaults.
 - `STATUS.md`: current version matrix, proven gates, and remaining live gaps.
-- `LIVE-TESTING.md`: exact G11–G17 procedures, trace fields, redaction, and pass
+- `LIVE-TESTING.md`: exact G11–G19 procedures, trace fields, redaction, and pass
   criteria.
 - `RELEASE.md`: pack/global-install/restart workflow and rollback.
 - `CHANGELOG.md`: user-visible changes only after implementation.
@@ -955,7 +1400,13 @@ change and add it to this roadmap before coding.
 An upstream change may trigger a new research item, but it does not silently
 remove these boundaries.
 
-## Execution order
+## Execution disposition
+
+WP1–WP8 implementation and the packed isolated G19 gate are complete. Exact
+0.1.12 is globally installed after fixing the two Ollama continuation gaps
+exposed by the first G11–G17 execution; its listener must be recovered before
+more live gates. The graph retains ownership and prevents the fix from being
+mistaken for every remaining gate.
 
 ```text
 WP0 current-build evidence
@@ -968,10 +1419,21 @@ WP0 current-build evidence
                                                           │       │
                                                           └──> WP6 state
                                                                  │
-                                                                 └──> WP7 compact/context
+                                                                 ├──> WP7 compact/context
+                                                                 └──> WP8 response integrity
+                                                                        │
+                                     packed 0.1.11 / G19 <─────────────┘
+                                               │
+                                     live 0.1.11 gate cut
+                                               │
+                            DONE-less SSE + string replay failures
+                                               │
+                              packed 0.1.12 real-Ollama PASS
+                                               │
+                               authorized install + affected reruns
 ```
 
-Recommended review/release units:
+Historical review/release units, retained for rollback ownership:
 
 1. WP1 only: catalog provenance and status, with G11.
 2. WP2 only: search default and instrumentation, with G12.
@@ -980,14 +1442,44 @@ Recommended review/release units:
 5. WP5A/B/C as separate performance commits; keep only measured G15 wins.
 6. WP6A before WP6B/C/D; integrity must precede identity-based speedups; run G16.
 7. WP7 stages separately after the unchanged G8 trace, with G17.
+8. WP8A dialect authority, then WP8B final tool declarations, WP8C JSON guard,
+   WP8D SSE guard, WP8E conformance, and WP8F performance verification. Do not
+   start with stream rewriting before the authorization and state-order tests
+   exist.
 
-Do not combine WP1, WP4, WP6, and WP7 into one release. They touch independent
-failure domains and need independent rollback.
+Next execution units:
 
-## Definition of ready for implementation
+1. **0.1.11 release/G19 — complete:** exact artifact was installed globally and
+   later superseded by 0.1.12; G19 passed 25/25 before installation. No npm
+   publish, tag, push, or implicit G11–G17 credit.
+2. **First G11–G17 cut — complete as diagnosis:** G11/G12 blocked, G13 partial,
+   G14 found the release defect, G15 partial, G16 isolated-pass, G17 not run.
+   Exact disposition and evidence live in `LIVE-TESTING.md` and `STATUS.md`.
+3. **0.1.12 compatibility candidate — complete:** 43-file SHA-verified tarball,
+   340-test merge gate, exact packed runtime real-Ollama stream + continuation
+   PASS.
+4. **Authorized 0.1.12 global install — complete:** exact artifact was live on
+   `:18790` during the cut; health/overlay/root SHA verified; live two-turn
+   Ollama smoke passed. The listener was later found down. Desktop was not
+   quit/reopened. Remaining G11–G17 were not closed.
+5. **Source reproducibility checkpoint — authorization required:** preserve the
+   current 0.1.12 TypeScript, tests, and release documentation from the dirty
+   worktree. Verify the rebuilt production payload against the retained 0.1.12
+   tarball and record the intentional post-release documentation delta before
+   the commit. Do not tag, push, publish, or fabricate historical source snapshots.
+6. **Listener recovery and remaining evidence closeout:** run the globally
+   installed `cob start` before live work; unblock G11 only by compatible consumers,
+   not native-row repair; run G12 after a full Desktop restart; add a local G13
+   lane only when a local model exists; keep only WP5A's measured claim; retain
+   G16 isolated pass; run G17 on one fixed corpus before changing defaults.
 
-The roadmap is ready to execute when the implementer can answer “yes” to all of
-these before editing code:
+Future fixes should not combine WP1, WP4, WP6, and WP7 failure domains without
+independent evidence and rollback points.
+
+## Definition of ready for further changes
+
+The original implementation readiness check is satisfied. Before any further
+behavior edit, the implementer must still answer “yes” to all of these:
 
 - The package has a named goal, scope, dependency, tests, live gate, and rollback.
 - Its upstream assumptions are pinned to a version or verified current docs.
@@ -997,7 +1489,8 @@ these before editing code:
   be run only with authorization.
 - Existing dirty work is identified and will be preserved.
 
-For the next session, begin with **WP1**. Do not start WP2–WP7 until WP1's
-catalog/status behavior is implemented and the merge gates pass. If G11 is
-blocked only by live-home or cloud authorization, record that as the sole live
-blocker and continue with isolated work; do not claim the package is live-proven.
+For the next session, preserve installed 0.1.12's source checkpoint first and
+do not repack it under the same version. Recover the global listener before
+live work. The short live two-turn smoke is not the full G14 long-cloud gate.
+Continue only the still-available lanes. Do not claim a gate from installation,
+smoke, or a neighboring gate.

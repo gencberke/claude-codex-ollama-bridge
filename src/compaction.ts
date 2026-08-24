@@ -141,9 +141,10 @@ export function ollamaSummarizerInstructionCopyCount(payload: JsonObject): numbe
 }
 
 export function compactHandoffSectionFlags(text: string): CompactHandoffSectionFlags {
+  const parsed = parseCompactHandoffSections(text);
   const flags = {} as CompactHandoffSectionFlags;
   for (const name of OLLAMA_COMPACT_HANDOFF_SECTIONS) {
-    flags[name] = compactHandoffHasSection(text, name);
+    flags[name] = parsed.some((section) => section.name === name);
   }
   return flags;
 }
@@ -156,9 +157,59 @@ function compactSectionLogKey(name: CompactHandoffSection): string {
   return name.replaceAll(" ", "_").replaceAll("/", "_");
 }
 
-function compactHandoffHasSection(text: string, name: string): boolean {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|\\n)\\s*(?:#{1,6}\\s*|\\*\\*)?${escaped}(?:\\*\\*)?\\s*:?\\s*`, "i").test(text);
+type ParsedCompactHandoffSection = {
+  name: CompactHandoffSection;
+  body: string;
+};
+
+/**
+ * Recognize only complete heading lines. Plain headings keep the shipped
+ * `Goal: body` form; Markdown ATX and bold headings may put the body on the
+ * following line. Bold headings also support an inline body after the colon.
+ */
+function parseCompactHandoffHeading(
+  line: string,
+): { name: CompactHandoffSection; inlineBody: string } | undefined {
+  const trimmed = line.trim();
+  for (const name of OLLAMA_COMPACT_HANDOFF_SECTIONS) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const plain = trimmed.match(new RegExp(`^${escaped}\\s*:\\s*(.*)$`));
+    if (plain) return { name, inlineBody: plain[1] ?? "" };
+    if (trimmed === name) return { name, inlineBody: "" };
+
+    // ATX headings are standalone: `## Goal` (with optional closing hashes).
+    if (new RegExp(`^#{1,6}[ \\t]+${escaped}\\s*:?(?:[ \\t]+#+)?$`).test(trimmed)) {
+      return { name, inlineBody: "" };
+    }
+
+    const bold = trimmed.match(new RegExp(`^\\*\\*${escaped}\\*\\*\\s*:\\s*(.*)$`));
+    if (bold) return { name, inlineBody: bold[1] ?? "" };
+    const boldColon = trimmed.match(new RegExp(`^\\*\\*${escaped}:\\*\\*\\s*(.*)$`));
+    if (boldColon) return { name, inlineBody: boldColon[1] ?? "" };
+    if (trimmed === `**${name}**`) return { name, inlineBody: "" };
+  }
+  return undefined;
+}
+
+function parseCompactHandoffSections(text: string): ParsedCompactHandoffSection[] {
+  const sections: ParsedCompactHandoffSection[] = [];
+  let current: { name: CompactHandoffSection; bodyLines: string[] } | undefined;
+  const finishCurrent = (): void => {
+    if (!current) return;
+    sections.push({ name: current.name, body: current.bodyLines.join("\n").trim() });
+  };
+
+  for (const line of text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n")) {
+    const heading = parseCompactHandoffHeading(line);
+    if (heading) {
+      finishCurrent();
+      current = { name: heading.name, bodyLines: [heading.inlineBody] };
+    } else if (current) {
+      current.bodyLines.push(line);
+    }
+  }
+  finishCurrent();
+  return sections;
 }
 
 export function ollamaCompactHandoffSkeleton(
@@ -174,14 +225,26 @@ export function ollamaCompactHandoffSkeleton(
 export function incompleteOllamaCompactHandoffError(
   text: string,
 ): Extract<OllamaSummaryExtract, { kind: "error" }> | undefined {
-  const flags = compactHandoffSectionFlags(text);
-  const missing = OLLAMA_COMPACT_HANDOFF_SECTIONS.filter((name) => !flags[name]);
-  if (missing.length === 0) return undefined;
+  const sections = parseCompactHandoffSections(text);
+  const firstContentLine = text
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .split("\n")
+    .find((line) => line.trim().length > 0);
+  const firstHeading = firstContentLine ? parseCompactHandoffHeading(firstContentLine) : undefined;
+  const isComplete =
+    firstHeading?.name === OLLAMA_COMPACT_HANDOFF_SECTIONS[0] &&
+    sections.length === OLLAMA_COMPACT_HANDOFF_SECTIONS.length &&
+    sections.every(
+      (section, index) =>
+        section.name === OLLAMA_COMPACT_HANDOFF_SECTIONS[index] && section.body.length > 0,
+    );
+  if (isComplete) return undefined;
   return {
     kind: "error",
     code: "compaction_summary_incomplete",
     message:
-      "Ollama compact summarizer omitted required handoff section(s); resend the full context without compacting",
+      "Ollama compact summarizer returned an incomplete or malformed handoff; resend the full context without compacting because cob will not automatically resend history",
   };
 }
 

@@ -1,64 +1,18 @@
+import {
+  OLLAMA_ADVISORY_FIELDS,
+  OLLAMA_REQUEST_ALLOWLIST,
+} from "./ollama-dialect.js";
 import type { JsonError } from "./encrypted.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
 
 export type OllamaReject = { status: number; body: JsonError };
 
-/**
- * Top-level JSON keys on Ollama 0.32.15 `ResponsesRequest`
- * (`openai/responses.go`). `tool_choice` is documented as unsupported and is
- * not a struct field. `conversation` is present but not implemented.
- */
-export const OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS = [
-  "model",
-  "background",
-  "conversation",
-  "include",
-  "input",
-  "instructions",
-  "max_output_tokens",
-  "reasoning",
-  "temperature",
-  "text",
-  "top_p",
-  "truncation",
-  "tools",
-  "stream",
-] as const;
-
-/** Reviewed Ollama 0.32.15 Responses request surface. */
-export const OLLAMA_REQUEST_ALLOWLIST = [
-  "model",
-  "input",
-  "instructions",
-  "max_output_tokens",
-  "reasoning",
-  "temperature",
-  "text",
-  "top_p",
-  "truncation",
-  "tools",
-  "stream",
-] as const;
-
-export const OLLAMA_ADVISORY_FIELDS = [
-  "store",
-  "background",
-  "include",
-  "metadata",
-  "client_metadata",
-  "stream_options",
-  "tool_choice",
-  "parallel_tool_calls",
-  "reasoning_effort",
-  "prompt_cache_key",
-  "prompt_cache_retention",
-  "safety_identifier",
-  "service_tier",
-  "previous_response_id",
-  "user",
-  "max_tool_calls",
-] as const;
+export {
+  OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS,
+  OLLAMA_ADVISORY_FIELDS,
+  OLLAMA_REQUEST_ALLOWLIST,
+} from "./ollama-dialect.js";
 
 const ALLOWLIST = new Set<string>(OLLAMA_REQUEST_ALLOWLIST);
 const ADVISORY = new Set<string>(OLLAMA_ADVISORY_FIELDS);
@@ -84,6 +38,10 @@ export function applyOllamaRequestBoundary(
       "Ollama does not implement conversation state; cob must resolve continuation locally.",
     );
   }
+  if (Object.hasOwn(payload, "tool_choice")) {
+    const toolChoiceError = unsupportedToolChoiceError(payload.tool_choice);
+    if (toolChoiceError) return toolChoiceError;
+  }
   const formatError = structuredTextFormatError(payload.text);
   if (formatError) return formatError;
 
@@ -93,6 +51,10 @@ export function applyOllamaRequestBoundary(
   for (const [key, value] of Object.entries(payload)) {
     if (ALLOWLIST.has(key)) {
       next[key] = value;
+      continue;
+    }
+    if (key === "tool_choice") {
+      dropped.push(key);
       continue;
     }
     if (ADVISORY.has(key) || key === "store") {
@@ -111,6 +73,26 @@ export function applyOllamaRequestBoundary(
     console.error(`[cob] ollama dropped fields ${dropped.sort().join(",")}`);
   }
   return { payload: next, dropped };
+}
+
+function unsupportedToolChoiceError(toolChoice: unknown): OllamaReject | undefined {
+  if (toolChoice === "auto") return undefined;
+  if (toolChoice === "required" || toolChoice === "none") {
+    return rejectBoundary(
+      "ollama_tool_choice_unsupported",
+      `Ollama does not implement tool_choice="${toolChoice}"; cob will not change tool invocation semantics. Only "auto" may be omitted.`,
+    );
+  }
+  if (isRecord(toolChoice)) {
+    return rejectBoundary(
+      "ollama_tool_choice_unsupported",
+      'Ollama does not implement named/object tool_choice; cob will not change tool selection semantics. Only "auto" may be omitted.',
+    );
+  }
+  return rejectBoundary(
+    "ollama_tool_choice_invalid",
+    'Ollama tool_choice must be "auto" when present; cob will not drop another correctness-affecting value.',
+  );
 }
 
 export function normalizeOllamaReasoning(

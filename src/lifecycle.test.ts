@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmdirSync,
   statSync,
   unlinkSync,
@@ -609,6 +610,172 @@ describe("overlay rollback and start lease", () => {
     assert.equal(existsSync(paths.pid), false);
   });
 
+  it("preserves only a valid new failed-validation sidecar that matches the restored catalog", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-overlay-failure-meta-"));
+    const paths = resolvePaths(dir);
+    const catalog = '{"models":[{"slug":"gpt-5.6-sol"}]}\n';
+    const previousMeta = "PREV-META\n";
+    writeFileSync(paths.catalog, catalog);
+    writeFileSync(paths.catalogMeta, previousMeta);
+    const snapshot = snapshotOverlays(paths);
+    const bin = join(dir, "codex");
+    writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+    chmodSync(bin, 0o755);
+    const {
+      parseCatalogMetadata,
+      resolveCatalogSources,
+      writeCatalogValidationFailure,
+    } = await import("./catalog-provenance.js");
+    const sources = resolveCatalogSources(
+      { liveHome: false, platform: "darwin", pathBin: bin },
+      { readVersion: () => "codex-cli test" },
+    );
+    writeCatalogValidationFailure({
+      metaPath: paths.catalogMeta,
+      candidateBytes: '{"models":[]}',
+      retainedCatalogBytes: catalog,
+      retainedMetadataBytes: null,
+      sources,
+      error: new Error("Codex rejected cob catalog: test field"),
+    });
+    const validFailure = readFileSync(paths.catalogMeta);
+    restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
+    assert.equal(readFileSync(paths.catalog, "utf8"), catalog);
+    assert.equal(readFileSync(paths.catalogMeta).equals(validFailure), true);
+    const retained = parseCatalogMetadata(validFailure.toString("utf8"));
+    assert.equal(retained.schema_version, 2);
+    assert.ok(retained.schema_version === 2 && retained.last_failure);
+    assert.equal(existsSync(paths.profile), false);
+
+    writeFileSync(paths.catalogMeta, validFailure);
+    writeFileSync(paths.profile, "UNCOMMITTED-PROFILE\n");
+    restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
+    assert.equal(readFileSync(paths.catalogMeta, "utf8"), previousMeta);
+    assert.equal(existsSync(paths.profile), false);
+
+    for (const arbitrary of [
+      "not-json\n",
+      `${JSON.stringify({
+        ...(retained.schema_version === 2 ? retained : {}),
+        catalog_sha256: "0".repeat(64),
+      })}\n`,
+      `${JSON.stringify({
+        ...(retained.schema_version === 2 ? retained : {}),
+        last_failure: undefined,
+      })}\n`,
+    ]) {
+      writeFileSync(paths.catalogMeta, arbitrary);
+      restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
+      assert.equal(readFileSync(paths.catalogMeta, "utf8"), previousMeta);
+    }
+  });
+
+  it("keeps foreground failed-validation diagnostics when no prior catalog exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-foreground-reject-empty-"));
+    const paths = resolvePaths(dir);
+    const accept = join(dir, "accept");
+    const reject = join(dir, "reject");
+    writeFileSync(accept, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\"}]}'\n");
+    writeFileSync(reject, "#!/bin/sh\necho 'Codex rejected cob catalog: missing consumer field' >&2\nexit 1\n");
+    chmodSync(accept, 0o755);
+    chmodSync(reject, 0o755);
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    delete process.env.COB_SKIP_CATALOG_CHECK;
+    try {
+      await assert.rejects(
+        () =>
+          serveForeground({
+            paths,
+            port: 1,
+            ollamaUrl: "http://127.0.0.1:1",
+            locked: true,
+            discovery: {
+              liveHome: true,
+              platform: "darwin",
+              desktopBins: [accept],
+              pathBin: reject,
+            },
+            inspect: { readVersion: () => "codex-cli test" },
+          }),
+        /rejected cob catalog/,
+      );
+      assert.equal(existsSync(paths.catalog), false);
+      assert.equal(existsSync(paths.profile), false);
+      assert.equal(existsSync(paths.cobConfig), false);
+      assert.equal(existsSync(paths.runtime), false);
+      const { parseCatalogMetadata } = await import("./catalog-provenance.js");
+      const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+      assert.equal(metadata.schema_version, 2);
+      assert.equal(metadata.schema_version === 2 ? metadata.catalog_sha256 : "unexpected", null);
+      assert.ok(metadata.schema_version === 2 && metadata.last_failure);
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+    }
+  });
+
+  it("restores exact last-good overlays when startup fails after a handled catalog rejection", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-foreground-post-sync-fail-"));
+    const paths = resolvePaths(dir);
+    const accept = join(dir, "accept");
+    const reject = join(dir, "reject");
+    writeFileSync(accept, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\"}]}'\n");
+    writeFileSync(reject, "#!/bin/sh\necho 'Codex rejected cob catalog: missing consumer field' >&2\nexit 1\n");
+    chmodSync(accept, 0o755);
+    chmodSync(reject, 0o755);
+    const catalog = '{"models":[{"slug":"gpt-5.6-sol","visibility":"list"}]}\n';
+    writeFileSync(paths.catalog, catalog);
+    writeFileSync(paths.profile, "PREV-PROFILE\n");
+    writeFileSync(paths.cobConfig, "PREV-TOML\n");
+    const discovery = {
+      liveHome: true,
+      platform: "darwin" as const,
+      desktopBins: [accept],
+      pathBin: reject,
+    };
+    const { resolveCatalogSources, writeCatalogProvenance } = await import("./catalog-provenance.js");
+    writeCatalogProvenance({
+      metaPath: paths.catalogMeta,
+      catalogBytes: catalog,
+      sources: resolveCatalogSources(discovery, { readVersion: () => "codex-cli test" }),
+    });
+    const before = snapshotOverlays(paths);
+    const occupied = createServer((_req, res) => res.end("occupied"));
+    await new Promise<void>((resolve, rejectListen) => {
+      occupied.once("error", rejectListen);
+      occupied.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = occupied.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    delete process.env.COB_SKIP_CATALOG_CHECK;
+    try {
+      await assert.rejects(
+        () =>
+          serveForeground({
+            paths,
+            port,
+            ollamaUrl: "http://127.0.0.1:1",
+            locked: true,
+            discovery,
+            inspect: { readVersion: () => "codex-cli test" },
+          }),
+        /EADDRINUSE|address already in use/i,
+      );
+      for (const file of [paths.profile, paths.catalog, paths.catalogMeta, paths.cobConfig]) {
+        assert.equal(readFileSync(file).equals(before[file]!), true, file);
+      }
+      assert.equal(existsSync(paths.runtime), false);
+      assert.equal(existsSync(paths.pid), false);
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+      await new Promise<void>((resolve, rejectClose) => {
+        occupied.close((error) => (error ? rejectClose(error) : resolve()));
+      });
+    }
+  });
+
   it("rolls back overlays when prepare fails", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-prepare-fail-"));
     const paths = resolvePaths(dir);
@@ -763,7 +930,7 @@ describe("overlay rollback and start lease", () => {
     }
   });
 
-  it("does not rewrite an existing supports_search_tool = false during sync", async () => {
+  it("preserves explicit search false and clears failed-attempt metadata after a successful sync", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-sync-search-off-"));
     const paths = resolvePaths(dir);
     const bin = join(dir, "fake-codex");
@@ -777,6 +944,24 @@ describe("overlay rollback and start lease", () => {
     const previousBin = process.env.COB_CODEX_BIN;
     process.env.COB_SKIP_CATALOG_CHECK = "1";
     process.env.COB_CODEX_BIN = bin;
+    const {
+      parseCatalogMetadata,
+      resolveCatalogSources,
+      writeCatalogValidationFailure,
+    } = await import("./catalog-provenance.js");
+    const sources = resolveCatalogSources(
+      { liveHome: false, platform: "darwin", pathBin: bin },
+      { readVersion: () => "codex-cli test" },
+    );
+    writeCatalogValidationFailure({
+      metaPath: paths.catalogMeta,
+      candidateBytes: '{"models":[]}',
+      retainedCatalogBytes: null,
+      retainedMetadataBytes: null,
+      sources,
+      error: new Error(`Codex rejected cob catalog (path ${realpathSync(bin)} codex-cli test)`),
+    });
+    assert.equal(parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8")).schema_version, 2);
     try {
       await syncCatalog({
         paths,
@@ -791,6 +976,7 @@ describe("overlay rollback and start lease", () => {
       };
       const ollama = catalog.models.find((model) => String(model.slug).startsWith("ollama/"));
       if (ollama) assert.equal(ollama.supports_search_tool, false);
+      assert.equal(parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8")).schema_version, 1);
     } finally {
       if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
       else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
@@ -826,6 +1012,59 @@ describe("overlay rollback and start lease", () => {
     assert.equal(readFileSync(paths.rootConfig, "utf8"), "ROOT\n");
     assert.equal(readFileSync(paths.catalog, "utf8"), "PREV-CATALOG\n");
     assert.equal(readFileSync(paths.profile, "utf8"), "PREV-PROFILE\n");
+    assert.equal(existsSync(paths.runtime), false);
+    assert.equal(existsSync(paths.startLease), false);
+  });
+
+  it("keeps a valid failed-validation sidecar through detached rollback", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-start-rollback-failure-meta-"));
+    const paths = resolvePaths(dir);
+    const catalog = '{"models":[{"slug":"gpt-5.6-sol"}]}\n';
+    writeFileSync(paths.catalog, catalog);
+    writeFileSync(paths.profile, "PREV-PROFILE\n");
+    writeFileSync(paths.cobConfig, "PREV-TOML\n");
+    const bin = join(dir, "codex");
+    writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+    chmodSync(bin, 0o755);
+    const failurePath = join(dir, "failure-meta.json");
+    const { resolveCatalogSources, writeCatalogValidationFailure } = await import("./catalog-provenance.js");
+    writeCatalogValidationFailure({
+      metaPath: failurePath,
+      candidateBytes: '{"models":[]}',
+      retainedCatalogBytes: catalog,
+      retainedMetadataBytes: null,
+      sources: resolveCatalogSources(
+        { liveHome: false, platform: "darwin", pathBin: bin },
+        { readVersion: () => "codex-cli test" },
+      ),
+      error: new Error("Codex rejected cob catalog: detached test"),
+    });
+    const failureMetadata = readFileSync(failurePath, "utf8");
+    const port = await freePort();
+    await assert.rejects(
+      () =>
+        startGatewayDetached({
+          paths,
+          port,
+          ollamaUrl: "http://127.0.0.1:1",
+          spawnServe: ({ token, nonce }) =>
+            spawnFakeServe(dir, {
+              token,
+              nonce,
+              port,
+              crashAfterOverlays: true,
+              crashCatalogMeta: failureMetadata,
+              crashRetainedCatalog: catalog,
+              crashRestoredProfile: "PREV-PROFILE\n",
+              crashRestoredCobConfig: "PREV-TOML\n",
+            }),
+        }),
+      /healthy|handoff|did not become/i,
+    );
+    assert.equal(readFileSync(paths.catalog, "utf8"), catalog);
+    assert.equal(readFileSync(paths.catalogMeta, "utf8"), failureMetadata);
+    assert.equal(readFileSync(paths.profile, "utf8"), "PREV-PROFILE\n");
+    assert.equal(readFileSync(paths.cobConfig, "utf8"), "PREV-TOML\n");
     assert.equal(existsSync(paths.runtime), false);
     assert.equal(existsSync(paths.startLease), false);
   });
@@ -1162,12 +1401,12 @@ describe("cob status desktop overlay", () => {
     assert.match(report.text, /catalog provenance: fresh/);
   });
 
-  it("treats a stopped isolated home with no root config as ready, not absent", async () => {
+  it("treats a stopped isolated home with no catalog as stale, not ready", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-status-isolated-"));
     const paths = resolvePaths(dir);
     const report = await statusReport(paths);
     assert.equal(report.ok, false);
-    assert.match(report.text, /^cob: ready\n/);
+    assert.match(report.text, /^cob: stale\n/);
     assert.match(report.text, /isolated Codex home/);
     assert.match(report.text, /desktop overlay: no root config.toml/);
   });
@@ -1222,7 +1461,7 @@ describe("cob status desktop overlay", () => {
     assert.match(report.text, /catalog provenance: stale/);
   });
 
-  it("keeps the previous catalog and sidecar when a second consumer rejects", async () => {
+  it("keeps the previous catalog and embeds its provenance when a second consumer rejects", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-sync-reject-"));
     const paths = resolvePaths(dir);
     const accept = join(dir, "accept");
@@ -1239,7 +1478,23 @@ describe("cob status desktop overlay", () => {
       ],
     })}\n`;
     writeFileSync(paths.catalog, previous);
-    writeFileSync(paths.catalogMeta, "PREV-META\n");
+    const discovery = {
+      liveHome: true,
+      platform: "darwin" as const,
+      desktopBins: [accept],
+      pathBin: reject,
+    };
+    const {
+      parseCatalogMetadata,
+      resolveCatalogSources,
+      writeCatalogProvenance,
+    } = await import("./catalog-provenance.js");
+    writeCatalogProvenance({
+      metaPath: paths.catalogMeta,
+      catalogBytes: previous,
+      sources: resolveCatalogSources(discovery, { readVersion: () => "codex-cli test" }),
+    });
+    const previousMetadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
     const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
     delete process.env.COB_SKIP_CATALOG_CHECK;
     try {
@@ -1249,18 +1504,38 @@ describe("cob status desktop overlay", () => {
             paths,
             ollamaUrl: "http://127.0.0.1:1",
             locked: true,
-            discovery: {
-              liveHome: true,
-              platform: "darwin",
-              desktopBins: [accept],
-              pathBin: reject,
-            },
+            discovery,
             inspect: { readVersion: () => "codex-cli test" },
           }),
         /rejected cob catalog/,
       );
       assert.equal(readFileSync(paths.catalog, "utf8"), previous);
-      assert.equal(readFileSync(paths.catalogMeta, "utf8"), "PREV-META\n");
+      const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+      assert.equal(metadata.schema_version, 2);
+      assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "known");
+      assert.deepEqual(
+        metadata.schema_version === 2 ? metadata.active : undefined,
+        previousMetadata.schema_version === 1
+          ? {
+              state: "known",
+              generated_at: previousMetadata.generated_at,
+              producer: previousMetadata.producer,
+              validators: previousMetadata.validators,
+            }
+          : undefined,
+      );
+      assert.equal(
+        metadata.schema_version === 2 ? metadata.catalog_sha256 : undefined,
+        previousMetadata.catalog_sha256,
+      );
+      assert.equal(
+        metadata.schema_version === 2 ? metadata.last_failure?.rejected_validator?.path : undefined,
+        realpathSync(reject),
+      );
+      assert.match(
+        metadata.schema_version === 2 ? (metadata.last_failure?.diagnostic.summary ?? "") : "",
+        /supports_parallel_tool_calls/,
+      );
     } finally {
       if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
       else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
@@ -1302,8 +1577,87 @@ describe("cob status desktop overlay", () => {
       });
       assert.equal(prepared.wrote, false);
       assert.equal(readFileSync(paths.catalog, "utf8"), previous);
-      assert.equal(readFileSync(paths.catalogMeta, "utf8"), "PREV-META\n");
+      const { parseCatalogMetadata } = await import("./catalog-provenance.js");
+      const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+      assert.equal(metadata.schema_version, 2);
+      assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
       assert.match(String(prepared.ollamaError), /supports_parallel_tool_calls/);
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+    }
+  });
+
+  it("reports a redacted failed validation for a retained legacy catalog with no sidecar", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-reject-legacy-"));
+    const paths = resolvePaths(dir);
+    const accept = join(dir, "accept");
+    const reject = join(dir, "reject");
+    writeFileSync(accept, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\"}]}'\n");
+    writeFileSync(
+      reject,
+      "#!/bin/sh\necho 'Codex rejected cob catalog: field supports_parallel_tool_calls secret=DO-NOT-PERSIST' >&2\nexit 1\n",
+    );
+    chmodSync(accept, 0o755);
+    chmodSync(reject, 0o755);
+    const previous = `${JSON.stringify({
+      models: [
+        { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
+        { slug: "gpt-5.6-terra", visibility: "list", priority: 1 },
+        { slug: "gpt-5.6-luna", visibility: "list", priority: 2 },
+      ],
+    })}\n`;
+    writeFileSync(paths.catalog, previous);
+    assert.equal(existsSync(paths.catalogMeta), false);
+    const discovery = {
+      liveHome: true,
+      platform: "darwin" as const,
+      desktopBins: [accept],
+      pathBin: reject,
+    };
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    delete process.env.COB_SKIP_CATALOG_CHECK;
+    try {
+      await assert.rejects(
+        () =>
+          syncCatalog({
+            paths,
+            ollamaUrl: "http://127.0.0.1:1",
+            locked: true,
+            discovery,
+            inspect: { readVersion: () => "codex-cli test" },
+          }),
+        /rejected cob catalog/,
+      );
+      assert.equal(readFileSync(paths.catalog, "utf8"), previous);
+      assert.equal(existsSync(paths.catalogMeta), true);
+      const diagnostic = readFileSync(paths.catalogMeta, "utf8");
+      assert.doesNotMatch(diagnostic, /DO-NOT-PERSIST/);
+      const { parseCatalogMetadata } = await import("./catalog-provenance.js");
+      const metadata = parseCatalogMetadata(diagnostic);
+      assert.equal(metadata.schema_version, 2);
+      assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
+      assert.match(
+        metadata.schema_version === 2 && metadata.active.state === "unknown"
+          ? metadata.active.reason
+          : "",
+        /legacy catalog had no cob-catalog\.meta\.json/,
+      );
+
+      const report = await statusReport(paths, {
+        discovery,
+        inspect: {
+          readVersion: () => {
+            throw new Error("status must not execute Codex");
+          },
+        },
+      });
+      assert.equal(report.ok, false);
+      assert.match(report.text, /^cob: unknown\n/);
+      assert.match(report.text, /last candidate validation: failed/);
+      assert.match(report.text, /supports_parallel_tool_calls/);
+      assert.match(report.text, /legacy catalog had no cob-catalog\.meta\.json/);
+      assert.doesNotMatch(report.text, /DO-NOT-PERSIST/);
     } finally {
       if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
       else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
@@ -1341,6 +1695,10 @@ function spawnFakeServe(
     nonce: string;
     port: number;
     crashAfterOverlays?: boolean;
+    crashCatalogMeta?: string;
+    crashRetainedCatalog?: string;
+    crashRestoredProfile?: string;
+    crashRestoredCobConfig?: string;
     delayListenMs?: number;
     runtimeNonce?: string;
   },
@@ -1363,6 +1721,18 @@ writeFileSync(paths.profile, "profile\\n");
 writeFileSync(paths.catalog, "{\\"models\\":[]}\\n");
 writeFileSync(paths.cobConfig, "[compaction]\\nprovider = \\"native\\"\\n");
 if (process.env.COB_FAKE_SERVE_CRASH === "1") {
+  if (process.env.COB_FAKE_SERVE_RETAINED_CATALOG) {
+    writeFileSync(paths.catalog, process.env.COB_FAKE_SERVE_RETAINED_CATALOG);
+  }
+  if (process.env.COB_FAKE_SERVE_RESTORED_PROFILE) {
+    writeFileSync(paths.profile, process.env.COB_FAKE_SERVE_RESTORED_PROFILE);
+  }
+  if (process.env.COB_FAKE_SERVE_RESTORED_COB_CONFIG) {
+    writeFileSync(paths.cobConfig, process.env.COB_FAKE_SERVE_RESTORED_COB_CONFIG);
+  }
+  if (process.env.COB_FAKE_SERVE_CATALOG_META) {
+    writeFileSync(paths.catalogMeta, process.env.COB_FAKE_SERVE_CATALOG_META);
+  }
   releaseLock(paths.lock);
   process.exit(1);
 }
@@ -1418,6 +1788,10 @@ process.on("SIGINT", () => process.exit(0));
       COB_RUNTIME_NONCE: opts.nonce,
       COB_PORT: String(opts.port),
       COB_FAKE_SERVE_CRASH: opts.crashAfterOverlays ? "1" : "",
+      COB_FAKE_SERVE_CATALOG_META: opts.crashCatalogMeta ?? "",
+      COB_FAKE_SERVE_RETAINED_CATALOG: opts.crashRetainedCatalog ?? "",
+      COB_FAKE_SERVE_RESTORED_PROFILE: opts.crashRestoredProfile ?? "",
+      COB_FAKE_SERVE_RESTORED_COB_CONFIG: opts.crashRestoredCobConfig ?? "",
       COB_FAKE_SERVE_DELAY_MS: String(opts.delayListenMs ?? 0),
       COB_FAKE_SERVE_RUNTIME_NONCE: opts.runtimeNonce ?? "",
     },

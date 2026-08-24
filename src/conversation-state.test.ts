@@ -114,6 +114,25 @@ describe("durable Ollama conversation state", () => {
     );
   });
 
+  it("deduplicates an earlier value after the same item id changes and replays", () => {
+    const additions = createStateHistoryItems(
+      [
+        { id: "reused", type: "message", text: "A" },
+        { id: "reused", type: "message", text: "B" },
+        { id: "reused", type: "message", text: "A" },
+      ],
+      "resp-aba",
+      "response",
+    );
+
+    const merged = mergeStateHistory([], additions);
+
+    assert.deepEqual(
+      merged.map((item) => (item.value as { text: string }).text),
+      ["A", "B"],
+    );
+  });
+
   it("archives raw compact bytes and uses replacement history", async () => {
     const store = newStore();
     await store.publish(draft("resp-1", [{ id: "old", type: "message", text: "full replay" }], []));
@@ -328,6 +347,22 @@ describe("durable Ollama conversation state", () => {
           { id: "keep", type: "reasoning", text: "other" },
         ],
       },
+      {
+        base: [
+          { id: "reused-base", type: "message", text: "A" },
+          { id: "reused-base", type: "message", text: "B" },
+        ],
+        extra: [{ id: "reused-base", type: "message", text: "A" }],
+      },
+      {
+        base: [{ id: "reused-extra", type: "message", text: "A" }],
+        extra: [
+          { id: "reused-extra", type: "message", text: "B" },
+          { id: "reused-extra", type: "message", text: "A" },
+          { id: "reused-extra", type: "message", text: "C" },
+          { id: "reused-extra", type: "message", text: "B" },
+        ],
+      },
     ];
     for (const [index, corpus] of corpora.entries()) {
       const a = createStateHistoryItems(corpus.base, `resp-a-${index}`, "response");
@@ -335,8 +370,8 @@ describe("durable Ollama conversation state", () => {
       const merged = mergeStateHistory(a, b);
       const reference = referenceMerge(a, b);
       assert.deepEqual(
-        merged.map((item) => item.identity),
-        reference.map((item) => item.identity),
+        merged,
+        reference,
         `corpus ${index}`,
       );
     }

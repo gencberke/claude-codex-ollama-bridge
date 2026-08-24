@@ -10,15 +10,19 @@ import {
   loadOllamaTags,
   mergeCatalogWithFallback,
   parseCatalogJson,
+  serializeCatalog,
   writeCatalogIfChanged,
 } from "./catalog.js";
 import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
   discoverCodexBins,
+  parseCatalogMetadata,
   resolveCatalogSources,
+  sha256Hex,
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
+  writeCatalogValidationFailure,
   type CatalogDiscovery,
   type InspectCodexIo,
 } from "./catalog-provenance.js";
@@ -117,11 +121,59 @@ export function snapshotOverlays(paths: CobPaths): OverlaySnapshot {
   return snapshot;
 }
 
-export function restoreOverlays(paths: CobPaths, snapshot: OverlaySnapshot): void {
+export function restoreOverlays(
+  paths: CobPaths,
+  snapshot: OverlaySnapshot,
+  opts: { preserveCatalogValidationFailure?: boolean } = {},
+): void {
+  const failedValidationMetadata = opts.preserveCatalogValidationFailure
+    ? retainableCatalogValidationFailure(paths, snapshot)
+    : null;
   for (const file of overlayStateFiles(paths)) {
+    // The retained failure sidecar was already written atomically with mode
+    // 0600. Leave it in place so rollback has no delete/rewrite crash window.
+    if (file === paths.catalogMeta && failedValidationMetadata) continue;
     const bytes = snapshot[file];
     if (bytes === null || bytes === undefined) unlinkIfExists(file);
     else writeFileAtomic(file, bytes, 0o600);
+  }
+}
+
+function retainableCatalogValidationFailure(
+  paths: CobPaths,
+  snapshot: OverlaySnapshot,
+): Buffer | null {
+  const metadataBytes = readFileBufferOrNull(paths.catalogMeta);
+  const previousMetadataBytes = snapshot[paths.catalogMeta] ?? null;
+  if (
+    metadataBytes === null ||
+    (previousMetadataBytes !== null && metadataBytes.equals(previousMetadataBytes))
+  ) {
+    return null;
+  }
+
+  for (const file of overlayStateFiles(paths)) {
+    if (file === paths.catalogMeta) continue;
+    const snapshotBytes = snapshot[file] ?? null;
+    const currentBytes = readFileBufferOrNull(file);
+    if (
+      (snapshotBytes === null) !== (currentBytes === null) ||
+      (snapshotBytes !== null && currentBytes !== null && !snapshotBytes.equals(currentBytes))
+    ) {
+      return null;
+    }
+  }
+
+  const retainedCatalogBytes = snapshot[paths.catalog] ?? null;
+  try {
+    const metadata = parseCatalogMetadata(metadataBytes.toString("utf8"));
+    if (metadata.schema_version !== 2 || metadata.last_failure === undefined) return null;
+    if (retainedCatalogBytes === null) {
+      return metadata.catalog_sha256 === null ? metadataBytes : null;
+    }
+    return metadata.catalog_sha256 === sha256Hex(retainedCatalogBytes) ? metadataBytes : null;
+  } catch {
+    return null;
   }
 }
 
@@ -242,9 +294,13 @@ async function syncCatalogUnlocked(opts: {
   } catch (error) {
     ollamaError = error instanceof Error ? error.message : String(error);
   }
+  const retainedCatalogBytes = readFileBufferOrNull(opts.paths.catalog);
+  const retainedMetadataBytes = readFileBufferOrNull(opts.paths.catalogMeta);
   let previous: CatalogFile | null = null;
   try {
-    previous = parseCatalogJson(readFileSync(opts.paths.catalog, "utf8"));
+    previous = retainedCatalogBytes
+      ? parseCatalogJson(retainedCatalogBytes.toString("utf8"))
+      : null;
   } catch {
     previous = null;
   }
@@ -259,6 +315,16 @@ async function syncCatalogUnlocked(opts: {
     try {
       assertConsumersAcceptCatalog(catalog, sources.validators);
     } catch (error) {
+      if (error instanceof CatalogConsumerRejectedError) {
+        writeCatalogValidationFailure({
+          metaPath: opts.paths.catalogMeta,
+          candidateBytes: serializeCatalog(catalog),
+          retainedCatalogBytes,
+          retainedMetadataBytes,
+          sources,
+          error,
+        });
+      }
       if (error instanceof CatalogConsumerRejectedError && opts.keepLastGoodOnReject && previous) {
         console.error(`[cob] ${error.message}`);
         console.error("[cob] keeping last known-good catalog; run cob sync after consumers agree");
@@ -406,7 +472,9 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
           // Preserve the boot error; there is no safe recovery if close itself fails.
         }
       }
-      restoreOverlays(paths, snapshot);
+      restoreOverlays(paths, snapshot, {
+        preserveCatalogValidationFailure: error instanceof CatalogConsumerRejectedError,
+      });
       throw error;
     }
   };
@@ -913,7 +981,7 @@ export async function startGatewayDetached(opts: {
       if (lease && lease.pid === child.pid && lease.nonce === nonce) {
         clearStartLease(paths);
       }
-      if (snapshot) restoreOverlays(paths, snapshot);
+      if (snapshot) restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
     }
     throw error;
   } finally {
@@ -974,7 +1042,7 @@ async function rollbackDetachedStart(
     const lease = readStartLease(paths);
     if (!lease || lease.pid !== child.pid || lease.nonce !== nonce) return;
     clearStartLease(paths);
-    restoreOverlays(paths, snapshot);
+    restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
   });
 }
 

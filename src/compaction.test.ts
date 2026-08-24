@@ -406,17 +406,16 @@ describe("compaction v2", () => {
   });
 
   it("records compact section-presence flags without copying summary text", () => {
-    const flags = compactHandoffSectionFlags(
-      [
-        "Goal: finish the bridge",
-        "Constraints: None",
-        "Completed: packed 0.1.7",
-        "Pending: Stage 3",
-        "Decisions: flatten tool history",
-        "Tool state: None",
-        "Verification/evidence: follow-up replay_ratio 0.03",
-      ].join("\n"),
-    );
+    const handoff = [
+      "Goal: finish the bridge",
+      "Constraints: None",
+      "Completed: packed 0.1.7",
+      "Pending: Stage 3",
+      "Decisions: flatten tool history",
+      "Tool state: None",
+      "Verification/evidence: follow-up replay_ratio 0.03",
+    ].join("\n");
+    const flags = compactHandoffSectionFlags(handoff);
     assert.deepEqual(
       flags,
       Object.fromEntries(OLLAMA_COMPACT_HANDOFF_SECTIONS.map((name) => [name, true])),
@@ -427,6 +426,7 @@ describe("compaction v2", () => {
       "Goal:1,Constraints:1,Completed:1,Pending:1,Decisions:1,Tool_state:1,Verification_evidence:1",
     );
     assert.equal(formatted.includes("finish the bridge"), false);
+    assert.equal(incompleteOllamaCompactHandoffError(handoff), undefined);
     assert.equal(
       incompleteOllamaCompactHandoffError("plain recap with no headings")?.code,
       "compaction_summary_incomplete",
@@ -441,6 +441,93 @@ describe("compaction v2", () => {
       "Tool state": false,
       "Verification/evidence": false,
     });
+  });
+
+  it("accepts exact ordered plain and Markdown handoff skeletons with populated bodies or None", () => {
+    const markdown = [
+      "# Goal",
+      "Finish the bridge",
+      "## Constraints",
+      "None",
+      "**Completed**: strict parser",
+      "**Pending:** None",
+      "Decisions:",
+      "Keep the shipped inline form valid",
+      "Tool state: None",
+      "###### Verification/evidence",
+      "focused tests pass",
+    ].join("\r\n");
+    assert.equal(incompleteOllamaCompactHandoffError(markdown), undefined);
+    assert.deepEqual(
+      compactHandoffSectionFlags(markdown),
+      Object.fromEntries(OLLAMA_COMPACT_HANDOFF_SECTIONS.map((name) => [name, true])),
+    );
+    assert.equal(
+      incompleteOllamaCompactHandoffError(
+        ollamaCompactHandoffSkeleton({
+          Goal: "multi-line goal\nwith retained detail",
+          Constraints: "None",
+        }),
+      ),
+      undefined,
+    );
+  });
+
+  it("rejects malformed handoff counterexamples instead of accepting heading presence", () => {
+    const validLines = ollamaCompactHandoffSkeleton({ Goal: "ship", Pending: "run tests" }).split("\n");
+    const counterexamples: Array<{ name: string; text: string }> = [
+      {
+        name: "prefix match",
+        text: ["Goalkeeper: ship", ...validLines.slice(1)].join("\n"),
+      },
+      {
+        name: "suffix on required heading",
+        text: ["Goal extra: ship", ...validLines.slice(1)].join("\n"),
+      },
+      {
+        name: "wrong case",
+        text: ["goal: ship", ...validLines.slice(1)].join("\n"),
+      },
+      {
+        name: "heading embedded in prose",
+        text: ["Recap Goal: ship", ...validLines.slice(1)].join("\n"),
+      },
+      {
+        name: "out of order",
+        text: [validLines[1]!, validLines[0]!, ...validLines.slice(2)].join("\n"),
+      },
+      {
+        name: "duplicate",
+        text: [validLines[0]!, validLines[0]!, ...validLines.slice(1)].join("\n"),
+      },
+      {
+        name: "empty inline body",
+        text: ["Goal:", ...validLines.slice(1)].join("\n"),
+      },
+      {
+        name: "empty Markdown body",
+        text: ["# Goal", "## Constraints", ...validLines.slice(2)].join("\n"),
+      },
+      {
+        name: "preamble before skeleton",
+        text: ["Here is the handoff:", ...validLines].join("\n"),
+      },
+      {
+        name: "unsupported Markdown heading depth",
+        text: ["####### Goal", "ship", ...validLines.slice(1)].join("\n"),
+      },
+    ];
+
+    for (const counterexample of counterexamples) {
+      const error = incompleteOllamaCompactHandoffError(counterexample.text);
+      assert.equal(error?.kind, "error", counterexample.name);
+      assert.equal(error?.code, "compaction_summary_incomplete", counterexample.name);
+      assert.match(error?.message ?? "", /resend the full context without compacting/, counterexample.name);
+      assert.match(error?.message ?? "", /will not automatically resend history/, counterexample.name);
+    }
+
+    assert.equal(compactHandoffSectionFlags(counterexamples[0]!.text).Goal, false);
+    assert.equal(compactHandoffSectionFlags(counterexamples[1]!.text).Goal, false);
   });
 
   it("compares none and low summarizer effort without changing the omitted default", () => {

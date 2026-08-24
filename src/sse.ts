@@ -11,10 +11,14 @@ export class SseLimitError extends Error {
   }
 }
 
+export const SSE_OMIT_LINE = Symbol("sse-omit-line");
+
 export type SseObserver = {
   onChunk?: (chunk: Buffer) => void;
   onData?: (event: { value?: unknown; done?: boolean; malformed?: boolean }) => void;
   suppressDone?: boolean;
+  /** Drop remaining `data:` lines without parsing them. */
+  omitData?: () => boolean;
 };
 
 export function sseRewriteTransform(
@@ -34,9 +38,9 @@ export function sseRewriteTransform(
         rest = parts.pop() ?? "";
         assertLineBudget(rest, maxLineBytes);
         for (const part of parts) assertLineBudget(part, maxLineBytes);
-        const rewritten = parts.map((line) =>
-          rewriteSseLine(line.replace(/\r$/, ""), rewriteJson, observer),
-        );
+        const rewritten = parts
+          .map((line) => rewriteSseLine(line.replace(/\r$/, ""), rewriteJson, observer))
+          .filter((line): line is string => line !== SSE_OMIT_LINE);
         callback(null, rewritten.length > 0 ? `${rewritten.join("\n")}\n` : "");
       } catch (error) {
         callback(error as Error);
@@ -50,7 +54,8 @@ export function sseRewriteTransform(
           return;
         }
         assertLineBudget(rest, maxLineBytes);
-        callback(null, rewriteSseLine(rest.replace(/\r$/, ""), rewriteJson, observer));
+        const line = rewriteSseLine(rest.replace(/\r$/, ""), rewriteJson, observer);
+        callback(null, line === SSE_OMIT_LINE ? undefined : line);
       } catch (error) {
         callback(error as Error);
       }
@@ -62,8 +67,9 @@ export function rewriteSseLine(
   line: string,
   rewriteJson: (value: unknown) => unknown,
   observer?: SseObserver,
-): string {
+): string | typeof SSE_OMIT_LINE {
   if (!line.startsWith("data:")) return line;
+  if (observer?.omitData?.()) return SSE_OMIT_LINE;
   const payload = line.slice("data:".length).trim();
   if (payload.length === 0) return line;
   if (payload === "[DONE]") {
@@ -74,6 +80,7 @@ export function rewriteSseLine(
     const parsed: unknown = JSON.parse(payload);
     observer?.onData?.({ value: parsed });
     const rewritten = rewriteJson(parsed);
+    if (rewritten === SSE_OMIT_LINE) return SSE_OMIT_LINE;
     if (rewritten === parsed) return line;
     return `data: ${JSON.stringify(rewritten)}`;
   } catch {

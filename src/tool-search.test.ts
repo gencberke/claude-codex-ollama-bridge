@@ -6,6 +6,7 @@ import {
   rewriteToolSearchFromOllama,
   rewriteToolSearchToOllama,
 } from "./tool-search.js";
+import { sha256Hex8 } from "./request-metrics.js";
 import type { JsonObject } from "./types.js";
 
 const SEARCH_TOOL = {
@@ -427,9 +428,134 @@ describe("deferred tool promotion", () => {
     assert.equal(bridge.promotedN, 1);
     assert.equal(bridge.skippedCap >= 1, true);
     assert.equal(bridge.aliasesAdded, 1);
-    assert.match(bridge.aliasSha, /^[0-9a-f]{8}$/);
+    assert.equal(bridge.aliasSha, sha256Hex8(["multi_agent_v1__spawn_agent"]));
     assert.equal(bridge.aliasSha.includes("spawn"), false);
     assert.equal(bridge.usedAliasMissing, 0);
+  });
+
+  it("hashes only appended aliases in deterministic newest-first wire order", () => {
+    const payload: JsonObject = {
+      tools: [
+        SEARCH_TOOL,
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+      ],
+      input: [
+        { type: "tool_search_call", call_id: "old", execution: "client", arguments: { query: "issues" } },
+        {
+          type: "tool_search_output",
+          call_id: "old",
+          status: "completed",
+          execution: "client",
+          tools: [githubNamespace()],
+        },
+        { type: "tool_search_call", call_id: "new", execution: "client", arguments: { query: "spawn" } },
+        {
+          type: "tool_search_output",
+          call_id: "new",
+          status: "completed",
+          execution: "client",
+          tools: [spawnNamespace()],
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    const appendedAliases = [
+      "multi_agent_v1__spawn_agent",
+      "mcp__codex_apps__github___search_issues",
+    ];
+    assert.deepEqual(
+      (payload.tools as JsonObject[]).slice(2).map((tool) => tool.name),
+      appendedAliases,
+    );
+    assert.equal(bridge.aliasSha, sha256Hex8(appendedAliases));
+    assert.notEqual(bridge.aliasSha, sha256Hex8([...appendedAliases].sort()));
+    assert.notEqual(bridge.aliasSha, sha256Hex8(["exec_command", ...appendedAliases]));
+    assert.equal(bridge.aliasesAdded, 2);
+    assert.equal(bridge.aliasesRemoved, 0);
+    assert.equal(bridge.aliasesReplaced, 0);
+  });
+
+  it("keeps turn-local replacement zero when discovered NEW collides and existing OLD remains", () => {
+    const payload: JsonObject = {
+      tools: [
+        SEARCH_TOOL,
+        {
+          type: "function",
+          name: "spawn_agent",
+          description: "OLD",
+          parameters: { type: "object", properties: { old: { type: "string" } } },
+        },
+      ],
+      input: [
+        completedSearch("search-1"),
+        {
+          type: "tool_search_output",
+          call_id: "search-1",
+          status: "completed",
+          execution: "client",
+          tools: [
+            {
+              type: "function",
+              name: "spawn_agent",
+              description: "NEW",
+              parameters: { type: "object", properties: { fresh: { type: "boolean" } } },
+            },
+          ],
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    const matching = (payload.tools as JsonObject[]).filter((tool) => tool.name === "spawn_agent");
+    assert.equal(matching.length, 1);
+    assert.equal(matching[0]?.description, "OLD");
+    assert.equal(bridge.collisions, 1);
+    assert.equal(bridge.promotedN, 0);
+    assert.equal(bridge.aliasSha, "-");
+    assert.equal(bridge.aliasesAdded, 0);
+    assert.equal(bridge.aliasesRemoved, 0);
+    assert.equal(bridge.aliasesReplaced, 0);
+  });
+
+  it("checks a cross-turn used promoted alias against final outbound tools, not the bridge map", () => {
+    const priorTurnHistory: JsonObject[] = [
+      completedSearch("search-1"),
+      {
+        type: "tool_search_output",
+        call_id: "search-1",
+        status: "completed",
+        execution: "client",
+        tools: [spawnNamespace()],
+      },
+      {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "multi_agent_v1",
+        call_id: "spawn-1",
+        arguments: JSON.stringify({ task: "read README" }),
+      },
+      { type: "function_call_output", call_id: "spawn-1", output: "done" },
+    ];
+    const availablePayload: JsonObject = {
+      tools: [SEARCH_TOOL],
+      input: structuredClone(priorTurnHistory),
+    };
+    const available = applyDeferredToolsToOllama(availablePayload, { leafCap: 1 });
+    assert.equal(available.usedAliasMissing, 0);
+
+    const missingPayload: JsonObject = {
+      tools: [SEARCH_TOOL],
+      input: structuredClone(priorTurnHistory),
+    };
+    const missing = applyDeferredToolsToOllama(missingPayload, { leafCap: 0 });
+    assert.equal(missing.aliases.has("multi_agent_v1__spawn_agent"), true);
+    assert.equal(
+      (missingPayload.tools as JsonObject[]).some((tool) => tool.name === "multi_agent_v1__spawn_agent"),
+      false,
+    );
+    assert.equal(missing.usedAliasMissing, 1);
+    assert.equal(missing.aliasesAdded, 0);
+    assert.equal(missing.aliasesRemoved, 0);
+    assert.equal(missing.aliasesReplaced, 0);
   });
 
   it("skips invalid, incomplete, mismatched, duplicate, and colliding outputs", () => {

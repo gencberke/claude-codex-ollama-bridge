@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL } from "./constants.js";
+import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
 import { loadCatalogFile } from "./catalog.js";
 import { decodeRequestBody, RequestDecodeError } from "./decode.js";
 import { forwardNativeResponses, type HeaderMap, type UpstreamFetch } from "./native.js";
@@ -12,6 +12,14 @@ import {
   prepareOllamaPayload,
 } from "./ollama.js";
 import { normalizeOllamaErrorBody } from "./ollama-boundary.js";
+import {
+  formatOllamaGuardLog,
+  guardOllamaJsonResponse,
+  ollamaGuardHttpBody,
+  ollamaGuardSseTerminal,
+  type OllamaResponseGuardState,
+  type OllamaToolDeclaration,
+} from "./ollama-response-boundary.js";
 import { assertLoopbackBindHost } from "./loopback.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "./route.js";
 import type { CompactionPolicy } from "./cob-config.js";
@@ -214,6 +222,11 @@ async function handleRequest(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
+    await handleNativeSearchPost(req, res, options, url.pathname);
+    return;
+  }
+
   if (isResponsesPath(path) && req.method !== "POST" && (isWebSocketUpgrade(req) || req.method === "GET")) {
     req.resume();
     jsonError(
@@ -246,6 +259,44 @@ async function handleRequest(
   }
 
   jsonError(res, 404, "not_found", `Unsupported path ${path}`);
+}
+
+async function handleNativeSearchPost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: GatewayOptions,
+  path: string,
+): Promise<void> {
+  const abort = attachCancellation(req, res);
+  let inbound: { raw: Buffer; body: Buffer; decoded: boolean; encoding?: string };
+  try {
+    inbound = await readDecodedBody(req, abort.signal);
+  } catch (error) {
+    if (error instanceof BodyAbortedError || abort.signal.aborted) return;
+    if (error instanceof BodyLimitError) {
+      jsonError(res, error.status, error.code, error.message);
+      req.destroy();
+      return;
+    }
+    if (error instanceof RequestDecodeError) {
+      jsonError(res, 400, error.code, error.message);
+      return;
+    }
+    throw error;
+  }
+
+  logNativeSearchRequest(req, path, inbound);
+  const upstream = await forwardNativeResponses({
+    body: inbound.body,
+    headers: nativeHeaders(req, inbound.decoded),
+    contentType: headerValue(req.headers["content-type"]) ?? "application/json",
+    defaultAccept: "application/json",
+    url: NATIVE_SEARCH_URL,
+    fetchImpl: options.nativeFetch,
+    signal: abort.signal,
+    headersMs: resolveNativeHeadersMs(options),
+  });
+  await relay(upstream, res, abort, options);
 }
 
 async function handleResponsesPost(
@@ -359,7 +410,7 @@ async function handleResponsesPost(
       baseHistory: continuation.baseHistory,
       parentResponseId: continuation.parentResponseId,
       catalogModel,
-    }, forwarded.bridge);
+    }, forwarded.bridge, forwarded.declaration);
     return;
   }
 
@@ -815,7 +866,7 @@ async function prepareOllamaContinuation(
   const replayHistory = mergeStateHistory(baseHistory, pending);
   const next: JsonObject = { ...payload };
   if ("previous_response_id" in payload) {
-    next.input = stateHistoryValues(replayHistory);
+    next.input = ollamaReplayInputValues(replayHistory);
   } else if (payload.input !== undefined) {
     next.input = requestInputProjection;
   }
@@ -827,6 +878,24 @@ async function prepareOllamaContinuation(
     requestInput,
     requestInputProjection,
   };
+}
+
+/**
+ * Ollama accepts a string as the entire Responses `input`, but every entry in
+ * an `input[]` replay must be a typed item. Promote only archived top-level
+ * strings at the continuation boundary; the initial request stays byte-shape
+ * compatible with Ollama's string shorthand.
+ */
+function ollamaReplayInputValues(history: readonly StateHistoryItem[]): unknown[] {
+  return stateHistoryValues(history).map((value) =>
+    typeof value === "string"
+      ? {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: value }],
+        }
+      : value,
+  );
 }
 
 function stateStore(options: GatewayOptions): ConversationStateStore {
@@ -899,7 +968,11 @@ function captureObserver(capture: StreamCapture, suppressDone = false): SseObser
 }
 
 function isCompleteStreamCapture(capture: StreamCapture): boolean {
-  return capture.sawDone && !capture.malformed && capture.candidate !== undefined;
+  // Ollama 0.32.15 cloud closes a valid stream after response.completed and
+  // does not emit the OpenAI-style [DONE] sentinel. The completed envelope is
+  // the success authority; cob publishes it durably and emits exactly one
+  // client-facing [DONE]. Failed/incomplete terminals never set candidate.
+  return capture.sawCompletedEvent && !capture.malformed && capture.candidate !== undefined;
 }
 
 function collectSseTransform(raw: Buffer, transform: import("node:stream").Transform): Promise<Buffer> {
@@ -1256,6 +1329,16 @@ function logRequest(
   );
 }
 
+function logNativeSearchRequest(
+  req: IncomingMessage,
+  path: string,
+  inbound: { raw: Buffer; body: Buffer; decoded: boolean; encoding?: string },
+): void {
+  console.error(
+    `[cob] ${req.method ?? "?"} ${path} encoding=${inbound.encoding ?? "identity"} raw=${inbound.raw.length} decoded=${inbound.decoded} target=native-search`,
+  );
+}
+
 function logOllamaUsage(envelope: JsonObject | undefined): void {
   const usage = extractOllamaUsage(envelope);
   if (!usage) {
@@ -1334,6 +1417,7 @@ async function relayOllama(
   options: GatewayOptions,
   context: OllamaStateContext,
   bridge: ToolSearchBridge,
+  declaration: OllamaToolDeclaration,
 ): Promise<void> {
   const contentType = upstream.headers.get("content-type") ?? "";
   if (contentType.includes("text/event-stream")) {
@@ -1352,10 +1436,11 @@ async function relayOllama(
     const nodeStream = Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream);
     abort.signal.addEventListener("abort", () => nodeStream.destroy(), { once: true });
     const capture = createStreamCapture();
+    const guard: OllamaResponseGuardState = {};
     const suppressDone = upstream.status >= 200 && upstream.status < 300;
     const relayed = await relayTransformed(
       nodeStream,
-      ollamaSseTransform(catalogModel, captureObserver(capture, suppressDone), bridge),
+      ollamaSseTransform(catalogModel, captureObserver(capture, suppressDone), bridge, declaration, guard),
       res,
       {
         idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
@@ -1365,6 +1450,12 @@ async function relayOllama(
     );
     if (!relayed) return;
     if (abort.signal.aborted) return;
+    if (guard.failure) {
+      console.error(formatOllamaGuardLog(guard.failure, declaration));
+      if (!res.writableEnded && !res.destroyed) res.write(ollamaGuardSseTerminal(guard.failure));
+      if (!res.writableEnded && !res.destroyed) res.end();
+      return;
+    }
     if (upstream.status >= 200 && upstream.status < 300 && isCompleteStreamCapture(capture)) {
       try {
         logOllamaUsage(capture.candidate);
@@ -1398,14 +1489,30 @@ async function relayOllama(
     res.end(JSON.stringify(body));
     return;
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(raw.toString("utf8"));
+    parsed = JSON.parse(raw.toString("utf8"));
+  } catch {
+    res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
+    res.end(raw);
+    return;
+  }
+  const failure = guardOllamaJsonResponse(parsed, declaration);
+  if (failure) {
+    console.error(formatOllamaGuardLog(failure, declaration));
+    const body = Buffer.from(JSON.stringify(ollamaGuardHttpBody(failure)), "utf8");
+    res.writeHead(502, {
+      "content-type": "application/json",
+      "content-length": body.length,
+    });
+    res.end(body);
+    return;
+  }
+  try {
     const candidate = completedResponseEnvelope(parsed);
-    if (upstream.status >= 200 && upstream.status < 300) {
-      logOllamaUsage(candidate ?? (isRecord(parsed) ? parsed : undefined));
-      if (candidate) {
-        await publishOllamaCheckpoint(context, candidate);
-      }
+    logOllamaUsage(candidate ?? (isRecord(parsed) ? parsed : undefined));
+    if (candidate) {
+      await publishOllamaCheckpoint(context, candidate);
     }
     const normalized = normalizeOllamaResponse(parsed, catalogModel, bridge);
     const body = Buffer.from(JSON.stringify(normalized), "utf8");

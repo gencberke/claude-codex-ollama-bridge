@@ -353,6 +353,45 @@ describe("acceptance matrix (mock)", () => {
       await closeServer(server);
     }
   });
+
+  it("rejects an undeclared Ollama function_call before Codex sees a completed turn", async () => {
+    let ollamaHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response(
+          JSON.stringify({
+            id: "resp_undeclared",
+            object: "response",
+            status: "completed",
+            output: [{ type: "function_call", name: "apply_patch", arguments: "{}" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          tools: [{ type: "function", name: "shell", parameters: { type: "object", properties: {} } }],
+          input: "hi",
+        }),
+      });
+      const payload = (await response.json()) as { error?: { type?: string; code?: string } };
+      assert.equal(response.status, 502);
+      assert.equal(payload.error?.type, "upstream_error");
+      assert.equal(payload.error?.code, "ollama_undeclared_tool_call");
+      assert.equal(ollamaHits, 1);
+    } finally {
+      await closeServer(server);
+    }
+  });
 });
 
 describe("acceptance matrix (live Codex)", () => {

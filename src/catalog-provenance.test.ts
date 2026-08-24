@@ -10,11 +10,13 @@ import {
   assessV1Roster,
   discoverCodexBins,
   fileIdentityFromFs,
+  parseCatalogMetadata,
   parseCatalogProvenance,
   resolveCatalogSources,
   sameFileIdentity,
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
+  writeCatalogValidationFailure,
 } from "./catalog-provenance.js";
 import { serializeCatalog } from "./catalog.js";
 import type { CatalogFile } from "./types.js";
@@ -152,7 +154,9 @@ describe("catalog provenance sidecar", () => {
       generatedAt: "2026-08-23T00:00:00.000Z",
     });
     const parsed = parseCatalogProvenance(readFileSync(metaPath, "utf8"));
+    const compatible = parseCatalogMetadata(readFileSync(metaPath, "utf8"));
     assert.deepEqual(parsed, meta);
+    assert.deepEqual(compatible, meta);
     assert.equal(parsed.schema_version, 1);
     assert.equal(parsed.producer.kind, "path");
     assert.match(parsed.catalog_sha256, /^[0-9a-f]{64}$/);
@@ -259,6 +263,147 @@ describe("catalog provenance sidecar", () => {
     assert.equal(
       assessCatalogProvenance({ catalogPath, metaPath, discovery, io: ioFor() }).freshness,
       "stale",
+    );
+  });
+
+  it("stats every recorded validator without reading a Codex version", () => {
+    const dir = tempDir("cob-prov-all-validators-");
+    const desktop = writeFakeCodex(dir, "desktop");
+    const pathBin = writeFakeCodex(dir, "path");
+    const catalogPath = join(dir, "cob-catalog.json");
+    const metaPath = join(dir, "cob-catalog.meta.json");
+    const catalog = serializeCatalog(pickerCatalog());
+    writeFileSync(catalogPath, catalog);
+    const discovery = {
+      liveHome: true,
+      platform: "darwin" as const,
+      desktopBins: [desktop],
+      pathBin,
+    };
+    const sources = resolveCatalogSources(discovery, ioFor());
+    writeCatalogProvenance({ metaPath, catalogBytes: catalog, sources });
+    const statPaths: string[] = [];
+    const statusIo = {
+      stat: (path: string) => {
+        statPaths.push(path);
+        return fileIdentityFromFs(path);
+      },
+      readVersion: () => {
+        throw new Error("status must not execute codex --version");
+      },
+    };
+    assert.equal(
+      assessCatalogProvenance({ catalogPath, metaPath, discovery, io: statusIo }).freshness,
+      "fresh",
+    );
+    assert.ok(statPaths.includes(realpathSync(desktop)));
+    assert.ok(statPaths.includes(realpathSync(pathBin)));
+
+    utimesSync(pathBin, new Date(), new Date(Date.now() + 10_000));
+    const changed = assessCatalogProvenance({ catalogPath, metaPath, discovery, io: statusIo });
+    assert.equal(changed.freshness, "stale");
+    assert.match(changed.lines.join("\n"), /recorded validator file identity changed/);
+    assert.match(changed.lines.join("\n"), /path/);
+  });
+
+  it("persists only a redacted failed-candidate diagnostic beside a legacy catalog", () => {
+    const dir = tempDir("cob-prov-failure-");
+    const producer = writeFakeCodex(dir, "producer");
+    const validator = writeFakeCodex(dir, "validator");
+    const catalogPath = join(dir, "cob-catalog.json");
+    const metaPath = join(dir, "cob-catalog.meta.json");
+    const retained = serializeCatalog(pickerCatalog());
+    const candidate = serializeCatalog(pickerCatalog([{ slug: "ollama/new" }]));
+    writeFileSync(catalogPath, retained);
+    const discovery = {
+      liveHome: true,
+      platform: "darwin" as const,
+      desktopBins: [producer],
+      pathBin: validator,
+    };
+    const sources = resolveCatalogSources(discovery, ioFor());
+    const error = new Error(
+      `Codex rejected cob catalog (path ${realpathSync(validator)} codex-cli test): supports_parallel_tool_calls token=TOP-SECRET-VALUE`,
+    );
+    writeCatalogValidationFailure({
+      metaPath,
+      candidateBytes: candidate,
+      retainedCatalogBytes: retained,
+      retainedMetadataBytes: null,
+      sources,
+      error,
+      failedAt: "2026-08-23T00:00:00.000Z",
+    });
+    const raw = readFileSync(metaPath, "utf8");
+    const metadata = parseCatalogMetadata(raw);
+    assert.equal(metadata.schema_version, 2);
+    assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
+    assert.equal(
+      metadata.schema_version === 2 ? metadata.last_failure?.rejected_validator?.path : undefined,
+      realpathSync(validator),
+    );
+    assert.match(
+      metadata.schema_version === 2 ? (metadata.last_failure?.diagnostic.summary ?? "") : "",
+      /supports_parallel_tool_calls/,
+    );
+    assert.doesNotMatch(raw, /TOP-SECRET-VALUE/);
+    assert.equal(existsSync(metaPath), true);
+
+    const failedValidatorStats: string[] = [];
+    const assessment = assessCatalogProvenance({
+      catalogPath,
+      metaPath,
+      discovery,
+      io: {
+        stat: (path: string) => {
+          failedValidatorStats.push(path);
+          return fileIdentityFromFs(path);
+        },
+        readVersion: () => {
+          throw new Error("status must not execute Codex");
+        },
+      },
+    });
+    assert.equal(assessment.freshness, "unknown");
+    assert.match(assessment.lines.join("\n"), /last candidate validation: failed/);
+    assert.match(assessment.lines.join("\n"), /legacy catalog had no cob-catalog\.meta\.json/);
+    assert.doesNotMatch(assessment.lines.join("\n"), /TOP-SECRET-VALUE/);
+    assert.ok(failedValidatorStats.includes(realpathSync(producer)));
+    assert.ok(failedValidatorStats.includes(realpathSync(validator)));
+  });
+
+  it("marks an otherwise fresh retained pair stale after candidate validation fails", () => {
+    const dir = tempDir("cob-prov-retained-failure-");
+    const bin = writeFakeCodex(dir, "codex");
+    const catalogPath = join(dir, "cob-catalog.json");
+    const metaPath = join(dir, "cob-catalog.meta.json");
+    const catalog = serializeCatalog(pickerCatalog());
+    writeFileSync(catalogPath, catalog);
+    const discovery = { liveHome: false, platform: "darwin" as const, pathBin: bin };
+    const sources = resolveCatalogSources(discovery, ioFor());
+    writeCatalogProvenance({ metaPath, catalogBytes: catalog, sources });
+    writeCatalogValidationFailure({
+      metaPath,
+      candidateBytes: `${catalog} `,
+      retainedCatalogBytes: catalog,
+      retainedMetadataBytes: readFileSync(metaPath),
+      sources,
+      error: new Error(`Codex rejected cob catalog (path ${realpathSync(bin)} codex-cli test)`),
+    });
+    const assessment = assessCatalogProvenance({
+      catalogPath,
+      metaPath,
+      discovery,
+    });
+    assert.equal(assessment.freshness, "stale");
+    assert.match(assessment.lines[0] ?? "", /last candidate validation failed/);
+    assert.match(assessment.lines.join("\n"), /last known-good catalog retained/);
+
+    writeCatalogProvenance({ metaPath, catalogBytes: catalog, sources });
+    assert.equal(parseCatalogMetadata(readFileSync(metaPath, "utf8")).schema_version, 1);
+    assert.equal(
+      assessCatalogProvenance({ catalogPath, metaPath, discovery }).freshness,
+      "fresh",
     );
   });
 

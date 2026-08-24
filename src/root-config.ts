@@ -161,7 +161,9 @@ export function summarizeCobStatus(input: {
   if (overlay === "broken" || overlay === "unreadable") {
     return { kind: overlay, ok: false };
   }
-  if (catalogFreshness === "stale") return { kind: "stale", ok: false };
+  if (catalogFreshness === "stale" || catalogFreshness === "missing") {
+    return { kind: "stale", ok: false };
+  }
   if (catalogFreshness === "unknown") return { kind: "unknown", ok: false };
   const overlayOk = overlay === "ok" || (!liveHome && overlay === "absent");
   const ok = gatewayHealthy && overlayOk;

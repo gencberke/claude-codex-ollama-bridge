@@ -1,6 +1,6 @@
 {
   "name": "codex-ollama-bridge",
-  "version": "0.1.8",
+  "version": "0.1.12",
   "private": true,
   "description": "Loopback gateway so Codex can keep native GPT on ChatGPT auth and route ollama/* models to local Ollama Responses.",
   "type": "module",

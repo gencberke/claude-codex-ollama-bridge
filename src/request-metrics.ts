@@ -91,7 +91,7 @@ export function formatRequestMetrics(metrics: RequestMetrics): string {
     `tools_sha=${metrics.toolsSha}`,
     `instr_sha=${metrics.instructionsSha}`,
     `input_by=${formatCounts(metrics.inputByType)}`,
-    `tool_bytes=${formatNamedBytes(metrics.toolBytesByName)}`,
+    `tool_bytes_top=${formatByteSizes(metrics.toolBytesByName)}`,
   ];
   return parts.join(" ");
 }
@@ -121,7 +121,7 @@ export function formatOllamaWireMetrics(metrics: OllamaWireMetrics): string {
     `tools_n=${metrics.toolsCount}`,
     `b_tools=${metrics.toolsBytes}`,
     `tools_sha=${metrics.toolsSha}`,
-    `tool_bytes=${formatNamedBytes(metrics.toolBytesByName)}`,
+    `tool_bytes_top=${formatByteSizes(metrics.toolBytesByName)}`,
     `promoted_n=${metrics.promotedN}`,
     `promoted_bytes=${metrics.promotedBytes}`,
     `promotion_skipped_cap=${metrics.skippedCap}`,
@@ -275,9 +275,9 @@ function formatCounts(counts: Record<string, number>): string {
   return keys.map((key) => `${key}:${counts[key]}`).join(",");
 }
 
-function formatNamedBytes(entries: NamedByteCount[]): string {
+function formatByteSizes(entries: NamedByteCount[]): string {
   if (entries.length === 0) return "-";
-  return entries.map((entry) => `${entry.name}:${entry.bytes}`).join(",");
+  return entries.map((entry) => String(entry.bytes)).join(",");
 }
 
 function sanitizeToken(value: string): string {

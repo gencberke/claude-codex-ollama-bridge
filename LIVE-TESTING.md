@@ -55,6 +55,9 @@ inferred from Codex UI text.
 | G14 | Controlled header delay past 30s, one long cloud reasoning turn, and a quiet interval; record header latency vs first-event latency, max gap, timer category, continuation, and one client disconnect without a gateway crash | False idle while the client is backpressured, `connect_timeout` leftovers, or a hung gateway after abort |
 | G15 | For each kept hot-path optimization, 30 warm-up + 100 measured iterations of the large catalog/tool/SSE fixture; identical output hash and a repeatable win | Claimed speedup with changed bytes, or a no-op marked as a live pass |
 | G16 | Isolated three-turn and compact continuation; tamper value, provenance, and identity separately; each fails closed with full-context recovery and no new checkpoint | Tamper accepted, rewritten in place, or a successful-looking turn that cannot continue |
+| G17 | Same 0731 long-task corpus across the default compact policy and each isolated effort/context toggle; record quality, latency, sizes, section flags, and continuation | A toggle becomes default from shrink alone, or quality/cost regresses |
+| G18 | Installed cob serves a real `web.run` through exact `POST /v1/alpha/search`; gateway log is content/auth-free, result is usable, no search request reaches Ollama, and root-config SHA is unchanged | Unsupported path, generic proxying, Ollama fallback, secret/query logging, rewritten body/model, or root config mutation |
+| G19 | Packed post-0.1.9 cob validates Ollama client tool calls against the exact final outbound catalog for JSON, SSE, terminal-only, direct, `tool_search`, V1, and MCP lanes; rejected turns publish no checkpoint | Unknown/invalid call reaches Codex, a false-positive blocks a declared alias, failure is followed by completed, logs leak content, or rejected state becomes continuable |
 
 Ollama child catalog rows advertise `shell_type=disabled` and no `apply_patch`.
 Record what Codex **actually** puts in the child `tools` array (G10). If the
@@ -193,6 +196,14 @@ once the 8k path is green. Do not tune cob from mock timings.
 
 ## G11 — catalog provenance
 
+**Status — BLOCKED/PARTIAL (live 0.1.11, 2026-08-24):** controlled sidecar
+schema-v2, retained last-good catalog, stale/unknown/missing-sidecar status,
+no-Codex-spawn, and foreground/detached rollback lanes passed. Live `cob sync`
+failed closed because PATH Codex 0.147 rejected the Desktop 0.149 candidate
+near `supports_parallel_tool_calls`; therefore successful regeneration plus
+Desktop picker/native/Ollama routing was not claimed. Root config SHA stayed
+`6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
+
 Live-home only after explicit authorization. Snapshot the user-owned root
 `config.toml` SHA first. Use the packed global tarball, not `dist/cli.js`.
 
@@ -205,14 +216,24 @@ Live-home only after explicit authorization. Snapshot the user-owned root
 4. In an isolated copy of the sidecar, change only the recorded consumer
    identity. `cob status` must become `stale` (or `unknown`) with exit 1 and
    must not spawn Codex.
-5. Regenerate. Status returns to a non-stale first line when the gateway and
+5. Fixture a consumer rejection. The unchanged last-good catalog and redacted
+   schema-v2 `last_failure` must survive foreground and detached rollback;
+   status names the producer/validator skew without raw validator stderr or a
+   Codex subprocess.
+6. Regenerate. Status returns to a non-stale first line when the gateway and
    overlay are healthy.
-6. Root-config SHA is unchanged.
+7. Root-config SHA is unchanged.
 
 Redact paths that are not needed; never record credentials or config
 contents. Aggregate token counts are allowed.
 
 ## G12 — search default
+
+**Status — BLOCKED (live 0.1.11, 2026-08-24):** the required full Desktop
+quit/reopen and valid three-turn deferred MCP + V1 function-execution sequence
+were not completed. `supports_search_tool=true` remained configured and the
+explicit-false rollback was not credited. G18 hosted search is a different
+route and does not satisfy this gate.
 
 On the same packed build as G11, after Desktop quit-and-reopen:
 
@@ -227,6 +248,14 @@ On the same packed build as G11, after Desktop quit-and-reopen:
 
 ## G13 — Ollama request boundary
 
+**Status — PARTIAL (live 0.1.11, 2026-08-24):** real cloud low/high/max turns
+reported exact usage `(13/16/29)`, `(92/16/108)`, and `(105/16/121)` and the
+Ollama daemon access log independently recorded the three matching
+`POST /v1/responses` calls. The controlled boundary exposed only the pinned
+allowlisted keys, preserved a fixture 429 + `Retry-After: 17` with one attempt,
+and kept logs redacted. No local model is installed, so the local-model lane
+remains unavailable; do not call the whole gate PASS.
+
 Capture redacted outbound key names and response usage keys for one local
 model and one cloud model, plus low/high/max reasoning. Force or fixture a
 429 at the gateway boundary and prove one upstream attempt and preserved
@@ -234,6 +263,22 @@ model and one cloud model, plus low/high/max reasoning. Force or fixture a
 is logged.
 
 ## G14 — Timeouts and backpressure
+
+**Status — PARTIAL/FIX VERIFIED (0.1.11 live diagnosis; packed isolated 0.1.12,
+2026-08-24):** controlled lanes passed: native headers timeout 504 at ~30.0s,
+Ollama headers at ~31.0s succeeded under its 240s route deadline, quiet-stream
+and scaled idle classification were correct, client disconnect aborted
+upstream, and 4×-idle client backpressure did not falsely cancel the source.
+Real 0.1.11 Ollama SSE reached `response.completed` but then cob emitted
+`upstream_stream_error` because Ollama 0.32.15 closed without upstream
+`[DONE]`. Exact packed 0.1.12 (SHA-256
+`684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`)
+accepted that terminal envelope, checkpointed before one client `[DONE]`,
+promoted archived string shorthand for `input[]`, and completed the real
+follow-up (HTTP 200); Ollama access-log delta was 2 and checkpoints 1→2.
+The same two-turn smoke later passed on live global 0.1.12 `:18790`
+(checkpoints 6→8, access-log 295→297). The full long-cloud gate remains
+pending.
 
 Use a controlled loopback upstream to delay response headers past 30
 seconds, then run a long cloud reasoning turn and a stream with a
@@ -245,6 +290,15 @@ without a gateway crash.
 
 ## G16 — Checkpoint identity
 
+**Status — PASS (isolated 0.1.11, 2026-08-24):** normal three-turn,
+compact, and compact-follow-up continuations succeeded. Separate stored value,
+provenance, and identity tampering each returned 400
+`state_checkpoint_corrupt` with `requires_full_context=true`, published no new
+checkpoint, preserved the tampered file for diagnosis, and succeeded after the
+original bytes were restored. State directories/checkpoints were 0700/0600.
+Temporary dev/fixture listeners were stopped afterward. This is isolated
+integrity evidence, not a Desktop live claim.
+
 In the isolated development home, run a normal three-turn continuation
 and a compact continuation, then tamper separately with stored value,
 provenance, and identity. Each tampered checkpoint must fail closed with
@@ -254,6 +308,12 @@ succeeds. Record checkpoint IDs, hashes, and transitions only.
 
 ## G15 — Hot-path reductions
 
+**Status — PARTIAL (0.1.11 benchmark, 2026-08-24):** Node 26.7.0, 30 warm-up
+plus 100 measured iterations ×3. WP5A catalog cache preserved the output hash and
+improved median from 0.017083ms to 0.002667ms (~84.3%). WP5B metrics preserved
+the hash but was ~9% slower (0.048458ms vs 0.044438ms); WP5C SSE was equal at
+0.000375ms. Only WP5A has a measured-win claim; G15 is not a blanket PASS.
+
 For each retained optimization, run at least 30 warm-up and 100 measured
 iterations of the fixed large-catalog/tool/SSE fixture on the same Node
 version. Record median and p95 wall time, output hash, and fast-path hit
@@ -262,6 +322,10 @@ outside run-to-run noise. Logs may record hit counts, never event or tool
 contents. If there is no measurable live claim, mark G15 not applicable.
 
 ## G17 — compact quality / context policy
+
+**Status — NOT RUN (2026-08-24):** no same-corpus comparison was completed.
+The default remains omitted effort → wire `high`, 256k active context, no cloud
+max advertisement, and no `auto_compact_token_limit`.
 
 Same long-task 0731 corpus for baseline and candidate. Do not claim G17 from
 the G8 shrink alone. Isolated Stages 3–4 stay off the live default until this
@@ -287,6 +351,132 @@ trigger a second full-history summarizer call.
 
 Pass only if the candidate preserves or improves task quality and does not
 create an unexplained cost regression. Revert the failing toggle only.
+
+## G18 — standalone hosted web search
+
+**Live result — PASS (2026-08-23 22:44–22:50 local):** packed global cob **0.1.9**,
+pid **86967**, Desktop Codex producer `0.149.0-alpha.4.1`. A narrow native
+`web__run` search returned usable official OpenAI documentation and the page
+opened successfully. Gateway evidence was limited to three content-free
+`POST /v1/alpha/search ... target=native-search` metric lines; no query,
+result, authorization, or account data was recorded. Fake-auth requests to
+`/alpha/search`, `/v1/alpha/search/`, and `/v1/alpha/search/child` each returned
+404 and left the native-search line count unchanged. The request did not route
+to Ollama. Root `config.toml` SHA-256 before and after was
+`6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
+This passes G18 only; G11–G17 retain their own procedures.
+
+Run only after an explicit packed global install/live-home authorization. With
+`web_search = "indexed"`, issue one narrow `web.run` query from a native GPT
+task and verify a usable cited result. Record the cob version, Codex producer,
+the content-free `target=native-search` gateway line, final status, and root
+config SHA before/after. Do not record authorization, account IDs, query text,
+or result bodies.
+
+Then send fake-auth requests only to neighboring local paths
+(`/alpha/search`, `/v1/alpha/search/`, `/v1/alpha/search/child`) and prove 404
+without an upstream hit. A real search must target the ChatGPT Codex
+`/alpha/search` endpoint and must never be translated, retried, or failed over
+to Ollama. Keep G12 separate: it proves deferred tool discovery, not hosted web
+search.
+
+## G19 — Ollama response integrity and dialect conformance
+
+**Status — PASS (packed isolated 0.1.11, 2026-08-24):** the merge gate passed
+(`npx tsc --noEmit`; 337 tests, 334 passed, 3 intentional skips, 0 failures).
+The inspected 43-file tarball SHA-256 is
+`71b4e3f1963182d73097e5bac0e3ac67cd536e9f7ad5f4301dbca510fdc458db`.
+G19 passed **25/25**: 21 `protocol_conformance`, 3
+`live_route_compatibility`, and 1 `task_effectiveness` lane. The real Codex CLI
+declared and executed `exec_command`, returned its output through a continuation,
+and completed successfully. Direct, deferred-search, V1, and MCP aliases were
+accepted only after final-wire declaration; every undeclared/malformed/capped/
+colliding lane failed closed without a checkpoint. Valid SSE state existed
+before success `[DONE]`, and the log guard found no tool name, schema,
+arguments, content, or auth disclosure.
+
+The controlled Ollama fixture implemented the reviewed **0.32.15** Responses
+dialect; the negative lanes intentionally did not ask a real model to
+hallucinate protocol violations. The dev evidence manifest SHA-256 is
+`50f5e240fed1dfaac68a02cddbea6ffd84370d842df5345e0ca8bc57b7b78d7a`.
+Port 18791 was stopped after the run. Root config SHA-256 remained
+`6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
+The gate itself did not credit the then-global 0.1.9. Exact 0.1.11 was later
+installed globally in a separate install-only cut; that install is not G19 or
+G11–G17 evidence.
+
+Candidate 0.1.10 is a recorded failure, not a releasable artifact: its first
+isolated run exposed clear tool names in ordinary ingress/wire diagnostics.
+0.1.11 retains aggregate counts/SHA and sorted tool-definition byte sizes but
+removes names; the full matrix then passed.
+
+Use the packed CLI in the development home first. Negative lanes use a
+controlled loopback Ollama Responses fixture so provider defects are
+deterministic; do not prompt a real model to hallucinate an undeclared tool.
+The declared positive lane may reuse the same candidate-build G12 trace when it
+records all G19 fields.
+
+Record before the run:
+
+- packed cob version and tarball SHA;
+- dialect authority version and reviewed Ollama version;
+- observed Ollama client/daemon version for the real positive lane;
+- isolated state-directory file list/hashes;
+- root-config SHA only when a global/live-home cut is separately authorized.
+
+Controlled negative matrix:
+
+1. Final outbound catalog declares `exec_command`; non-stream JSON returns
+   `function_call(name="apply_patch")`. Expect HTTP 502 and
+   `ollama_undeclared_tool_call`.
+2. SSE announces the same undeclared call in `response.output_item.added`, then
+   sends argument deltas, an empty `response.completed`, and upstream `[DONE]`.
+   Expect one `response.failed`, one `[DONE]`, and no relayed completed/deltas
+   after the trip.
+3. Repeat with the undeclared call present only in `response.output_item.done`
+   and only in the terminal response snapshot.
+4. An empty outbound catalog followed by a function call fails closed.
+5. Missing, empty, non-string, overlong, control-character, and newline-bearing
+   names produce the stable invalid/undeclared code without corrupting SSE or
+   logs.
+6. A name present in the inbound body but absent from final wire `tools[]`
+   because promotion was skipped, capped, or collided is undeclared.
+7. For every rejected JSON/SSE turn, the state directory and parent checkpoint
+   remain unchanged; the refused response id cannot be resolved.
+
+Positive matrix:
+
+1. One declared direct function call reaches Codex unchanged and its
+   `function_call_output` continues from the new checkpoint.
+2. Converted `tool_search` is accepted only when its function definition was
+   sent on the wire.
+3. One promoted V1 alias and one promoted MCP alias are accepted under their
+   final wire names, restored to the original namespace/name, executed, and
+   continued.
+4. Valid JSON and SSE outputs retain their previous bytes/normalized meaning;
+   usage may be present or omitted without fabrication.
+5. A valid completed stream still publishes the checkpoint before cob releases
+   the success `[DONE]`.
+
+Log acceptance:
+
+- allowed fields: route, status, stable code, final declaration count/SHA,
+  rejected-name length/SHA, latency, and aggregate sizes;
+- forbidden fields: tool name, schema, description, arguments, output, user
+  text, response text, auth/account headers, checkpoint content, or injected
+  newline fragments.
+
+Report these evidence layers separately:
+
+- `protocol_conformance`: deterministic fixture verdicts;
+- `live_route_compatibility`: packed gateway process and controlled/real
+  upstream route;
+- `task_effectiveness`: real Codex declared-tool execution plus continuation.
+
+Pass requires every negative control to fail for its intended stable code,
+every declared lane to pass without false positives, and zero checkpoint
+publication for rejected turns. A green unit suite alone is not G19; a real
+declared tool call alone does not prove the rejection boundary.
 
 ## What static tests are for
 

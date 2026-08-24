@@ -49,6 +49,16 @@ export type ToolSearchToOllamaOptions = {
   bytesCap?: number;
 };
 
+type PromotionResult = {
+  appendedAliases: string[];
+  candidateAliases: Set<string>;
+};
+
+type UsedFunctionAlias = {
+  alias: string;
+  namespaced: boolean;
+};
+
 export function emptyToolSearchBridge(): ToolSearchBridge {
   return {
     aliases: new Map(),
@@ -82,15 +92,20 @@ export function applyDeferredToolsToOllama(
   const bridge = emptyToolSearchBridge();
   const leafCap = options.leafCap ?? PROMOTED_LEAF_CAP;
   const bytesCap = options.bytesCap ?? PROMOTED_BYTES_CAP;
-  const priorAliases = Array.isArray(payload.tools) ? existingFunctionNames(payload.tools) : new Set<string>();
   const usedAliases = collectUsedFunctionAliases(payload.input);
+  let promotion: PromotionResult = { appendedAliases: [], candidateAliases: new Set() };
   if (requestHasToolSearchDefinition(payload.tools)) {
-    promoteSearchOutputLeaves(payload, bridge, leafCap, bytesCap);
+    promotion = promoteSearchOutputLeaves(payload, bridge, leafCap, bytesCap);
     flattenNamespacedHistoryCalls(payload, bridge);
   }
   if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(rewriteToolDefinition);
   if (Array.isArray(payload.input)) payload.input = payload.input.map(rewriteHistoryItemToOllama);
-  recordAliasMetrics(bridge, priorAliases, Array.isArray(payload.tools) ? existingFunctionNames(payload.tools) : new Set(), usedAliases);
+  recordAliasMetrics(
+    bridge,
+    promotion,
+    Array.isArray(payload.tools) ? existingFunctionNames(payload.tools) : new Set(),
+    usedAliases,
+  );
   if (Array.isArray(payload.output)) payload.output = payload.output.map(rewriteHistoryItemToOllama);
   return bridge;
 }
@@ -222,10 +237,11 @@ function promoteSearchOutputLeaves(
   bridge: ToolSearchBridge,
   leafCap: number,
   bytesCap: number,
-): void {
-  if (!Array.isArray(payload.tools) || !Array.isArray(payload.input)) return;
+): PromotionResult {
+  const result: PromotionResult = { appendedAliases: [], candidateAliases: new Set() };
+  if (!Array.isArray(payload.tools) || !Array.isArray(payload.input)) return result;
   const searchCallIds = collectSearchCallIds(payload.input);
-  if (searchCallIds.size === 0) return;
+  if (searchCallIds.size === 0) return result;
   const occupied = existingFunctionNames(payload.tools);
   const seenLeaves = new Set<string>();
   const promoted: JsonObject[] = [];
@@ -249,20 +265,19 @@ function promoteSearchOutputLeaves(
         continue;
       }
       const alias = canonicalAlias(identity.namespace, identity.name);
+      const def = normalizePromotedFunction(leaf, identity, alias);
+      if (!def) {
+        bridge.skippedInvalid += 1;
+        continue;
+      }
+      result.candidateAliases.add(alias);
       if (occupied.has(alias)) {
         const existing = bridge.aliases.get(alias);
         if (existing && identityKey(existing) !== leafKey) {
           bridge.collisions += 1;
-          bridge.aliasesReplaced += 1;
         } else if (!existing) {
           bridge.collisions += 1;
-          bridge.aliasesReplaced += 1;
         }
-        continue;
-      }
-      const def = normalizePromotedFunction(leaf, identity, alias);
-      if (!def) {
-        bridge.skippedInvalid += 1;
         continue;
       }
       const bytes = jsonUtf8Bytes(def);
@@ -273,11 +288,13 @@ function promoteSearchOutputLeaves(
       occupied.add(alias);
       bridge.aliases.set(alias, identity);
       promoted.push(def);
+      result.appendedAliases.push(alias);
       bridge.promotedBytes += bytes;
     }
   }
   bridge.promotedN = promoted.length;
   if (promoted.length > 0) payload.tools = [...payload.tools, ...promoted];
+  return result;
 }
 
 function flattenNamespacedHistoryCalls(payload: JsonObject, bridge: ToolSearchBridge): void {
@@ -411,49 +428,41 @@ function existingFunctionNames(tools: unknown[]): Set<string> {
   return names;
 }
 
-function collectUsedFunctionAliases(input: unknown): Set<string> {
-  const used = new Set<string>();
-  if (!Array.isArray(input)) return used;
+function collectUsedFunctionAliases(input: unknown): UsedFunctionAlias[] {
+  const used = new Map<string, boolean>();
+  if (!Array.isArray(input)) return [];
   for (const item of input) {
     if (!isRecord(item) || !isFunctionCallItem(item)) continue;
-    const name = functionName(item);
-    if (name && name !== TOOL_SEARCH_NAME) used.add(name);
+    const identity = functionCallIdentity(item);
+    if (!identity || (identity.name === TOOL_SEARCH_NAME && identity.namespace === undefined)) continue;
+    const alias = canonicalAlias(identity.namespace, identity.name);
+    used.set(alias, (used.get(alias) ?? false) || identity.namespace !== undefined);
   }
-  return used;
+  return [...used.entries()].map(([alias, namespaced]) => ({ alias, namespaced }));
 }
 
 function recordAliasMetrics(
   bridge: ToolSearchBridge,
-  prior: Set<string>,
-  after: Set<string>,
-  used: Set<string>,
+  promotion: PromotionResult,
+  outbound: Set<string>,
+  used: UsedFunctionAlias[],
 ): void {
-  const priorLeaves = leafAliasSet(prior);
-  const afterLeaves = leafAliasSet(after);
-  let added = 0;
-  let removed = 0;
-  for (const name of afterLeaves) {
-    if (!priorLeaves.has(name)) added += 1;
-  }
-  for (const name of priorLeaves) {
-    if (!afterLeaves.has(name)) removed += 1;
-  }
-  let missing = 0;
-  for (const name of used) {
-    if (!afterLeaves.has(name) && !bridge.aliases.has(name)) missing += 1;
-  }
-  bridge.aliasesAdded = added;
-  bridge.aliasesRemoved = removed;
-  bridge.usedAliasMissing = missing;
-  bridge.aliasSha = afterLeaves.size > 0 ? sha256Hex8([...afterLeaves].sort()) : "-";
-}
+  // These are turn-local wire mutations, not inferred cross-request state.
+  // Promotion is append-only today, so only a successfully appended definition
+  // is an addition; a skipped collision neither removes nor replaces anything.
+  bridge.aliasesAdded = promotion.appendedAliases.length;
+  bridge.aliasesRemoved = 0;
+  bridge.aliasesReplaced = 0;
+  bridge.aliasSha = promotion.appendedAliases.length > 0
+    ? sha256Hex8(promotion.appendedAliases)
+    : "-";
 
-function leafAliasSet(names: Set<string>): Set<string> {
-  const leaves = new Set<string>();
-  for (const name of names) {
-    if (name !== TOOL_SEARCH_NAME) leaves.add(name);
+  let missing = 0;
+  for (const entry of used) {
+    const wasPromoted = entry.namespaced || promotion.candidateAliases.has(entry.alias);
+    if (wasPromoted && !outbound.has(entry.alias)) missing += 1;
   }
-  return leaves;
+  bridge.usedAliasMissing = missing;
 }
 
 function normalizePromotedFunction(

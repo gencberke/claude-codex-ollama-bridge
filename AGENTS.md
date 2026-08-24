@@ -84,7 +84,13 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Current cut is cob **0.1.8**. Future app updates can still drop overlay or hide
+child on cob 0.1.6). Live global is cob **0.1.12** after an authorized install
+of the recorded tarball plus a live two-turn Ollama smoke. Isolated G19 passed
+25/25 on 0.1.11. Gate disposition: G11/G12 blocked, G13 partial, G14 short
+stream/continuation smoke passed on live 0.1.12 (full long-cloud still
+pending), G15 partial, G16 isolated-pass, G17 unrun. Do not credit
+installation with the remaining gates. Do not repack 0.1.11 or 0.1.12.
+Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;
 `cob start` brings the gateway back.

@@ -2,6 +2,8 @@ export const DEFAULT_PORT = 18790;
 export const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 export const NATIVE_RESPONSES_URL =
   "https://chatgpt.com/backend-api/codex/responses";
+export const NATIVE_SEARCH_URL =
+  "https://chatgpt.com/backend-api/codex/alpha/search";
 
 export const OLLAMA_PREFIX = "ollama/";
 

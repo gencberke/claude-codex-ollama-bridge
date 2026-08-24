@@ -1,0 +1,334 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
+import { describe, it } from "node:test";
+import { isOllamaReject, ollamaSseTransform, prepareOllamaWire } from "./ollama.js";
+import {
+  collectOllamaWireToolNames,
+  declareOllamaWireTools,
+  emptyOllamaToolDeclaration,
+  formatOllamaGuardLog,
+  guardOllamaJsonResponse,
+  inspectOllamaSseEvent,
+  ollamaGuardFailedEvent,
+  ollamaGuardHttpBody,
+  ollamaGuardMessage,
+  ollamaGuardSseTerminal,
+  type OllamaResponseGuardState,
+  type OllamaToolDeclaration,
+} from "./ollama-response-boundary.js";
+import { PROMOTED_LEAF_CAP } from "./tool-search.js";
+import type { JsonObject } from "./types.js";
+
+function declarationOf(tools: unknown): OllamaToolDeclaration {
+  return declareOllamaWireTools({ tools });
+}
+
+function functionCall(name: unknown, extra: JsonObject = {}): JsonObject {
+  return { type: "function_call", name, call_id: "c1", arguments: "{}", ...extra };
+}
+
+function jsonResponse(output: unknown[]): JsonObject {
+  return {
+    id: "resp_1",
+    object: "response",
+    status: "completed",
+    model: "deepseek-v4-flash:0731-cloud",
+    output,
+  };
+}
+
+function wireDeclaration(payload: JsonObject): OllamaToolDeclaration {
+  const wire = prepareOllamaWire(payload);
+  assert.equal(isOllamaReject(wire), false);
+  if (isOllamaReject(wire)) throw new Error("expected wire");
+  return wire.declaration;
+}
+
+async function collectTransform(raw: string, transform: import("node:stream").Transform): Promise<string> {
+  const chunks: Buffer[] = [];
+  transform.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+  await new Promise<void>((resolve, reject) => {
+    transform.once("error", reject);
+    transform.once("end", resolve);
+    Readable.from([Buffer.from(raw, "utf8")]).pipe(transform);
+  });
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+describe("Ollama final tool declaration", () => {
+  it("declares only names present on the final outbound tools[]", () => {
+    const declaration = declarationOf([
+      { type: "function", name: "exec_command" },
+      { type: "namespace", name: "ignored", tools: [{ type: "function", name: "nested" }] },
+      { type: "function", function: { name: "apply_patch" } },
+    ]);
+    assert.deepEqual([...declaration.names], ["exec_command", "nested", "apply_patch"]);
+    assert.equal(declaration.count, 3);
+    assert.equal(declaration.sha8.length, 8);
+    assert.equal(collectOllamaWireToolNames("not-an-array").length, 0);
+  });
+
+  it("authorizes no client-executed call when the outbound catalog is empty", () => {
+    const empty = emptyOllamaToolDeclaration();
+    assert.equal(empty.count, 0);
+    assert.equal(empty.names.size, 0);
+    const failure = guardOllamaJsonResponse(jsonResponse([functionCall("exec_command")]), empty);
+    assert.equal(failure?.code, "ollama_undeclared_tool_call");
+  });
+
+  it("declares converted tool_search and promoted aliases, not skipped leaves", () => {
+    const leaves = Array.from({ length: PROMOTED_LEAF_CAP + 1 }, (_, index) => ({
+      type: "function",
+      name: `leaf_${index}`,
+      parameters: { type: "object", properties: {} },
+    }));
+    const declaration = wireDeclaration({
+      model: "ollama/m",
+      tools: [{ type: "tool_search", description: "Find tools." }],
+      input: [
+        { type: "tool_search_call", call_id: "s1", execution: "client", arguments: { query: "leaf" } },
+        {
+          type: "tool_search_output",
+          call_id: "s1",
+          status: "completed",
+          execution: "client",
+          tools: leaves,
+        },
+      ],
+    });
+    assert.equal(declaration.names.has("tool_search"), true);
+    assert.equal(declaration.names.has("leaf_0"), true);
+    assert.equal(declaration.names.has(`leaf_${PROMOTED_LEAF_CAP}`), false);
+    assert.equal(declaration.count, PROMOTED_LEAF_CAP + 1);
+  });
+
+  it("does not declare an inbound name removed by collision or missing from the wire", () => {
+    const declaration = wireDeclaration({
+      model: "ollama/m",
+      tools: [
+        { type: "tool_search" },
+        { type: "function", name: "multi_agent_v1__spawn_agent", parameters: { type: "object", properties: {} } },
+      ],
+      input: [
+        { type: "tool_search_call", call_id: "s1", execution: "client", arguments: { query: "spawn" } },
+        {
+          type: "tool_search_output",
+          call_id: "s1",
+          status: "completed",
+          execution: "client",
+          tools: [
+            {
+              type: "namespace",
+              name: "multi_agent_v1",
+              tools: [
+                {
+                  type: "function",
+                  name: "spawn_agent",
+                  parameters: { type: "object", properties: { task: { type: "string" } } },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    assert.equal(declaration.names.has("multi_agent_v1__spawn_agent"), true);
+    assert.equal(declaration.names.has("spawn_agent"), false);
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("spawn_agent")]), declaration)?.code,
+      "ollama_undeclared_tool_call",
+    );
+  });
+});
+
+describe("Ollama JSON response guard", () => {
+  const declared = declarationOf([{ type: "function", name: "exec_command" }]);
+
+  it("accepts a converted tool_search call only when that function reached the wire", () => {
+    const withSearch = wireDeclaration({
+      model: "ollama/m",
+      tools: [{ type: "tool_search", description: "Find tools." }],
+      input: "hi",
+    });
+    assert.equal(withSearch.names.has("tool_search"), true);
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("tool_search")]), withSearch),
+      undefined,
+    );
+    const withoutSearch = wireDeclaration({
+      model: "ollama/m",
+      tools: [{ type: "function", name: "exec_command", parameters: { type: "object", properties: {} } }],
+      input: "hi",
+    });
+    assert.equal(withoutSearch.names.has("tool_search"), false);
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("tool_search")]), withoutSearch)?.code,
+      "ollama_undeclared_tool_call",
+    );
+  });
+
+  it("accepts a declared function_call and a message-only response with or without usage", () => {
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("exec_command")]), declared),
+      undefined,
+    );
+    assert.equal(
+      guardOllamaJsonResponse(
+        { ...jsonResponse([{ type: "message", role: "assistant", content: "ok" }]), usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+        declared,
+      ),
+      undefined,
+    );
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([{ type: "message", role: "assistant", content: "ok" }]), declared),
+      undefined,
+    );
+  });
+
+  it("rejects undeclared, invalid, empty, and unreviewed client calls before any restore", () => {
+    const cases: Array<{ output: unknown; code: string; kind: string }> = [
+      { output: [functionCall("apply_patch")], code: "ollama_undeclared_tool_call", kind: "undeclared" },
+      { output: [functionCall("")], code: "ollama_tool_call_invalid", kind: "empty_name" },
+      { output: [functionCall("   ")], code: "ollama_tool_call_invalid", kind: "empty_name" },
+      { output: [functionCall(1)], code: "ollama_tool_call_invalid", kind: "invalid_name" },
+      { output: [{ type: "function_call", call_id: "c1" }], code: "ollama_tool_call_invalid", kind: "invalid_name" },
+      { output: [{ type: "custom_tool_call", name: "exec_command" }], code: "ollama_tool_call_invalid", kind: "invalid_type" },
+      { output: [{ type: "tool_search_call", name: "tool_search" }], code: "ollama_tool_call_invalid", kind: "invalid_type" },
+    ];
+    for (const entry of cases) {
+      const failure = guardOllamaJsonResponse(jsonResponse(entry.output as unknown[]), declared);
+      assert.equal(failure?.code, entry.code, JSON.stringify(entry));
+      assert.equal(failure?.kind, entry.kind, JSON.stringify(entry));
+    }
+  });
+
+  it("keeps function_call_output and ignores non-call items", () => {
+    assert.equal(
+      guardOllamaJsonResponse(
+        jsonResponse([
+          { type: "function_call_output", call_id: "c1", output: "ok" },
+          { type: "message", role: "assistant", content: "done" },
+        ]),
+        declared,
+      ),
+      undefined,
+    );
+  });
+});
+
+describe("Ollama SSE response guard", () => {
+  const declared = declarationOf([{ type: "function", name: "exec_command" }]);
+
+  it("trips on added, done, and terminal snapshots, and stays sticky", () => {
+    const undeclared = functionCall("apply_patch");
+    assert.equal(
+      inspectOllamaSseEvent({ type: "response.output_item.added", item: undeclared }, declared)?.code,
+      "ollama_undeclared_tool_call",
+    );
+    assert.equal(
+      inspectOllamaSseEvent({ type: "response.output_item.done", item: undeclared }, declared)?.code,
+      "ollama_undeclared_tool_call",
+    );
+    assert.equal(
+      inspectOllamaSseEvent(
+        { type: "response.completed", response: jsonResponse([undeclared]) },
+        declared,
+      )?.code,
+      "ollama_undeclared_tool_call",
+    );
+    assert.equal(
+      inspectOllamaSseEvent(
+        { type: "response.incomplete", response: jsonResponse([undeclared]) },
+        declared,
+      )?.code,
+      "ollama_undeclared_tool_call",
+    );
+    assert.equal(inspectOllamaSseEvent({ type: "response.failed", response: { status: "failed" } }, declared), undefined);
+    assert.equal(
+      inspectOllamaSseEvent({ type: "response.output_text.delta", delta: "hi" }, declared),
+      undefined,
+    );
+    assert.equal(
+      inspectOllamaSseEvent({ type: "response.output_item.added", item: functionCall("exec_command") }, declared),
+      undefined,
+    );
+  });
+
+  it("does not let a later empty completed snapshot clear a rejection", async () => {
+    const guard: OllamaResponseGuardState = {};
+    const raw = [
+      `data: ${JSON.stringify({ type: "response.output_item.added", item: functionCall("apply_patch") })}`,
+      `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", delta: "secret-args" })}`,
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_1", object: "response", output: [] } })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n";
+    const text = await collectTransform(
+      raw,
+      ollamaSseTransform("ollama/m", { suppressDone: true }, undefined, declared, guard),
+    );
+    assert.equal(guard.failure?.code, "ollama_undeclared_tool_call");
+    assert.equal(text.includes("apply_patch"), false);
+    assert.equal(text.includes("response.completed"), false);
+    assert.equal(text.includes("secret-args"), false);
+    assert.equal(text.includes("[DONE]"), false);
+  });
+
+  it("forwards a valid declared stream with identical bytes outside existing rewrites", async () => {
+    const item = functionCall("exec_command");
+    const raw = [
+      `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_1" } })}`,
+      `data: ${JSON.stringify({ type: "response.output_item.added", item })}`,
+      `data: ${JSON.stringify({ type: "response.completed", response: jsonResponse([item]) })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n";
+    const guard: OllamaResponseGuardState = {};
+    const guarded = await collectTransform(
+      raw,
+      ollamaSseTransform("ollama/m", { suppressDone: true }, undefined, declared, guard),
+    );
+    const baseline = await collectTransform(raw, ollamaSseTransform("ollama/m", { suppressDone: true }));
+    assert.equal(guard.failure, undefined);
+    assert.equal(
+      createHash("sha256").update(guarded).digest("hex"),
+      createHash("sha256").update(baseline).digest("hex"),
+    );
+    assert.match(guarded, /response.output_item.added/);
+    assert.match(guarded, /response.completed/);
+    assert.equal(guarded.includes("[DONE]"), false);
+  });
+});
+
+describe("Ollama guard diagnostics", () => {
+  it("keeps client preview bounded and logs content-free", () => {
+    const declared = declarationOf([{ type: "function", name: "exec_command" }]);
+    const ugly = `apply_patch\nSECRET=token\r\n${"x".repeat(200)}`;
+    const failure = guardOllamaJsonResponse(jsonResponse([functionCall(ugly)]), declared);
+    assert.ok(failure);
+    const log = formatOllamaGuardLog(failure, declared);
+    const body = ollamaGuardHttpBody(failure);
+    const event = ollamaGuardFailedEvent(failure);
+    const sse = ollamaGuardSseTerminal(failure);
+    assert.equal(log.includes(ugly), false);
+    assert.equal(log.includes("SECRET=token"), false);
+    assert.equal(log.includes("apply_patch"), false);
+    assert.match(log, /code=ollama_undeclared_tool_call/);
+    assert.match(log, /name_len=/);
+    assert.match(log, /name_sha=/);
+    assert.match(log, /declared_n=1/);
+    assert.equal(isRecordError(body), true);
+    assert.equal((body.error as JsonObject).type, "upstream_error");
+    assert.equal((body.error as JsonObject).code, "ollama_undeclared_tool_call");
+    assert.equal(String((body.error as JsonObject).message).includes("\n"), false);
+    assert.ok(ollamaGuardMessage(failure).length > 0);
+    assert.equal(event.type, "response.failed");
+    assert.equal(sse.includes("data: [DONE]"), true);
+    assert.equal([...sse.matchAll(/response\.failed/g)].length, 1);
+    assert.equal([...sse.matchAll(/data: \[DONE\]/g)].length, 1);
+    assert.ok(failure.preview.length <= 100);
+  });
+});
+
+function isRecordError(value: JsonObject): value is JsonObject & { error: JsonObject } {
+  return Boolean(value.error && typeof value.error === "object");
+}

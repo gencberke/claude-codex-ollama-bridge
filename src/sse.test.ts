@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { rewriteSseLine, sseRewriteTransform, SseLimitError } from "./sse.js";
+import { rewriteSseLine, SSE_OMIT_LINE, sseRewriteTransform, SseLimitError } from "./sse.js";
+
+function sseData(line: string | typeof SSE_OMIT_LINE): string {
+  assert.equal(typeof line, "string");
+  return (line as string).slice("data: ".length);
+}
 
 function referenceRewriteSseLine(line: string, rewriteJson: (value: unknown) => unknown): string {
   if (!line.startsWith("data:")) return line;
@@ -62,12 +67,12 @@ describe("bounded SSE parser", () => {
       const identity = rewriteSseLine(line, (value) => value);
       assert.equal(identity, line);
       const reference = referenceRewriteSseLine(line, (value) => value);
-      assert.deepEqual(JSON.parse(identity.slice("data: ".length)), JSON.parse(reference.slice("data: ".length)));
+      assert.deepEqual(JSON.parse(sseData(identity)), JSON.parse(reference.slice("data: ".length)));
 
       const mutated = rewriteSseLine(line, (value) => ({ ...(value as object), id: "rewritten" }));
       const mutatedRef = referenceRewriteSseLine(line, (value) => ({ ...(value as object), id: "rewritten" }));
       assert.notEqual(mutated, line);
-      assert.deepEqual(JSON.parse(mutated.slice("data: ".length)), JSON.parse(mutatedRef.slice("data: ".length)));
+      assert.deepEqual(JSON.parse(sseData(mutated)), JSON.parse(mutatedRef.slice("data: ".length)));
     }
     assert.equal(rewriteSseLine("data: not-json", (value) => value), "data: not-json");
     assert.equal(rewriteSseLine("data: [DONE]", (value) => value), referenceRewriteSseLine("data: [DONE]", (value) => value));
@@ -95,6 +100,29 @@ describe("bounded SSE parser", () => {
     assert.match(text, /"n":1/);
     assert.match(text, /"n":2/);
     assert.equal(text.includes("\r"), false);
+  });
+
+  it("omits data lines without dropping comments or changing identity bytes", async () => {
+    assert.equal(rewriteSseLine('data: {"id":"keep"}', (value) => value), 'data: {"id":"keep"}');
+    assert.equal(rewriteSseLine('data: {"drop":true}', () => SSE_OMIT_LINE), SSE_OMIT_LINE);
+    const transform = sseRewriteTransform((value) => {
+      if (value && typeof value === "object" && "drop" in (value as object)) return SSE_OMIT_LINE;
+      return value;
+    });
+    const chunks: Buffer[] = [];
+    transform.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const done = new Promise<void>((resolve, reject) => {
+      transform.on("end", resolve);
+      transform.on("error", reject);
+    });
+    transform.write(Buffer.from(': comment\ndata: {"id":"keep"}\ndata: {"drop":true}\ndata: {"id":"later"}\n', "utf8"));
+    transform.end();
+    await done;
+    const text = Buffer.concat(chunks).toString("utf8");
+    assert.match(text, /: comment/);
+    assert.match(text, /"id":"keep"/);
+    assert.match(text, /"id":"later"/);
+    assert.equal(text.includes("drop"), false);
   });
 
   it("rejects an incomplete SSE frame that exceeds the line budget", async () => {
