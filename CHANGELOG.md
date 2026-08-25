@@ -10,39 +10,32 @@ not this file.
 
 ## Unreleased
 
-Source checkpoint for installed cob 0.1.12: `tsc -p tsconfig.build.json`
-matches the 43-file tarball production JS byte-for-byte (SHA-256
-`684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`).
-Packed `README.md` / `CHANGELOG.md` / `RELEASE.md` later recorded the live
-`:18790` install and two-turn smoke; those doc-only diffs are in this tree
-and do not change the 0.1.12 artifact. Do not repack 0.1.12.
+Workspace-only: pack-excluded Gate 6-H, G2–G9 eval fixtures, and
+[UPSTREAM-U1.md](./UPSTREAM-U1.md). They are not live gold and are not in
+the 0.1.14 tarball.
 
-The default-off, isolated Gate 5 experiment now bridges one declared Codex
-custom/freeform `apply_patch` tool through a fixed Ollama function alias and
-restores the Codex custom call/output identity. Capability advertisement is
-limited to configured Ollama spawn rows; native rows remain verbatim and shell
-stays disabled. Live `~/.codex` start forces both `apply_patch` and
-`native_plaintext_spawn` off and drops any stored schema fingerprint.
-Strict declaration, collision, encrypted-field, history, JSON,
-and SSE guards fail closed without logging patch content. JSON provider
-responses are now normalized before any checkpoint is published; a
-normalization or identity failure returns a redacted 502 and never relays
-the raw provider body. Ollama requests reject non-empty `encrypted_*`
-fields and cob/ocx1/Fernet prefixes. Native alias outputs reject extra keys
-and non-Ollama spawn models. Summarizer HTTP failures log only
-status/bytes/SHA. Gate 6-H requires child-side phase evidence and records
-`controller_sequencing_observed` with `transport_unmeasured`.
-Pack-excluded eval fixtures add isolated approval preflight (G2–G4
-read-only/`never`, G5 disposable workspace-write/`never`), G8-R completed
-checkpoint replay, G9 compact protocol scoring, and content-free hashed
-receipts. They do not authorize a live canary, cob queue, or pack.
-PATH Codex 0.149.0 still has no `agentControl/*` ClientRequest; the
-portable V2 proposal is workspace `UPSTREAM-U1.md` and is not packed.
-A real 0731 child
-canary completed one native custom patch edit without a shell/temp-binary or
-parent-applied patch. This is not packed, installed, or enabled on live
-`:18790`. The isolated gates preserved the current root baseline `b976c134…`
-and live catalog `9748309e…`.
+## 0.1.14 — 2026-08-25
+
+Scoped live cut of fail-closed Ollama JSON/encrypted-wire hardening. Product
+remains native GPT + Ollama **V1** child. Isolated Gate 5 `apply_patch` and
+`native_plaintext_spawn` stay default-off; live `~/.codex` start forces both
+off and drops any stored schema fingerprint. No cob queue, no Ollama V2
+catalog, no G6–G10 claim. Do not repack 0.1.11–0.1.13.
+
+- JSON Ollama 2xx bodies are parsed, guarded, and normalized before any
+  checkpoint. Invalid JSON, a normalize/identity failure, or a leaked
+  apply-patch alias returns a redacted 502 and never relays the raw provider
+  body.
+- Ollama requests reject non-empty `encrypted_*` fields and recursive
+  `gAAAAA` / `ocx1` / `cob1.` prefixes. Empty placeholders are stripped.
+- Summarizer HTTP failures log only status, byte count, SHA-8, and latency.
+- Tarball excludes tests, harnesses, `gate6h`, and `eval-*`.
+- G12/G14/G17 remain 0.1.13 evidence; this cut does not re-claim them.
+- Authorized global install 2026-08-25: tarball SHA-256
+  `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
+  (45 files), pid **54105**, `cob status` `ok`. Root `989c27f9…` and catalog
+  `9748309e…` unchanged. cob.toml records `apply_patch = false` and
+  `native_plaintext_spawn = false`. No tag, push, or npm publish.
 
 ## 0.1.13 — 2026-08-24
 

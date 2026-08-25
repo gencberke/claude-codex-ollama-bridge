@@ -40,12 +40,13 @@ Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG
 - Gate 5 `catalog.apply_patch` is default-off and isolated `--dev` only. When
   explicitly true, advertise cob-owned `apply_patch_tool_type = "freeform"`
   only on configured Ollama spawn rows; native GPT rows remain verbatim,
-  `shell_type` stays `disabled`, and `multi_agent_version` stays `v1`. Keep
-  live `:18790`, packed artifacts, and live catalogs unchanged. The bridge is
-  strict Codex custom tool ↔ fixed Ollama function alias; undeclared or
-  malformed calls fail closed and diagnostics must not include the tool name,
-  alias, patch body, or heredoc. Do not count `exec_command` plus a temporary
-  patch binary, or a parent-applied patch, as child gold.
+  `shell_type` stays `disabled`, and `multi_agent_version` stays `v1`. Live
+  `:18790` keeps `apply_patch = false`; do not advertise it on the live
+  catalog. The bridge is strict Codex custom tool ↔ fixed Ollama function
+  alias; undeclared or malformed calls fail closed and diagnostics must not
+  include the tool name, alias, patch body, or heredoc. Do not count
+  `exec_command` plus a temporary patch binary, or a parent-applied patch, as
+  child gold.
 - Install launchd, a Login Item, or any OS supervisor for cob. After reboot
   or a dead gateway, recovery is `cob start`.
 - Enable Multi-Agent V2 for Ollama children, advertise `multi_agent_version`
@@ -68,8 +69,8 @@ User-authorized Gate 1-3 research is the narrow exception under test: isolated
 `[experimental] native_plaintext_spawn = true` may rewrite only an exact,
 fingerprinted `gpt-5.6-sol` `collaboration.spawn_agent`,
 `collaboration.send_message`, and `collaboration.followup_task` schema and
-restore each native V2 identity. It does not advertise Ollama V2, alter the
-live gateway or catalog, or enable interrupt/restart/replay behavior; missing
+restore each native V2 identity. It does not advertise Ollama V2, enable
+interrupt/restart/replay, or turn on live `~/.codex` experiments; missing
 or changed schema fails closed. This exception is not product proof.
 
 Gate 4 may exercise the preserved canonical `collaboration.interrupt_agent`
@@ -131,20 +132,18 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Live global is cob **0.1.13** after an authorized install
-of tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`
-(pid **35004**). Source checkpoint `e932eb1` still reproduces 0.1.12 JS.
-PATH Codex 0.149.0 and Desktop 0.149 validate the same fresh catalog without
-native-row repair; host-network `cob status` is `ok`. Current root SHA baseline
-is `b6ec9273…` (Desktop/user rewrite after Gate 1-5 `b976c134…` and the earlier
-`d24f79f…` closeout; cob did not write these). Isolated G19 passed 25/25 on
-0.1.11. Gate disposition:
+child on cob 0.1.6). Live global is cob **0.1.14** after an authorized scoped
+install of tarball SHA-256
+`0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
+(pid **54105**). Fail-closed JSON/encrypted-wire is live; `apply_patch` and
+`native_plaintext_spawn` stay off on `~/.codex`. Pack excludes `gate6h` and
+`eval-*`. PATH Codex 0.149.0 and Desktop 0.149.0-alpha.4.3 validate catalog
+`9748309e…` (bytes unchanged at install). Host-network `cob status` is `ok`.
+Current root SHA baseline is `989c27f9…` (Desktop/user; cob did not write it).
 G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
 G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
-change. `low` compact effort is rejected; `none` remains an isolated opt-in
-candidate; cloud max stays off; auto-limit is capability-gated and omitted.
-Do not credit installation with those gates. Do not repack 0.1.11, 0.1.12, or 0.1.13.
-Future app updates can still drop overlay or hide
+change. Do not credit the 0.1.14 install with those gates. Do not repack
+0.1.11–0.1.14. Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;
 `cob start` brings the gateway back.

@@ -1,51 +1,44 @@
-# Status — 2026-08-24
+# Status — 2026-08-25
 
 Living checkpoint. Product contract stays in [README.md](./README.md). Live
 gold standards stay in [LIVE-TESTING.md](./LIVE-TESTING.md). Agents start at
 [AGENTS.md](./AGENTS.md). Release cut: [RELEASE.md](./RELEASE.md). History:
 [CHANGELOG.md](./CHANGELOG.md).
 
-Priority: **stability and throughput** of the working Desktop+cob path.
-Picker polish, native GPT, GPT→0731 V1 spawn, and the 26.818 app hop are
-recorded below. WP8 Ollama response integrity shipped in cob **0.1.11**
-(isolated G19 **25/25**). The first G11–G17 cut exposed two 0.1.11 Ollama
-0.32.15 continuation gaps: DONE-less completed SSE, and string-history replay
-into `input[]`. Both are fixed in live global cob **0.1.12** after an
-authorized install-only cut plus a live two-turn Ollama smoke. G18 remains the
-cob **0.1.9** hosted-search gold and live G8 remains the cob **0.1.7**
-default-path gold. G11 is complete on live 0.1.12. G12's default-on live path
-passed, while its explicit-false rollback exposed a namespace dialect gap in
-0.1.12. The exact 0.1.13 tarball is now the live global after an authorized
-cut. Its affected G12 rollback retrace, G14 long-cloud package, and G17
-same-corpus acceptance subsequently passed without a code or release change.
-No gate is inferred from installation alone. Source checkpoint `e932eb1`
-preserves installed 0.1.12. PATH Codex is 0.149.0, the catalog regenerated
-without native-row repair, Desktop was fully reopened, and the live gateway
-and overlay remain healthy. A later read-only check reports catalog provenance
-`stale` because the selected Desktop producer file identity changed; no live
-sync was performed during Gate 1-3 research.
+Priority: **stability and throughput** of the working Desktop+cob **V1** path.
+Native GPT parent → Ollama V1 child is the product. Native Multi-Agent V2
+mailbox (two in-flight `send_message`, cob queue, Ollama V2 catalog) is not
+productized; see [UPSTREAM-U1.md](./UPSTREAM-U1.md).
+
+Live global is cob **0.1.14** after an authorized scoped cut: fail-closed
+Ollama JSON (no raw 2xx relay), tighter encrypted-field rejection, redacted
+summarizer HTTP logs, and live-home lock that forces `apply_patch` and
+`native_plaintext_spawn` off. Isolated Gate 5 / plaintext-spawn JS is in the
+tarball but dark on `~/.codex`. G12/G14/G17 remain **0.1.13** evidence; this
+install does not re-claim them. Catalog bytes stayed `9748309e…`. Root
+`config.toml` stayed `989c27f9…` (Desktop/user; cob did not write it).
+Host-network `cob status` is `ok` with fresh Desktop `0.149.0-alpha.4.3`
+provenance.
 
 **This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
 `codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
-lists 0731, native parent and V1 child still hit cob **0.1.6**, overlay keys
-and user-owned `[agents]` defaults survived the app rewrite. cob pid did not
-change (gateway is not the app). A later update can still drop overlay or
-hide `ollama/...` (19694-class); then `cob status` must say why. Reboot
-recovery stays `cob start` — no launchd. Do not patch ChatGPT.app or steal
-native slugs to “survive” an update.
+lists 0731, native parent and V1 child still hit cob. A later update can still
+drop overlay or hide `ollama/...` (19694-class); then `cob status` must say
+why. Reboot recovery stays `cob start` — no launchd. Do not patch ChatGPT.app
+or steal native slugs to “survive” an update.
 
 ## Surfaces
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | global **0.1.13**, pid **35004**, `127.0.0.1:18790`, host-network health `ok`, overlay `ok`; catalog provenance currently `stale` after a Desktop producer file-identity change. Dev isolate `:18791` is down. |
-| Packed live | **0.1.13**, 43-file tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`; globally installed 2026-08-24. G12 rollback, G14, and G17 later passed on this exact listener/artifact. |
-| Prior live | **0.1.12**, 43-file tarball SHA-256 `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`; G11 + G12 default-on + two-turn smoke. Do not repack. |
-| Source checkpoint | `64c664b` on `master` (pack-excluded eval fixtures on the isolated V2 hardening). Do not treat this as a live pack. |
+| cob gateway | global **0.1.14**, pid **54105**, `127.0.0.1:18790`, host-network health `ok`, overlay `ok`, catalog provenance `fresh`. Dev isolate `:18791` is down. |
+| Packed live | **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; globally installed 2026-08-25. Scoped fail-closed cut; experiments live-forced off. |
+| Prior live | **0.1.13**, 43-file tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`; G12 rollback, G14, G17 on that artifact. Do not repack. |
+| Source | `master` cob **0.1.14** (this cut). Pack excludes tests, `gate6h`, and `eval-*`. 0.1.12 JS checkpoint remains `e932eb1`. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
-| ChatGPT Desktop | **26.818.41509** (WP0 2026-08-23), bundled `codex-cli 0.149.0-alpha.4.1`. Earlier gold hop: 26.818.22352 / alpha.21 |
-| Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). 0.32.14→0.32.15 on 2026-08-21; cob unchanged. |
-| Spawn slot | `cob.toml` `[subagents].models` → `ollama/deepseek-v4-flash:0731-cloud` |
+| ChatGPT Desktop | **26.818.41509**, bundled `codex-cli 0.149.0-alpha.4.3` (catalog producer). Earlier gold hop: 26.818.22352 / alpha.21 |
+| Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). |
+| Spawn slot | `cob.toml` `[subagents].models` → `ollama/deepseek-v4-flash:0731-cloud` and `ollama/kimi-k3:cloud`. Live `apply_patch = false`, `native_plaintext_spawn = false`. |
 
 Live 0.1.9 contains the exact native-only `POST /v1/alpha/search`
 compatibility route required by Codex `web.run` when `openai_base_url` points
@@ -60,10 +53,10 @@ activation is CLI/TUI only. There is no `CODEX_CONFIG_PROFILE` (see
 revert a user-owned Desktop trial.
 
 Current live root-config baseline is SHA-256
-`b6ec9273e7dc6bf6eed82d34b45a33a3b7bf4269cbd607bde1761f9ec67c752b`
-(Desktop/user rewrite after Gate 1-5 `b976c134…`). cob did not write it.
-The Gate 6-H harness pre/post hashes matched this value. Catalog remains
-`9748309e…`.
+`989c27f93c99574a1c4607766f0c5d731767735fe2991db27ce0a7f1a8d4c41b`
+(Desktop/user rewrite; cob did not write it). The 0.1.14 install preserved
+this SHA and catalog `9748309e…`. cob.toml gained explicit `apply_patch =
+false` and `[experimental] native_plaintext_spawn = false` (cob-owned file).
 
 ## Locked disposition (Gate 6)
 
@@ -98,6 +91,20 @@ not live-dispatch a child. `codex exec-server` is a remote environment, not
 a collaboration driver.
 
 ## Proven
+
+- **Live 0.1.14 scoped install (2026-08-25):** tarball SHA-256
+  `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
+  (45 files; no tests/`gate6h`/`eval-*`) replaced global 0.1.13 after `cob
+  stop` closed pid 35004. `cob version` is `cob 0.1.14 (global)`. Gateway pid
+  **54105** on `127.0.0.1:18790` reports health `ok`; overlay `ok`; provenance
+  `fresh` (Desktop `0.149.0-alpha.4.3` + PATH 0.149.0). Root `config.toml`
+  SHA-256 stayed
+  `989c27f93c99574a1c4607766f0c5d731767735fe2991db27ce0a7f1a8d4c41b`.
+  Catalog SHA-256 stayed
+  `9748309ea0e42c278d9e07dc71eef9c7b1c4a2fb3cb4cff84c026aa1624a3de9`.
+  Live Ollama rows remain `multi_agent_version=v1` with no
+  `apply_patch_tool_type`. Merge gate: 409 tests, 403 passed, 6 skips.
+  Installation is not G6–G10 or a G12/G14/G17 retrace.
 
 - **Isolated Gate 10 nested V2 FAIL (workspace only, 2026-08-25):** parent
   `rollout-2026-08-25T00-17-38-01a035a2-d51d-7390-a45d-a240695284f2.jsonl`
@@ -665,41 +672,16 @@ denominator. Gateway zstd bodies match the split (~17–19 KB native vs ~50 KB
 
 ## Next live work
 
-0. **0.1.13 live closeout is complete** —
-   live G8 passed on cob **0.1.7**
-   (20:29 flatten handoff + follow-up shrink). cob **0.1.8** packed Stages
-   2–4; live **0.1.9** hardens failed catalog provenance, `tool_choice`,
-   compact skeleton validation, repeated-ID state merge, alias telemetry, and
-   exact hosted-search routing. Its isolated merge gate and live install are
-   not a G11–G17 claim. G18 is separately proven above. WP8 now rejects
-   client tool calls absent from the exact final outbound catalog before
-   relay/checkpoint publication. Packed G19 passed on 0.1.11. The attempted
-   G11–G17 cut then found the DONE-less completed-SSE and string-replay gaps.
-   Packed and now-installed 0.1.12 fixes both; the live two-turn smoke passed.
-   G11 and G12's default-on lane are closed. G12's false rollback found
-   the namespace-qualified Ollama call gap; 0.1.13 fixes it and passed the
-   isolated real MCP + V1 replay. Exact 0.1.13 is globally installed
-   (pid 35004), and the affected real MCP + V1 rollback retrace subsequently
-   passed on that exact global artifact.
-   Defaults stay on the G8 path: omitted summarizer effort (wire `high`),
-   256k active cap, no cloud max advertisement, no
-   `auto_compact_token_limit`. Incomplete skeletons fail closed
-   (`compaction_summary_incomplete`) without resending history. Isolated
-   L5 still useful as a recorded harness.
-   Native GPT compact stays ChatGPT passthrough.
-   Current host-network `cob status` is `ok`; producer is Desktop 0.149 and
-   PATH validator is 0.149.0. Catalog `9748309e…` is fresh and unmodified by
-   compatibility repair. Current root baseline is `b6ec9273…` (Desktop/user
-   rewrite after Gate 1-5 `b976c134…`); cob operations must not change it.
-   The source checkpoint is `e932eb1`; no tag, push, publish, or repack
-   occurred.
-1. **Retain the proven defaults** — G12 rollback, G14, and G17 are closed on
-   the fixed cut. Keep compact effort omitted (wire `high`), active context
-   256k, cloud-max off, and auto-limit omitted. `none` is an isolated opt-in
-   candidate for a future, broader quality corpus; `low` is rejected. Do not
-   repack 0.1.12 or 0.1.13.
-2. **Remaining evidence is scoped** — G13 local remains unavailable; G15 stays
-   WP5A-only; G16 stays isolated-pass. None requires a 0.1.13 fix.
+0. **0.1.14 scoped live cut is complete** — fail-closed JSON/encrypted-wire
+   plus live experimental lock. Product remains V1. Do not pack again unless
+   a new authorized cut. Do not repack 0.1.11–0.1.14.
+1. **Retain the proven defaults** — compact effort omitted (wire `high`),
+   active context 256k, cloud-max off, auto-limit omitted. `none` is an
+   isolated opt-in candidate; `low` is rejected. G12/G14/G17 stay 0.1.13
+   evidence. G13 local remains unavailable; G15 WP5A-only; G16 isolated-pass.
+2. **V2 mailbox stays cob-external** — Gate 6 is `transport_unmeasured`. Use
+   [UPSTREAM-U1.md](./UPSTREAM-U1.md); do not add a cob queue.
 3. **The next Desktop/Codex update** — re-verify picker + 0731 + spawn, or
-   `cob status` explains the break. Do not pack cob for an app update that
-   already kept overlay.
+   `cob status` explains the break. Fully quit and reopen ChatGPT Desktop
+   after a catalog *byte* change; this 0.1.14 start refreshed provenance
+   without changing catalog bytes.

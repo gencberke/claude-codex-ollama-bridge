@@ -68,7 +68,7 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 
 - Node.js 22+
 - Codex CLI 0.149.0; this machine’s Desktop bundles
-  `codex-cli 0.149.0-alpha.4.1`
+  `codex-cli 0.149.0-alpha.4.3`
 - Ollama with `/v1/responses` (0.13.3+)
 
 ## Live vs develop
@@ -80,7 +80,7 @@ user-owned.
 
 ```bash
 npm run pack
-npm install -g ./codex-ollama-bridge-0.1.13.tgz
+npm install -g ./codex-ollama-bridge-0.1.14.tgz
 cob start
 cob status
 codex --profile cob

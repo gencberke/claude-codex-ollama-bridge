@@ -12,7 +12,8 @@ a text handoff and `replay_ratio ≈ 0.03`.
 G17 later passed a fixed same-corpus comparison on global 0.1.13: `low`
 regressed, `none` was the isolated latency/token winner, cloud max passed both
 current Codex consumers without raising the active 256k window, and auto-limit
-remained correctly omitted. Shipped defaults are unchanged.
+remained correctly omitted. Live **0.1.14** did not change those compact
+defaults.
 
 Reviewed as cob-appropriate (idea adapted, not OpenCodex source). OpenCodex
 remains a proof of the **idea**. Do not copy `nativeAlias`, root `config.toml`

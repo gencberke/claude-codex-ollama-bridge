@@ -1,8 +1,8 @@
 # Roadmap — implemented plan and live disposition
 
-**Date:** 2026-08-24
-**Status:** WP1–WP8 are implemented; exact global 0.1.13 is live (pid 35004); G11, G12, G14, G17, G18, and G19 are closed at their documented evidence scope
-**Next:** retain the stable defaults; treat `ollama_effort = "none"` as an isolated opt-in candidate only, keep G13 local/G15/G16 limitations explicit, and revalidate after the next Desktop/Codex update
+**Date:** 2026-08-25
+**Status:** WP1–WP8 are implemented; exact global **0.1.14** is live (pid 54105); G11, G12, G14, G17, G18, and G19 are closed at their documented evidence scope (G12/G14/G17 on the 0.1.13 artifact). 0.1.14 is a scoped fail-closed JSON/encrypted-wire cut, not a V2 product.
+**Next:** retain V1 defaults; keep Gate 6 cob-external ([UPSTREAM-U1.md](./UPSTREAM-U1.md)); revalidate after the next Desktop/Codex update
 
 This document records the implemented contract and live-proof disposition.
 It replaces the earlier proposal list with decisions verified against
@@ -150,8 +150,8 @@ Post-release review and recovery audit (2026-08-24):
   exposed Ollama's namespace-qualified call identity; 0.1.13 fixes that exact
   dialect edge and passed the real isolated MCP + V1 rollback. Merge gate is
   344 tests (341 pass, 3 skip, 0 fail). Exact tarball SHA-256
-  `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72` is now
-  live global pid **35004**. The affected G12 rollback retrace later passed on
+  `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72` was the
+  0.1.13 live global (pid **35004**). The affected G12 rollback retrace later passed on
   that exact global artifact with zero promotions or aliases.
 
 The resolved version skew was not proof of a picker failure. Live 0.1.12 made
@@ -1491,7 +1491,7 @@ Next execution units:
    0.1.13 namespace fix, passed on the isolated workspace candidate, and then
    passed against the exact global 0.1.13 artifact.
 7. **Authorized 0.1.13 global install — complete:** exact
-   tarball `81a99bad…` is live pid **35004**; health/overlay/provenance `ok`;
+   tarball `81a99bad…` was live pid **35004**; health/overlay/provenance `ok`;
    install-time root `70b10957…` and catalog `9748309e…` were unchanged.
 8. **G14/G17 live closeout — complete:** long cloud stream + continuation +
    abort passed; the fixed 134-item compact corpus passed baseline, `low`,
@@ -1499,6 +1499,10 @@ Next execution units:
    `d24f79f…` and catalog `9748309e…` stayed unchanged; all dev listeners were
    stopped. G13 local remains unavailable; retain G15 WP5A-only and G16
    isolated-pass.
+9. **Authorized 0.1.14 scoped global install — complete:** fail-closed Ollama
+   JSON/encrypted-wire plus live experimental lock. Tarball `0395b5df…`, pid
+   **54105**, catalog `9748309e…` and root `989c27f9…` unchanged. V2 mailbox
+   remains cob-external.
 
 Future fixes should not combine WP1, WP4, WP6, and WP7 failure domains without
 independent evidence and rollback points.
@@ -1516,7 +1520,6 @@ behavior edit, the implementer must still answer “yes” to all of these:
   be run only with authorization.
 - Existing dirty work is identified and will be preserved.
 
-For the next session, live is global 0.1.13 pid 35004. Never repack 0.1.12 or
-0.1.13. G12/G14/G17 are supported by their own traces, not installation,
-picker visibility, smoke, or a neighboring gate. Current defaults remain the
-G8 policy despite the isolated `none` result.
+For the next session, live is global 0.1.14 pid 54105. Never repack 0.1.11–0.1.14.
+G12/G14/G17 are supported by their 0.1.13 traces, not the 0.1.14 install.
+Current defaults remain the G8 policy despite the isolated `none` result.

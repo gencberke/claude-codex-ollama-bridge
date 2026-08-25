@@ -6,7 +6,7 @@ Not a cob product change. Do not implement this inside cob.
 Checked 2026-08-25 against PATH Codex **0.149.0**
 `codex app-server generate-json-schema --experimental` and current
 `codex-rs/app-server-protocol` `ClientRequest` on `main`. Neither exposes
-`agentControl/*`. Nearby methods exist and are the wrong layer.
+`agentControl/*`. Live cob **0.1.14** does not implement this driver.
 
 ## Why cob cannot close Gate 6
 
