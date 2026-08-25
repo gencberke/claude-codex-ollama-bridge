@@ -604,7 +604,9 @@ Root baseline for later work is `b6ec9273…` (Desktop/user rewrite; harness
 pre/post matched). Do not add a cob queue or a fourth Sol canary. Next is
 Upstream U1: a model-free Codex collaboration driver for
 `spawn → send1 → send2 → wait → followup1 → wait → followup2 → wait`.
-0.149 experimental app-server `ClientRequest` has no such method.
+0.149 experimental app-server `ClientRequest` has no such method. The
+portable proposal is [UPSTREAM-U1.md](./UPSTREAM-U1.md). Do not implement
+that driver in cob.
 
 ## G22 / Gate 7 — isolated worktree + two native apply_patch
 

@@ -41,7 +41,7 @@ native slugs to “survive” an update.
 | cob gateway | global **0.1.13**, pid **35004**, `127.0.0.1:18790`, host-network health `ok`, overlay `ok`; catalog provenance currently `stale` after a Desktop producer file-identity change. Dev isolate `:18791` is down. |
 | Packed live | **0.1.13**, 43-file tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`; globally installed 2026-08-24. G12 rollback, G14, and G17 later passed on this exact listener/artifact. |
 | Prior live | **0.1.12**, 43-file tarball SHA-256 `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`; G11 + G12 default-on + two-turn smoke. Do not repack. |
-| Source checkpoint | `7cfc338` on `master` (isolated V2/apply_patch hardening on the 0.1.12 JS checkpoint). Do not treat this as a live pack. |
+| Source checkpoint | `64c664b` on `master` (pack-excluded eval fixtures on the isolated V2 hardening). Do not treat this as a live pack. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | **26.818.41509** (WP0 2026-08-23), bundled `codex-cli 0.149.0-alpha.4.1`. Earlier gold hop: 26.818.22352 / alpha.21 |
 | Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). 0.32.14→0.32.15 on 2026-08-21; cob unchanged. |
@@ -83,8 +83,10 @@ The Gate 6-H harness pre/post hashes matched this value. Catalog remains
 Next work is cob-external **Upstream U1**: find or design a Codex
 collaboration runtime driver that, without a model choosing tools, runs
 `spawn → send1 → send2 → wait → followup1 → wait → followup2 → wait`.
-When that surface exists, re-measure Gate 6 on isolated `:18791`. If it
-does not, write a portable V2 / upstream change proposal.
+PATH Codex 0.149.0 and current `openai/codex` `ClientRequest` still have no
+`agentControl/*` method. The portable V2 proposal is [UPSTREAM-U1.md](./UPSTREAM-U1.md).
+Do not implement that driver in cob. When Codex ships it, re-measure Gate 6
+on isolated `:18791`.
 
 A 2026-08-24 read of PATH Codex 0.149.0 `codex app-server generate-json-schema
 --experimental` listed 150 `ClientRequest` methods. None dispatches
@@ -562,9 +564,9 @@ Desktop may persist picker choice back into root `config.toml` (`model =`,
   and do not reopen a cob queue. Next Gate 6 work is a Codex-side driver for
   `spawn → send1 → send2 → wait → followup1 → wait → followup2 → wait`
   without model scheduling. 0.149 experimental app-server `ClientRequest`
-  has no such method; if none appears, prepare a portable V2 / upstream
-  proposal and only then re-run Gate 6 on isolated cob. Recovery-hop
-  transcription remains consent-only and was not implemented.
+  has no such method. The portable proposal is
+  [UPSTREAM-U1.md](./UPSTREAM-U1.md). Do not implement `agentControl/*` in cob.
+  Recovery-hop transcription remains consent-only and was not implemented.
 - **G13:** cloud low/high/max and the deterministic request/error boundary
   passed; the Ollama daemon access log independently confirms the three real
   `/v1/responses` calls. The local-model lane is unavailable because this

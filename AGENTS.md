@@ -97,9 +97,9 @@ gold without continuation; not live G8). Pack-excluded eval fixtures cover
 G2–G5 approval preflight, G8-R replay, and G9 protocol without a live canary.
 Gate 10 FAIL no nested leaf (`collaboration.spawn_agent` absent from the
 0731 child toolset). Desktop hop stays separately authorized. Next Gate 6
-work is cob-external Upstream U1 (direct Codex collaboration driver). If
-that surface is missing, write an upstream portable V2 proposal; only then
-re-measure Gate 6 on isolated `:18791`.
+work is cob-external Upstream U1. The portable proposal is
+[UPSTREAM-U1.md](./UPSTREAM-U1.md). Do not implement `agentControl/*` inside cob.
+Re-measure Gate 6 on isolated `:18791` only after Codex ships that driver.
 
 ## Activation split
 
