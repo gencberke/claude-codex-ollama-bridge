@@ -131,8 +131,10 @@ export const OLLAMA_DIALECT = {
     clientExecutedCallKinds: OLLAMA_CLIENT_EXECUTED_CALL_KINDS,
     unreviewedCallKinds: OLLAMA_UNREVIEWED_CALL_KINDS,
     toolNameSource: "final_outbound_tools" as const,
+    namespaceEncoding: "dot-qualified" as const,
     undeclaredTool: "ollama_undeclared_tool_call",
     invalidTool: "ollama_tool_call_invalid",
+    invalidResponse: "ollama_response_invalid",
   },
   capabilities: {
     chatCompletions: "unsupported",

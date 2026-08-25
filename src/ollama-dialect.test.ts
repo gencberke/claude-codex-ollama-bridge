@@ -41,6 +41,7 @@ describe("Ollama dialect authority", () => {
     assert.equal(OLLAMA_DIALECT.response.usage, "optional-exact-never-fabricated");
     assert.equal(OLLAMA_DIALECT.response.toolNameSource, "final_outbound_tools");
     assert.equal(OLLAMA_DIALECT.response.sseDone, "optional-after-completed");
+    assert.equal(OLLAMA_DIALECT.response.invalidResponse, "ollama_response_invalid");
     assert.deepEqual([...OLLAMA_CLIENT_EXECUTED_CALL_KINDS], ["function_call"]);
   });
 

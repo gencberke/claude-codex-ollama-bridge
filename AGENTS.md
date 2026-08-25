@@ -37,11 +37,21 @@ Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG
   the next Ollama `tools[]` as namespace-aware aliases. Do not set `tool_mode`.
   Do not hand-edit `cob-catalog.json` to force the flag. Do not rewrite an
   existing explicit false.
+- Gate 5 `catalog.apply_patch` is default-off and isolated `--dev` only. When
+  explicitly true, advertise cob-owned `apply_patch_tool_type = "freeform"`
+  only on configured Ollama spawn rows; native GPT rows remain verbatim,
+  `shell_type` stays `disabled`, and `multi_agent_version` stays `v1`. Keep
+  live `:18790`, packed artifacts, and live catalogs unchanged. The bridge is
+  strict Codex custom tool ↔ fixed Ollama function alias; undeclared or
+  malformed calls fail closed and diagnostics must not include the tool name,
+  alias, patch body, or heredoc. Do not count `exec_command` plus a temporary
+  patch binary, or a parent-applied patch, as child gold.
 - Install launchd, a Login Item, or any OS supervisor for cob. After reboot
   or a dead gateway, recovery is `cob start`.
 - Enable Multi-Agent V2 for Ollama children, advertise `multi_agent_version`
   other than `v1` on Ollama rows, or call `followup_task` / encrypted
-  collaboration payloads. Ollama stays V1. Fernet never goes to Ollama.
+  collaboration payloads outside the isolated Gate 1-3 exception below.
+  Ollama stays V1. Fernet never goes to Ollama.
 
 ## Orchestration
 
@@ -53,6 +63,40 @@ Ollama children stay V1. Spawn slot is `cob.toml` `[subagents].models`
 `~/.codex/agents/*.toml` for discovery. Do not steal native GPT ids.
 Thinking Ollama default is `high`; leftover Codex `medium` / `xhigh` map to
 `high` on the Ollama wire.
+
+User-authorized Gate 1-3 research is the narrow exception under test: isolated
+`[experimental] native_plaintext_spawn = true` may rewrite only an exact,
+fingerprinted `gpt-5.6-sol` `collaboration.spawn_agent`,
+`collaboration.send_message`, and `collaboration.followup_task` schema and
+restore each native V2 identity. It does not advertise Ollama V2, alter the
+live gateway or catalog, or enable interrupt/restart/replay behavior; missing
+or changed schema fails closed. This exception is not product proof.
+
+Gate 4 may exercise the preserved canonical `collaboration.interrupt_agent`
+leaf in the same isolated home. It adds no plaintext alias or Ollama catalog
+capability; restart/replay/worktree/Desktop remain outside that proof.
+
+Gate 5 is a separate catalog/tool-dialect experiment, not a collaboration
+alias. Its isolated canary has one real 0731 child-native custom `apply_patch`
+edit; it does not authorize live enablement, shell writes, nested V2,
+restart/replay, worktree, or Desktop claims.
+
+Gate 6 (two active `send_message` plus two idle `followup_task` on one child)
+failed in isolated `:18791` canaries: Sol waited after the first send and the
+0731 child completed after `SEND1`. Gate 6-H is the workspace-only JSONL
+harness (`npm run gate6h`) that fail-stops on `controller_sequencing_fail`
+and retries the same fixture at most three times. It does not add a cob
+queue. Three sequencing fails record `controller_sequencing_observed` with
+`transport_unmeasured`. Do not pack the harness, run a fourth Sol canary, or
+write a cob-owned queue.
+Isolated 2026-08-25 canaries: Gate 7 FAIL `worktree_not_distinct`; Gate 8
+PASS same-child continue after mid-flight `cob stop --dev`/`start --dev`;
+Gate 9 FAIL `compaction_summary_incomplete` (8k catalog lie; not live G8);
+Gate 10 FAIL no nested leaf (`collaboration.spawn_agent` absent from the
+0731 child toolset). Desktop hop stays separately authorized. Next Gate 6
+work is cob-external Upstream U1 (direct Codex collaboration driver). If
+that surface is missing, write an upstream portable V2 proposal; only then
+re-measure Gate 6 on isolated `:18791`.
 
 ## Activation split
 
@@ -84,12 +128,19 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Live global is cob **0.1.12** after an authorized install
-of the recorded tarball plus a live two-turn Ollama smoke. Isolated G19 passed
-25/25 on 0.1.11. Gate disposition: G11/G12 blocked, G13 partial, G14 short
-stream/continuation smoke passed on live 0.1.12 (full long-cloud still
-pending), G15 partial, G16 isolated-pass, G17 unrun. Do not credit
-installation with the remaining gates. Do not repack 0.1.11 or 0.1.12.
+child on cob 0.1.6). Live global is cob **0.1.13** after an authorized install
+of tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`
+(pid **35004**). Source checkpoint `e932eb1` still reproduces 0.1.12 JS.
+PATH Codex 0.149.0 and Desktop 0.149 validate the same fresh catalog without
+native-row repair; host-network `cob status` is `ok`. Current root SHA baseline
+is `b6ec9273…` (Desktop/user rewrite after Gate 1-5 `b976c134…` and the earlier
+`d24f79f…` closeout; cob did not write these). Isolated G19 passed 25/25 on
+0.1.11. Gate disposition:
+G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
+G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
+change. `low` compact effort is rejected; `none` remains an isolated opt-in
+candidate; cloud max stays off; auto-limit is capability-gated and omitted.
+Do not credit installation with those gates. Do not repack 0.1.11, 0.1.12, or 0.1.13.
 Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;

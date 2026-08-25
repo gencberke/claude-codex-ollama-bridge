@@ -16,6 +16,10 @@ export const SSE_OMIT_LINE = Symbol("sse-omit-line");
 export type SseObserver = {
   onChunk?: (chunk: Buffer) => void;
   onData?: (event: { value?: unknown; done?: boolean; malformed?: boolean }) => void;
+  /** Fail the transform instead of forwarding an invalid or rejected data line. */
+  failOnError?: boolean;
+  /** Fail instead of forwarding a line that is not a recognized SSE field. */
+  failOnUnknownField?: boolean;
   suppressDone?: boolean;
   /** Drop remaining `data:` lines without parsing them. */
   omitData?: () => boolean;
@@ -68,7 +72,12 @@ export function rewriteSseLine(
   rewriteJson: (value: unknown) => unknown,
   observer?: SseObserver,
 ): string | typeof SSE_OMIT_LINE {
-  if (!line.startsWith("data:")) return line;
+  if (!line.startsWith("data:")) {
+    if (observer?.failOnUnknownField && !isRecognizedSseField(line)) {
+      throw new Error("SSE stream contains an unsupported field");
+    }
+    return line;
+  }
   if (observer?.omitData?.()) return SSE_OMIT_LINE;
   const payload = line.slice("data:".length).trim();
   if (payload.length === 0) return line;
@@ -83,10 +92,19 @@ export function rewriteSseLine(
     if (rewritten === SSE_OMIT_LINE) return SSE_OMIT_LINE;
     if (rewritten === parsed) return line;
     return `data: ${JSON.stringify(rewritten)}`;
-  } catch {
+  } catch (error) {
+    if (observer?.failOnError) {
+      if (error instanceof SyntaxError) throw new Error("SSE data payload is invalid");
+      throw error;
+    }
     observer?.onData?.({ malformed: true });
     return line;
   }
+}
+
+function isRecognizedSseField(line: string): boolean {
+  if (line.length === 0 || line.startsWith(":")) return true;
+  return ["data", "event", "id", "retry"].some((field) => line === field || line.startsWith(`${field}:`));
 }
 
 function assertLineBudget(text: string, maxLineBytes: number): void {

@@ -31,6 +31,8 @@ export type CatalogMergeOptions = {
   spawnableOllamaSlugs?: readonly string[];
   /** Advertise supports_search_tool on Ollama rows. Requires the cob tool_search shim. */
   supportsSearchTool?: boolean;
+  /** Advertise cob's freeform apply_patch alias on configured spawn rows only. */
+  applyPatch?: boolean;
   /** Expose tag max_context_window on verified cloud tags. Default false. */
   advertiseCloudMaxContext?: boolean;
   /** Active catalog cap. Default 256000. Never inferred from max. */
@@ -44,6 +46,10 @@ export type CatalogMergeOptions = {
 
 export type CatalogSafetyOptions = {
   allowSearchTool?: boolean;
+  /** Explicitly permit the Gate 5 catalog capability. */
+  allowApplyPatch?: boolean;
+  /** Spawn rows allowed to carry apply_patch_tool_type. */
+  spawnableOllamaSlugs?: readonly string[];
 };
 
 export function parseCatalogJson(text: string): CatalogFile {
@@ -179,6 +185,9 @@ export function buildOllamaEntry(
   priority: number,
   options?: CatalogMergeOptions,
 ): JsonObject {
+  const spawnable = options?.spawnableOllamaSlugs ?? DEFAULT_SPAWNABLE_OLLAMA_SLUGS;
+  const applyPatch =
+    options?.applyPatch === true && spawnable.some((wanted) => isSpawnableMatch(tag.name, wanted));
   const evidence = evidenceFromOllamaTag(tag);
   const windows = ollamaCatalogWindows({
     tagLength: tag.details?.context_length,
@@ -196,6 +205,7 @@ export function buildOllamaEntry(
     contextWindow: windows.contextWindow,
     maxContextWindow: windows.maxContextWindow,
     supportsSearchTool: options?.supportsSearchTool === true,
+    applyPatch,
     autoCompactTokenLimit: options?.autoCompactTokenLimit,
   });
   const slug = ollamaCatalogSlug(tag.name);
@@ -370,7 +380,11 @@ export function mergeCatalogWithFallback(
   }
   const catalog = { models: [...nativeOnly, ...ollama] };
   applyPickerVisibility(catalog.models, spawnable);
-  assertOllamaRowsSafe(catalog, { allowSearchTool: options?.supportsSearchTool === true });
+  assertOllamaRowsSafe(catalog, {
+    allowSearchTool: options?.supportsSearchTool === true,
+    allowApplyPatch: options?.applyPatch === true,
+    spawnableOllamaSlugs: options?.spawnableOllamaSlugs,
+  });
   return catalog;
 }
 
@@ -403,6 +417,11 @@ function rebuildOllamaRowFromPrevious(
     contextWindow: windows.contextWindow,
     maxContextWindow: windows.maxContextWindow,
     supportsSearchTool: options?.supportsSearchTool === true,
+    applyPatch:
+      options?.applyPatch === true &&
+      (options?.spawnableOllamaSlugs ?? DEFAULT_SPAWNABLE_OLLAMA_SLUGS).some((wanted) =>
+        isSpawnableMatch(slug, wanted),
+      ),
     autoCompactTokenLimit: options?.autoCompactTokenLimit,
   });
   const entry: JsonObject = {
@@ -468,6 +487,8 @@ export function mergeCatalog(
 
 export function assertOllamaRowsSafe(catalog: CatalogFile, options?: CatalogSafetyOptions): void {
   const allowSearchTool = options?.allowSearchTool === true;
+  const allowApplyPatch = options?.allowApplyPatch === true;
+  const spawnableOllamaSlugs = options?.spawnableOllamaSlugs ?? DEFAULT_SPAWNABLE_OLLAMA_SLUGS;
   for (const model of catalog.models) {
     const slug = asSlug(model);
     if (!slug.startsWith("ollama/")) continue;
@@ -497,7 +518,22 @@ export function assertOllamaRowsSafe(catalog: CatalogFile, options?: CatalogSafe
     if (model.shell_type !== "disabled") {
       throw new Error(`Ollama row ${slug} must set shell_type to disabled`);
     }
-    if ("apply_patch_tool_type" in model || "tool_mode" in model) {
+    const hasApplyPatch = "apply_patch_tool_type" in model;
+    const spawnable = spawnableOllamaSlugs.some((wanted) => isSpawnableMatch(slug, wanted));
+    if (hasApplyPatch) {
+      if (!allowApplyPatch) {
+        throw new Error(`Ollama row ${slug} must not advertise apply_patch without explicit opt-in`);
+      }
+      if (!spawnable) {
+        throw new Error(`Ollama row ${slug} must not advertise apply_patch unless it is a configured spawn row`);
+      }
+      if (model.apply_patch_tool_type !== "freeform") {
+        throw new Error(`Ollama row ${slug} must advertise apply_patch_tool_type = freeform`);
+      }
+    } else if (allowApplyPatch && spawnable) {
+      throw new Error(`Ollama row ${slug} must advertise apply_patch_tool_type = freeform when Gate 5 is enabled`);
+    }
+    if ("tool_mode" in model) {
       throw new Error(`Ollama row ${slug} advertised an unproven tool capability field`);
     }
     const efforts = advertisedReasoningEfforts(model);

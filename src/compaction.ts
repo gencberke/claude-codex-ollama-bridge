@@ -1,6 +1,7 @@
 import { OLLAMA_PREFIX, PREFERRED_NATIVE_COMPACT_SLUGS } from "./constants.js";
 import type { CompactionPolicy } from "./cob-config.js";
 import { MAX_COB_COMPACT_SUMMARY_BYTES } from "./compact-envelope.js";
+import { isEncryptedFieldName } from "./encrypted.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
 
@@ -516,7 +517,7 @@ export function projectOllamaInputValue(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const next: JsonObject = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (key === "encrypted_content") continue;
+    if (isEncryptedFieldName(key)) continue;
     if (key === "status" && value.type === "message") continue;
     next[key] = projectOllamaInputValue(nested);
   }
@@ -550,7 +551,7 @@ export function projectNativeCompactInput(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const next: JsonObject = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (key === "encrypted_content") continue;
+    if (isEncryptedFieldName(key)) continue;
     next[key] = projectNativeCompactInput(nested);
   }
   if (typeof next.type === "string") {
@@ -605,8 +606,13 @@ export function ollamaFollowUpInputError(value: unknown, path = "input"): string
   if (value.type === "compaction" || value.type === "compaction_trigger") {
     return `${path}: ${value.type} must be resolved by cob before Ollama forwarding`;
   }
-  if ("encrypted_content" in value && value.encrypted_content !== undefined && value.encrypted_content !== "") {
-    return `${path}: encrypted_content must not be sent to Ollama`;
+  if (
+    Object.entries(value).some(
+      ([key, nested]) =>
+        isEncryptedFieldName(key) && nested !== undefined && nested !== "" && !(Array.isArray(nested) && nested.length === 0),
+    )
+  ) {
+    return `${path}: encrypted fields must not be sent to Ollama`;
   }
   if (value.type === "message") {
     if (value.status !== undefined) {
@@ -622,7 +628,7 @@ export function ollamaFollowUpInputError(value: unknown, path = "input"): string
     }
   }
   for (const [key, nested] of Object.entries(value)) {
-    if (key === "encrypted_content") continue;
+    if (isEncryptedFieldName(key)) continue;
     const err = ollamaFollowUpInputError(nested, `${path}.${key}`);
     if (err) return err;
   }

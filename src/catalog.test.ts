@@ -362,6 +362,58 @@ describe("catalog merge", () => {
     assert.equal(listed?.supports_search_tool, true);
     assertOllamaRowsSafe(on, { allowSearchTool: true });
   });
+
+  it("advertises Gate 5 apply_patch only on configured Ollama spawn rows", () => {
+    const spawnable = ["ollama/deepseek-v4-flash:0731-cloud"] as const;
+    const on = mergeCatalog(bundled(), tags, {
+      spawnableOllamaSlugs: spawnable,
+      applyPatch: true,
+    });
+    const spawn = on.models.find((model) => model.slug === spawnable[0]);
+    const nonSpawn = on.models.find((model) => model.slug === "ollama/deepseek-v4-flash:cloud");
+    const nativeSol = on.models.find((model) => model.slug === "gpt-5.6-sol");
+    assert.equal(spawn?.apply_patch_tool_type, "freeform");
+    assert.equal("apply_patch_tool_type" in (nonSpawn ?? {}), false);
+    assert.equal(nativeSol?.apply_patch_tool_type, "freeform");
+    assert.equal(spawn?.shell_type, "disabled");
+    assert.equal(spawn?.multi_agent_version, "v1");
+    assertOllamaRowsSafe(on, {
+      allowApplyPatch: true,
+      spawnableOllamaSlugs: spawnable,
+    });
+  });
+
+  it("rejects apply_patch unless the safety opt-in and configured spawn row both match", () => {
+    const row = {
+      slug: "ollama/deepseek-v4-flash:0731-cloud",
+      base_instructions: OLLAMA_BASE_INSTRUCTIONS,
+      supports_parallel_tool_calls: false,
+      supports_search_tool: false,
+      multi_agent_version: "v1",
+      shell_type: "disabled",
+      apply_patch_tool_type: "freeform",
+    };
+    assert.throws(
+      () => assertOllamaRowsSafe({ models: [row] }),
+      /must not advertise apply_patch without explicit opt-in/,
+    );
+    assert.throws(
+      () =>
+        assertOllamaRowsSafe(
+          { models: [row] },
+          { allowApplyPatch: true, spawnableOllamaSlugs: ["ollama/qwen2.5:7b"] },
+        ),
+      /unless it is a configured spawn row/,
+    );
+    assert.throws(
+      () =>
+        assertOllamaRowsSafe(
+          { models: [{ ...row, apply_patch_tool_type: "shell" }] },
+          { allowApplyPatch: true, spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:0731-cloud"] },
+        ),
+      /must advertise apply_patch_tool_type = freeform/,
+    );
+  });
 });
 
 describe("Desktop and PATH catalog schemas", () => {

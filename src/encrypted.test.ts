@@ -16,8 +16,23 @@ describe("encrypted_content", () => {
     assert.equal(found?.startsWith("gAAAAA"), true);
   });
 
-  it("ignores empty encrypted_content", () => {
+  it("ignores empty encrypted placeholders", () => {
     assert.equal(findEncryptedContent({ encrypted_content: "" }), undefined);
+    assert.equal(findEncryptedContent({ encrypted_function_args: [] }), undefined);
+  });
+
+  it("rejects sibling encrypted_* fields, ocx1, and cob envelopes", () => {
+    assert.equal(findEncryptedContent({ encrypted_function_args: ["cipher"] }), NON_STRING_ENCRYPTED_CONTENT);
+    assert.equal(findEncryptedContent({ encrypted_reason: "secret" }), "secret");
+    assert.equal(findEncryptedContent({ input: [{ type: "message", text: "ocx1:deadbeef" }] })?.startsWith("ocx1"), true);
+    assert.equal(findEncryptedContent({ input: [{ type: "message", text: "cob1.1.abc" }] })?.startsWith("cob1."), true);
+    const stripped = stripPlaintextEncryptedContent({
+      encrypted_function_args: [],
+      encrypted_content: "",
+      keep: "ok",
+    });
+    assert.equal(JSON.stringify(stripped).includes("encrypted_"), false);
+    assert.equal(JSON.stringify(stripped), JSON.stringify({ keep: "ok" }));
   });
 
   it("fail-closed rejection is HTTP 400", () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
@@ -5,24 +6,37 @@ import { loadCatalogFile } from "./catalog.js";
 import { decodeRequestBody, RequestDecodeError } from "./decode.js";
 import { forwardNativeResponses, type HeaderMap, type UpstreamFetch } from "./native.js";
 import {
+  formatNativePlaintextSpawnResponseDiagnostic,
+  mapNativePlaintextSpawnJson,
+  NativePlaintextSpawnError,
+  nativePlaintextSpawnError,
+  observeNativePlaintextSpawnResponse,
+  prepareNativePlaintextSpawn,
+  nativePlaintextSpawnSseTransform,
+  type NativePlaintextSpawnContext,
+} from "./native-plaintext-spawn.js";
+import {
   forwardOllamaResponses,
   isOllamaReject,
   normalizeOllamaResponse,
   ollamaSseTransform,
   prepareOllamaPayload,
 } from "./ollama.js";
+import { COB_APPLY_PATCH_ALIAS } from "./apply-patch.js";
 import { normalizeOllamaErrorBody } from "./ollama-boundary.js";
+import { OLLAMA_DIALECT } from "./ollama-dialect.js";
 import {
   formatOllamaGuardLog,
   guardOllamaJsonResponse,
   ollamaGuardHttpBody,
   ollamaGuardSseTerminal,
+  type OllamaGuardFailure,
   type OllamaResponseGuardState,
   type OllamaToolDeclaration,
 } from "./ollama-response-boundary.js";
 import { assertLoopbackBindHost } from "./loopback.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "./route.js";
-import type { CompactionPolicy } from "./cob-config.js";
+import type { CompactionPolicy, NativePlaintextSpawnPolicy } from "./cob-config.js";
 import {
   classifyCompactionTrigger,
   compactionHeader,
@@ -113,6 +127,10 @@ export type GatewayOptions = {
   ollamaFetch?: UpstreamFetch;
   nonce?: string;
   compaction?: CompactionPolicy;
+  /** Isolated Gate 5; disabled unless the dev catalog policy opts in. */
+  applyPatch?: boolean;
+  /** Isolated Gate 1-3; disabled by default and only applied to gpt-5.6-sol. */
+  nativePlaintextSpawn?: NativePlaintextSpawnPolicy;
   headersMs?: number;
   nativeHeadersMs?: number;
   ollamaHeadersMs?: number;
@@ -382,7 +400,7 @@ async function handleResponsesPost(
 
   if (target === "ollama") {
     const expanded = await expandOllamaCompactionPayload(payload, stateStore(options), model);
-    const prepared = prepareOllamaPayload(expanded);
+    const prepared = prepareOllamaPayload(expanded, { applyPatch: options.applyPatch });
     if (isOllamaReject(prepared)) {
       json(res, prepared.status, prepared.body);
       return;
@@ -395,6 +413,12 @@ async function handleResponsesPost(
       fetchImpl: options.ollamaFetch,
       signal: abort.signal,
       headersMs: resolveOllamaHeadersMs(options),
+      applyPatch: options.applyPatch,
+      // Checkpoints currently retain the raw provider function-call alias.
+      // The original client payload was validated before this replay is
+      // assembled, so only a resolved previous_response_id may authorize the
+      // stored alias history on the final Ollama wire.
+      allowTrustedApplyPatchAliasHistory: continuation.parentResponseId !== undefined,
       supportsReasoning: catalogRowSupportsReasoning(resolveCatalog(options), catalogModel),
     });
     if (isOllamaReject(forwarded)) {
@@ -414,15 +438,27 @@ async function handleResponsesPost(
     return;
   }
 
+  const nativePrepared = prepareNativePlaintextSpawn(payload, options.nativePlaintextSpawn);
+  if ("status" in nativePrepared && "body" in nativePrepared) {
+    json(res, nativePrepared.status, nativePrepared.body);
+    return;
+  }
+  const nativeBody = nativePrepared.context
+    ? encodeNativePayload(inbound.body, nativePrepared.payload)
+    : inbound.body;
   const upstream = await forwardNativeResponses({
-    body: inbound.body,
+    body: nativeBody,
     headers: nativeHeaders(req, inbound.decoded),
     contentType: headerValue(req.headers["content-type"]) ?? "application/json",
     fetchImpl: options.nativeFetch,
     signal: abort.signal,
     headersMs: resolveNativeHeadersMs(options),
   });
-  await relay(upstream, res, abort, options);
+  if (nativePrepared.context) {
+    await relayNativePlaintextSpawn(upstream, res, abort, options, nativePrepared.context);
+  } else {
+    await relay(upstream, res, abort, options);
+  }
 }
 
 async function expandOllamaCompactionPayload(
@@ -504,7 +540,7 @@ async function handleOllamaCompactionTrigger(
     stateStore(options),
     threadModel,
   );
-  const prepared = prepareOllamaPayload(triggerlessPayload);
+  const prepared = prepareOllamaPayload(triggerlessPayload, { applyPatch: options.applyPatch });
   if (isOllamaReject(prepared)) {
     json(res, prepared.status, prepared.body);
     return;
@@ -537,7 +573,7 @@ async function handleOllamaCompactionTrigger(
     input: [...nativeHistory, { type: "compaction_trigger" }],
   };
   console.error(
-    `[cob] compaction_trigger target=${threadModel} compaction provider: ${compactionHeader("native", plan.compactModel)}`,
+    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("native", plan.compactModel))}`,
   );
   const rewritten = nativeCompactRequest(compactPayload, plan.compactModel);
   const body = Buffer.from(JSON.stringify(rewritten), "utf8");
@@ -604,13 +640,13 @@ async function handleOllamaSummaryCompact(
     history,
     effort: options.compaction?.ollamaEffort,
   });
-  const preparedSummarizer = prepareOllamaPayload(summarizerPayload);
+  const preparedSummarizer = prepareOllamaPayload(summarizerPayload, { applyPatch: options.applyPatch });
   if (isOllamaReject(preparedSummarizer)) {
     json(res, preparedSummarizer.status, preparedSummarizer.body);
     return;
   }
   console.error(
-    `[cob] compaction_trigger target=${threadModel} compaction provider: ${compactionHeader("ollama", compactModel)}`,
+    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("ollama", compactModel))}`,
   );
   const compactStarted = Date.now();
   const forwarded = await forwardOllamaResponses({
@@ -619,6 +655,7 @@ async function handleOllamaSummaryCompact(
     fetchImpl: options.ollamaFetch,
     signal: abort.signal,
     headersMs: resolveOllamaHeadersMs(options),
+    applyPatch: options.applyPatch,
     supportsReasoning: catalogRowSupportsReasoning(resolveCatalog(options), compactModel),
   });
   if (isOllamaReject(forwarded)) {
@@ -635,9 +672,14 @@ async function handleOllamaSummaryCompact(
   });
   if (abort.signal.aborted) return;
   if (upstream.status < 200 || upstream.status >= 300) {
-    const message = ollamaSummarizerHttpError(upstream.status, raw);
-    console.error(`[cob] ${message}`);
-    jsonError(res, 502, "ollama_compaction_failed", message, { requires_full_context: true });
+    console.error(formatOllamaSummarizerHttpError(upstream.status, raw, Date.now() - compactStarted));
+    jsonError(
+      res,
+      502,
+      "ollama_compaction_failed",
+      "Ollama summarizer request failed; resend the full context.",
+      { requires_full_context: true },
+    );
     return;
   }
   let summarizerResponse: JsonObject | undefined;
@@ -750,19 +792,20 @@ function logOllamaCompactOk(opts: {
   );
 }
 
-function ollamaSummarizerHttpError(status: number, raw: Buffer): string {
-  const prefix = `Ollama summarizer returned HTTP ${status}`;
-  try {
-    const parsed: unknown = JSON.parse(raw.toString("utf8"));
-    const message =
-      isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string"
-        ? parsed.error.message.trim()
-        : "";
-    if (message.length === 0) return prefix;
-    return `${prefix}: ${message.length > 400 ? `${message.slice(0, 400)}…` : message}`;
-  } catch {
-    return prefix;
-  }
+function formatOllamaSummarizerHttpError(status: number, raw: Buffer, latencyMs: number): string {
+  return [
+    "[cob] ollama compact failed",
+    "code=ollama_compaction_failed",
+    `status=${status}`,
+    `body_bytes=${raw.length}`,
+    `body_sha=${createHash("sha256").update(raw).digest("hex").slice(0, 8)}`,
+    `latency_ms=${latencyMs}`,
+  ].join(" ");
+}
+
+function sanitizeLogToken(value: string): string {
+  const cleaned = value.replace(/[\r\n\u0000]+/g, " ").trim();
+  return cleaned.length > 0 ? cleaned : "-";
 }
 
 async function parseSummarizerResponse(upstream: Response, raw: Buffer): Promise<JsonObject | undefined> {
@@ -861,7 +904,13 @@ async function prepareOllamaContinuation(
     baseHistory = resolved.history;
   }
   const requestInput = originalPayload.input;
-  const requestInputProjection = projectOllamaInputValue(requestInput);
+  // `payload` is the provider-bound form produced by prepareOllamaPayload.
+  // Keep originalPayload for checkpoint/audit metadata, but derive the
+  // provider projection from the already-sanitized input. Otherwise a
+  // provider rewrite (for example Gate 1-3's agent_message -> user message)
+  // is silently discarded here when the continuation is assembled.
+  const sourceInput = payload.input !== undefined ? payload.input : requestInput;
+  const requestInputProjection = projectOllamaInputValue(sourceInput);
   const pending = createStateHistoryItems(requestInputProjection, "cob-pending-request", "request");
   const replayHistory = mergeStateHistory(baseHistory, pending);
   const next: JsonObject = { ...payload };
@@ -1409,6 +1458,141 @@ async function relay(
   });
 }
 
+/**
+ * Gate 1-3's response boundary. The normal native path above remains a raw
+ * relay; this function is only reachable after the request-side alias shim
+ * has been accepted for the exact Sol schema fingerprint.
+ */
+async function relayNativePlaintextSpawn(
+  upstream: Response,
+  res: ServerResponse,
+  abort: AbortController,
+  options: GatewayOptions,
+  context: NativePlaintextSpawnContext,
+): Promise<void> {
+  const contentType = upstream.headers.get("content-type") ?? "";
+  if (upstream.status >= 200 && upstream.status < 300 && contentType.includes("text/event-stream")) {
+    res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
+    if (!upstream.body) {
+      res.write(sseErrorTerminal("native plaintext spawn stream was empty"));
+      res.end();
+      return;
+    }
+    const nodeStream = Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream);
+    abort.signal.addEventListener("abort", () => nodeStream.destroy(), { once: true });
+    await relayTransformed(
+      nodeStream,
+      nativePlaintextSpawnSseTransform(context),
+      res,
+      {
+        idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
+        abort,
+        endResponse: true,
+      },
+    );
+    return;
+  }
+
+  const raw = await readLimitedResponse(upstream, MAX_UPSTREAM_BODY_BYTES, {
+    idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
+    signal: abort.signal,
+  });
+  if (upstream.status < 200 || upstream.status >= 300) {
+    res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
+    res.end(raw);
+    return;
+  }
+
+  // Some native Responses deployments return SSE framing without a
+  // content-type header. Keep this recognition deliberately narrower than a
+  // generic "not JSON" fallback: only the existing data:/event: framing is
+  // eligible for the Gate 1-3 response mapper. Invalid JSON without that
+  // framing must continue through the JSON diagnostic path below.
+  if (looksLikeSse(raw)) {
+    const observation = observeNativePlaintextSpawnResponse(
+      raw,
+      upstream.status,
+      contentType,
+    );
+    let mapped: Buffer;
+    try {
+      mapped = await collectSseTransform(raw, nativePlaintextSpawnSseTransform(context));
+    } catch (error) {
+      const failure = nativePlaintextSpawnError(error, observation.diagnostic);
+      console.error(formatNativePlaintextSpawnResponseDiagnostic(failure.body.error.diagnostics!));
+      json(res, failure.status, failure.body);
+      return;
+    }
+    const headers = copyUpstreamHeaders(upstream);
+    headers["content-type"] = "text/event-stream";
+    headers["content-length"] = String(mapped.length);
+    res.writeHead(upstream.status, headers);
+    res.end(mapped);
+    return;
+  }
+
+  const observation = observeNativePlaintextSpawnResponse(
+    raw,
+    upstream.status,
+    contentType,
+  );
+  if (!("value" in observation)) {
+    const failure = nativePlaintextSpawnError(
+      new NativePlaintextSpawnError(
+        "native_plaintext_spawn_response_invalid_json",
+        "native plaintext spawn response was not valid JSON",
+      ),
+      observation.diagnostic,
+    );
+    console.error(formatNativePlaintextSpawnResponseDiagnostic(failure.body.error.diagnostics!));
+    json(res, failure.status, failure.body);
+    return;
+  }
+  const parsed = observation.value;
+  if (!isRecord(parsed)) {
+    const failure = nativePlaintextSpawnError(
+      new NativePlaintextSpawnError(
+        Array.isArray(parsed)
+          ? "native_plaintext_spawn_response_top_level_array"
+          : "native_plaintext_spawn_response_top_level_scalar",
+        "native plaintext spawn response was not an object",
+      ),
+      observation.diagnostic,
+    );
+    console.error(formatNativePlaintextSpawnResponseDiagnostic(failure.body.error.diagnostics!));
+    json(res, failure.status, failure.body);
+    return;
+  }
+  let mapped: unknown;
+  try {
+    mapped = mapNativePlaintextSpawnJson(parsed, context);
+  } catch (error) {
+    const failure = nativePlaintextSpawnError(error, observation.diagnostic);
+    console.error(formatNativePlaintextSpawnResponseDiagnostic(failure.body.error.diagnostics!));
+    json(res, failure.status, failure.body);
+    return;
+  }
+  const body = Buffer.from(JSON.stringify(mapped), "utf8");
+  const headers = copyUpstreamHeaders(upstream);
+  headers["content-type"] = "application/json";
+  headers["content-length"] = String(body.length);
+  res.writeHead(upstream.status, headers);
+  res.end(body);
+}
+
+function encodeNativePayload(originalBody: Buffer, payload: JsonObject): Buffer {
+  try {
+    const original: unknown = JSON.parse(originalBody.toString("utf8"));
+    if (isRecord(original) && original.type === "response.create") {
+      return Buffer.from(JSON.stringify({ type: "response.create", ...payload }), "utf8");
+    }
+  } catch {
+    // parseResponsesJson already validated this body; retain a deterministic
+    // fallback for direct callers that use a custom decoded body.
+  }
+  return Buffer.from(JSON.stringify(payload), "utf8");
+}
+
 async function relayOllama(
   upstream: Response,
   res: ServerResponse,
@@ -1493,19 +1677,34 @@ async function relayOllama(
   try {
     parsed = JSON.parse(raw.toString("utf8"));
   } catch {
-    res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
-    res.end(raw);
+    // A successful Ollama response is still an API response that cob must
+    // validate before relaying.  Never forward an opaque 2xx body: it could
+    // be provider text, an HTML error page, or an untrusted tool dialect.
+    jsonError(
+      res,
+      502,
+      "ollama_response_invalid_json",
+      "Ollama returned an invalid JSON response; resend the full context.",
+    );
     return;
   }
   const failure = guardOllamaJsonResponse(parsed, declaration);
   if (failure) {
-    console.error(formatOllamaGuardLog(failure, declaration));
-    const body = Buffer.from(JSON.stringify(ollamaGuardHttpBody(failure)), "utf8");
-    res.writeHead(502, {
-      "content-type": "application/json",
-      "content-length": body.length,
-    });
-    res.end(body);
+    rejectOllamaJsonGuard(res, failure, declaration);
+    return;
+  }
+  let publicBody: Buffer;
+  try {
+    const normalized = normalizeOllamaResponse(parsed, catalogModel, bridge, declaration.applyPatch);
+    publicBody = Buffer.from(JSON.stringify(normalized), "utf8");
+  } catch (error) {
+    if (error instanceof UpstreamLimitError) throw error;
+    if (error instanceof ConversationStateError) throw error;
+    rejectOllamaJsonNormalize(res, declaration);
+    return;
+  }
+  if (declaration.applyPatch && publicBody.includes(COB_APPLY_PATCH_ALIAS)) {
+    rejectOllamaJsonNormalize(res, declaration);
     return;
   }
   try {
@@ -1514,18 +1713,42 @@ async function relayOllama(
     if (candidate) {
       await publishOllamaCheckpoint(context, candidate);
     }
-    const normalized = normalizeOllamaResponse(parsed, catalogModel, bridge);
-    const body = Buffer.from(JSON.stringify(normalized), "utf8");
-    const headers = copyUpstreamHeaders(upstream);
-    headers["content-type"] = "application/json";
-    res.writeHead(upstream.status, headers);
-    res.end(body);
   } catch (error) {
     if (error instanceof UpstreamLimitError) throw error;
     if (error instanceof ConversationStateError) throw error;
-    res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
-    res.end(raw);
+    rejectOllamaJsonNormalize(res, declaration);
+    return;
   }
+  const headers = copyUpstreamHeaders(upstream);
+  headers["content-type"] = "application/json";
+  res.writeHead(upstream.status, headers);
+  res.end(publicBody);
+}
+
+function rejectOllamaJsonGuard(
+  res: ServerResponse,
+  failure: OllamaGuardFailure,
+  declaration: OllamaToolDeclaration,
+): void {
+  console.error(formatOllamaGuardLog(failure, declaration));
+  const body = Buffer.from(JSON.stringify(ollamaGuardHttpBody(failure)), "utf8");
+  res.writeHead(502, {
+    "content-type": "application/json",
+    "content-length": body.length,
+  });
+  res.end(body);
+}
+
+function rejectOllamaJsonNormalize(res: ServerResponse, declaration: OllamaToolDeclaration): void {
+  console.error(
+    `[cob] ollama json rejected code=${OLLAMA_DIALECT.response.invalidResponse} declared_n=${declaration.count} declared_sha=${declaration.sha8}`,
+  );
+  jsonError(
+    res,
+    502,
+    OLLAMA_DIALECT.response.invalidResponse,
+    "Ollama returned an invalid response; resend the full context.",
+  );
 }
 
 function resolveNativeHeadersMs(options: GatewayOptions): number {

@@ -4,12 +4,30 @@ Live ChatGPT Desktop and daily `codex --profile cob` run the **globally
 installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
-Current state (2026-08-24): live global is **0.1.12** on `:18790` after an
-authorized install of the exact tarball SHA-256
-`684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`.
-A live two-turn Ollama smoke through that listener passed. Do not repack
-0.1.11 or 0.1.12 under the same version. G11–G17 remain blocked/partial/unrun
-except that short smoke.
+Current state (2026-08-24): live global is **0.1.13** on `:18790` (pid **35004**)
+after an authorized install of the exact tarball SHA-256
+`81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`.
+Health, overlay, and provenance are `ok`/`fresh`. Install-time root SHA was
+`70b10957…`; Desktop/user rewrites later established `d24f79f…` for the live
+closeout gates and current baseline `b976c134…` before Gate 1-5. cob did not
+make either rewrite; the corresponding gates preserved their baselines and
+catalog SHA `9748309e…`. Do not repack 0.1.11, 0.1.12, or 0.1.13. G11 passed; G12
+default-on passed on 0.1.12 and the affected false rollback passed on exact
+global 0.1.13. G14 long-cloud/continuation/abort and G17 same-corpus acceptance
+also passed on 0.1.13. G13 is cloud-partial, G15 is WP5A-only, and G16 is
+isolated-pass.
+
+Source checkpoint `e932eb19c551fbda96dc83fe7fe34840afff2371` reproduces the
+0.1.12 production JS byte-for-byte against that tarball. PATH Codex is 0.149.0,
+catalog provenance is fresh, and host-network `cob status` is `ok` on pid 35004.
+No tag, push, npm publish, or repack accompanied the checkpoint.
+
+Live **0.1.13** is that namespace-qualified tool-identity fix. Merge gate,
+isolated real MCP + V1 rollback, and tarball inspection passed before the
+authorized global install. The affected rollback was then repeated against
+the exact global artifact and passed with zero promotions/aliases. G14 and
+G17 also closed without a code change. No commit, tag, push, or publish
+accompanied the cut or closeout.
 
 ## Two homes
 
@@ -54,8 +72,8 @@ Desktop keeps talking to whatever process already bound that port.
 # From the checkout, if a workspace cob still owns ~/.codex:
 node dist/cli.js stop --live-home
 
-npm install -g ./codex-ollama-bridge-0.1.12.tgz   # only after explicit live authorization
-cob version    # expect: cob 0.1.12 (global)
+npm install -g ./codex-ollama-bridge-0.1.13.tgz   # only after explicit live authorization
+cob version    # expect: cob 0.1.13 (global)
 cob start
 cob status     # health/overlay ok; provenance fresh, or explained fail-closed skew
 ```

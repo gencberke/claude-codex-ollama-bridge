@@ -99,6 +99,26 @@ describe("ollama child capability profile", () => {
     assert.equal(fields.supports_search_tool, true);
   });
 
+  it("advertises only cob-owned freeform apply_patch when explicitly enabled", () => {
+    const off = ollamaChildCatalogFields({
+      evidence: { tools: true, thinking: true, vision: false },
+      skeleton: {},
+      contextWindow: 1024,
+    });
+    assert.equal("apply_patch_tool_type" in off, false);
+    const on = ollamaChildCatalogFields({
+      evidence: { tools: true, thinking: true, vision: false },
+      skeleton: {},
+      contextWindow: 1024,
+      applyPatch: true,
+    });
+    assert.equal(on.apply_patch_tool_type, "freeform");
+    assert.equal(on.shell_type, "disabled");
+    assert.equal(on.multi_agent_version, "v1");
+    assert.equal("tool_mode" in on, false);
+    assert.equal(ollamaChildProfile({ tools: true, thinking: true, vision: false }, { supportsApplyPatch: true }).supportsApplyPatch, true);
+  });
+
   it("splits max from active and omits auto_compact_token_limit unless the skeleton already has it", () => {
     const without = ollamaChildCatalogFields({
       evidence: { tools: true, thinking: true, vision: false },

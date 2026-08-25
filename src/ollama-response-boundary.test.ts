@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
-import { isOllamaReject, ollamaSseTransform, prepareOllamaWire } from "./ollama.js";
+import {
+  isOllamaReject,
+  normalizeOllamaResponse,
+  ollamaSseTransform,
+  prepareOllamaWire,
+} from "./ollama.js";
 import {
   collectOllamaWireToolNames,
   declareOllamaWireTools,
@@ -63,10 +68,93 @@ describe("Ollama final tool declaration", () => {
       { type: "namespace", name: "ignored", tools: [{ type: "function", name: "nested" }] },
       { type: "function", function: { name: "apply_patch" } },
     ]);
-    assert.deepEqual([...declaration.names], ["exec_command", "nested", "apply_patch"]);
+    assert.deepEqual([...declaration.names], ["exec_command", "ignored.nested", "apply_patch"]);
     assert.equal(declaration.count, 3);
     assert.equal(declaration.sha8.length, 8);
     assert.equal(collectOllamaWireToolNames("not-an-array").length, 0);
+  });
+
+  it("matches Ollama's recursive dot qualification for namespace tools", () => {
+    const declaration = declarationOf([
+      {
+        type: "namespace",
+        name: "mcp__codex_apps__github",
+        tools: [{ type: "function", name: "_get_repo" }],
+      },
+      {
+        type: "namespace",
+        name: "outer",
+        tools: [
+          {
+            type: "namespace",
+            name: "inner",
+            tools: [
+              { type: "function", name: "leaf" },
+              { type: "function", name: "inner.prequalified" },
+            ],
+          },
+        ],
+      },
+    ]);
+    assert.deepEqual(
+      [...declaration.names],
+      [
+        "mcp__codex_apps__github._get_repo",
+        "outer.inner.leaf",
+        "outer.inner.prequalified",
+      ],
+    );
+    assert.equal(
+      guardOllamaJsonResponse(
+        jsonResponse([functionCall("mcp__codex_apps__github._get_repo")]),
+        declaration,
+      ),
+      undefined,
+    );
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("_get_repo")]), declaration)?.code,
+      "ollama_undeclared_tool_call",
+    );
+  });
+
+  it("guards the Ollama-qualified name and restores the Codex namespace identity", () => {
+    const wire = prepareOllamaWire({
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      tools: [
+        {
+          type: "namespace",
+          name: "mcp__codex_apps__github",
+          tools: [
+            {
+              type: "function",
+              name: "_get_repo",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      ],
+      input: "inspect",
+    });
+    assert.equal(isOllamaReject(wire), false);
+    if (isOllamaReject(wire)) throw new Error("expected wire");
+    const response = jsonResponse([
+      functionCall("mcp__codex_apps__github._get_repo", { arguments: "{}" }),
+    ]);
+    assert.equal(guardOllamaJsonResponse(response, wire.declaration), undefined);
+    const restored = normalizeOllamaResponse(
+      response,
+      "ollama/deepseek-v4-flash:0731-cloud",
+      wire.bridge,
+    ) as JsonObject;
+    assert.deepEqual(restored.output, [
+      {
+        type: "function_call",
+        name: "_get_repo",
+        namespace: "mcp__codex_apps__github",
+        call_id: "c1",
+        arguments: "{}",
+      },
+    ]);
   });
 
   it("authorizes no client-executed call when the outbound catalog is empty", () => {

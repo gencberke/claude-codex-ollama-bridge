@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { collectOllamaWireToolNames } from "./ollama-response-boundary.js";
 import { jsonUtf8Bytes, sha256Hex8 } from "./request-metrics.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
@@ -92,18 +93,19 @@ export function applyDeferredToolsToOllama(
   const bridge = emptyToolSearchBridge();
   const leafCap = options.leafCap ?? PROMOTED_LEAF_CAP;
   const bytesCap = options.bytesCap ?? PROMOTED_BYTES_CAP;
-  const usedAliases = collectUsedFunctionAliases(payload.input);
+  registerNamespacedWireTools(payload.tools, bridge);
+  const usedAliases = collectUsedFunctionAliases(payload.input, bridge);
   let promotion: PromotionResult = { appendedAliases: [], candidateAliases: new Set() };
   if (requestHasToolSearchDefinition(payload.tools)) {
     promotion = promoteSearchOutputLeaves(payload, bridge, leafCap, bytesCap);
-    flattenNamespacedHistoryCalls(payload, bridge);
   }
+  flattenNamespacedHistoryCalls(payload, bridge);
   if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(rewriteToolDefinition);
   if (Array.isArray(payload.input)) payload.input = payload.input.map(rewriteHistoryItemToOllama);
   recordAliasMetrics(
     bridge,
     promotion,
-    Array.isArray(payload.tools) ? existingFunctionNames(payload.tools) : new Set(),
+    new Set(collectOllamaWireToolNames(payload.tools)),
     usedAliases,
   );
   if (Array.isArray(payload.output)) payload.output = payload.output.map(rewriteHistoryItemToOllama);
@@ -310,7 +312,7 @@ function flattenHistoryFunctionCall(item: unknown, bridge: ToolSearchBridge): un
   if (!isRecord(item) || !isFunctionCallItem(item)) return item;
   const identity = functionCallIdentity(item);
   if (!identity?.namespace) return item;
-  const alias = canonicalAlias(identity.namespace, identity.name);
+  const alias = existingWireName(bridge, identity) ?? canonicalAlias(identity.namespace, identity.name);
   const existing = bridge.aliases.get(alias);
   if (existing && identityKey(existing) !== identityKey(identity)) {
     bridge.collisions += 1;
@@ -318,6 +320,74 @@ function flattenHistoryFunctionCall(item: unknown, bridge: ToolSearchBridge): un
   }
   if (!existing) bridge.aliases.set(alias, identity);
   return applyAliasToFunctionCall(item, alias);
+}
+
+/**
+ * Ollama 0.32.15 expands Responses `namespace` tools to dot-qualified names
+ * before model execution. Remember that wire identity so the response can be
+ * restored to Codex's separate name/namespace representation.
+ */
+function registerNamespacedWireTools(
+  tools: unknown,
+  bridge: ToolSearchBridge,
+): void {
+  for (const { wireName, identity } of collectNamespacedWireTools(tools)) {
+    const existing = bridge.aliases.get(wireName);
+    if (existing && identityKey(existing) !== identityKey(identity)) {
+      bridge.collisions += 1;
+      continue;
+    }
+    if (!existing) bridge.aliases.set(wireName, identity);
+  }
+}
+
+type NamespacedWireTool = {
+  wireName: string;
+  identity: DeferredToolIdentity;
+};
+
+function collectNamespacedWireTools(
+  tools: unknown,
+  namespaceParts: string[] = [],
+): NamespacedWireTool[] {
+  if (!Array.isArray(tools)) return [];
+  const entries: NamespacedWireTool[] = [];
+  for (const tool of tools) {
+    if (!isRecord(tool)) continue;
+    if (tool.type === "namespace" && Array.isArray(tool.tools)) {
+      const own = optionalNamespace(tool.name);
+      const childParts = own ? [...namespaceParts, own] : namespaceParts;
+      const nested = collectNamespacedWireTools(tool.tools, childParts);
+      entries.push(...nested.map((entry) => ({
+        ...entry,
+        wireName: own ? qualifyOllamaNamespaceName(own, entry.wireName) : entry.wireName,
+      })));
+      continue;
+    }
+    const name = functionName(tool);
+    if (!name || namespaceParts.length === 0) continue;
+    entries.push({
+      wireName: name,
+      identity: { name, namespace: namespaceParts.join(".") },
+    });
+  }
+  return entries;
+}
+
+function existingWireName(
+  bridge: ToolSearchBridge,
+  identity: DeferredToolIdentity,
+): string | undefined {
+  const key = identityKey(identity);
+  for (const [wireName, mapped] of bridge.aliases) {
+    if (identityKey(mapped) === key) return wireName;
+  }
+  return undefined;
+}
+
+function qualifyOllamaNamespaceName(namespace: string, name: string): string {
+  const prefix = `${namespace}.`;
+  return name.startsWith(prefix) ? name : `${prefix}${name}`;
 }
 
 function collectSearchCallIds(input: unknown[]): Set<string> {
@@ -428,14 +498,14 @@ function existingFunctionNames(tools: unknown[]): Set<string> {
   return names;
 }
 
-function collectUsedFunctionAliases(input: unknown): UsedFunctionAlias[] {
+function collectUsedFunctionAliases(input: unknown, bridge: ToolSearchBridge): UsedFunctionAlias[] {
   const used = new Map<string, boolean>();
   if (!Array.isArray(input)) return [];
   for (const item of input) {
     if (!isRecord(item) || !isFunctionCallItem(item)) continue;
     const identity = functionCallIdentity(item);
     if (!identity || (identity.name === TOOL_SEARCH_NAME && identity.namespace === undefined)) continue;
-    const alias = canonicalAlias(identity.namespace, identity.name);
+    const alias = existingWireName(bridge, identity) ?? canonicalAlias(identity.namespace, identity.name);
     used.set(alias, (used.get(alias) ?? false) || identity.namespace !== undefined);
   }
   return [...used.entries()].map(([alias, namespaced]) => ({ alias, namespaced }));

@@ -58,8 +58,17 @@ inferred from Codex UI text.
 | G17 | Same 0731 long-task corpus across the default compact policy and each isolated effort/context toggle; record quality, latency, sizes, section flags, and continuation | A toggle becomes default from shrink alone, or quality/cost regresses |
 | G18 | Installed cob serves a real `web.run` through exact `POST /v1/alpha/search`; gateway log is content/auth-free, result is usable, no search request reaches Ollama, and root-config SHA is unchanged | Unsupported path, generic proxying, Ollama fallback, secret/query logging, rewritten body/model, or root config mutation |
 | G19 | Packed post-0.1.9 cob validates Ollama client tool calls against the exact final outbound catalog for JSON, SSE, terminal-only, direct, `tool_search`, V1, and MCP lanes; rejected turns publish no checkpoint | Unknown/invalid call reaches Codex, a false-positive blocks a declared alias, failure is followed by completed, logs leak content, or rejected state becomes continuable |
+| G20 (Gate 5) | In an isolated, explicit opt-in, a real 0731 child receives the declared freeform patch capability, emits a Codex-facing `custom_tool_call(name="apply_patch")` plus matching output, and changes the fixture without a shell write | No custom call/output pair, parent-applied patch, `exec_command`/temporary patch binary/heredoc write, capability on a native/non-spawn/live row, shell enabled, or patch/alias/content leakage |
+| G21 (Gate 6) | One isolated 0731 child receives two `send_message` payloads while still active, then two `followup_task` turns after idle/completed, all in one session/id with nonce order preserved | Second spawn, send after the child already completed, wait between the two active sends, duplicate/lost/wrong-id delivery, or Sol `GATE6_PASS` without those child-session rows |
+| G21-H (Gate 6-H) | Workspace `npm run gate6h` watches parent/child rollout JSONL; two same-turn `send_message` calls with no wait/list/final between them, then two idle `followup_task` rows on one 0731 child | `controller_sequencing_fail` (wait/list/final before send2); three such fails record `controller_sequencing_observed` and `transport_unmeasured`. Do not add a cob queue or open Gate 7–10 |
 
-Ollama child catalog rows advertise `shell_type=disabled` and no `apply_patch`.
+Ollama child catalog rows advertise `shell_type=disabled` and no
+`apply_patch_tool_type` by default. The isolated Gate 5 opt-in may add the
+cob-owned `freeform` alias only to configured spawn rows; it does not enable
+shell writes or change the V1 child contract. G20 passed in the isolated
+2026-08-24 canary: the child session contains one native custom patch
+call/output pair and only read-only shell checks; the live gateway, root
+overlay, and live catalog were unchanged.
 Record what Codex **actually** puts in the child `tools` array (G10). If the
 child has no tools, R/W is a parent-tool success plus a correct child artifact;
 do not pretend the Ollama model wrote the file.
@@ -196,13 +205,13 @@ once the 8k path is green. Do not tune cob from mock timings.
 
 ## G11 — catalog provenance
 
-**Status — BLOCKED/PARTIAL (live 0.1.11, 2026-08-24):** controlled sidecar
-schema-v2, retained last-good catalog, stale/unknown/missing-sidecar status,
-no-Codex-spawn, and foreground/detached rollback lanes passed. Live `cob sync`
-failed closed because PATH Codex 0.147 rejected the Desktop 0.149 candidate
-near `supports_parallel_tool_calls`; therefore successful regeneration plus
-Desktop picker/native/Ollama routing was not claimed. Root config SHA stayed
-`6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
+**Status — PASS (live 0.1.12, 2026-08-24):** PATH and Desktop 0.149 validate
+the same unchanged catalog; provenance is fresh. After a full Desktop reopen,
+picker, native luna wire, and Ollama 0731 wire passed. An isolated mutation of
+only a recorded validator `mtime_ms` changed `cob: ok` to `cob: stale`, exit 1,
+without executing the marker Codex binary. Live root config SHA
+`70b109578a83de533fa40e433efb5a4a08892cd675e62a18adbda8f2cf22e776`
+and catalog SHA `9748309e…` remained unchanged.
 
 Live-home only after explicit authorization. Snapshot the user-owned root
 `config.toml` SHA first. Use the packed global tarball, not `dist/cli.js`.
@@ -229,11 +238,18 @@ contents. Aggregate token counts are allowed.
 
 ## G12 — search default
 
-**Status — BLOCKED (live 0.1.11, 2026-08-24):** the required full Desktop
-quit/reopen and valid three-turn deferred MCP + V1 function-execution sequence
-were not completed. `supports_search_tool=true` remained configured and the
-explicit-false rollback was not credited. G18 hosted search is a different
-route and does not satisfy this gate.
+**Status — PASS (2026-08-24):** live 0.1.12
+completed the deferred GitHub MCP + V1 child sequence with 14 promoted aliases,
+stable alias hash, and zero missing used aliases. The isolated explicit-false
+control exposed a real 0.1.12 namespace mismatch in the WP8 guard. Workspace
+0.1.13 fixes Ollama's dot-qualified namespace wire names and completed the same
+real MCP + V1 rollback with no promotion and zero missing aliases. The affected
+rollback was then retraced using exact global 0.1.13 on isolated `:18791`: one
+read-only GitHub MCP leaf and one V1 0731 child completed, all main/child wire
+lines reported `promoted_n=0`, `alias_sha=-`, zero alias mutation/missing-use,
+and no guard/upstream error. Root `d24f79…` and catalog `9748309e…` were
+unchanged and the dev listener was stopped.
+G18 hosted search is a different route and does not satisfy this gate.
 
 On the same packed build as G11, after Desktop quit-and-reopen:
 
@@ -264,7 +280,7 @@ is logged.
 
 ## G14 — Timeouts and backpressure
 
-**Status — PARTIAL/FIX VERIFIED (0.1.11 live diagnosis; packed isolated 0.1.12,
+**Status — PASS (0.1.11 diagnosis; 0.1.12 fix; global 0.1.13 closeout,
 2026-08-24):** controlled lanes passed: native headers timeout 504 at ~30.0s,
 Ollama headers at ~31.0s succeeded under its 240s route deadline, quiet-stream
 and scaled idle classification were correct, client disconnect aborted
@@ -277,8 +293,12 @@ accepted that terminal envelope, checkpointed before one client `[DONE]`,
 promoted archived string shorthand for `input[]`, and completed the real
 follow-up (HTTP 200); Ollama access-log delta was 2 and checkpoints 1→2.
 The same two-turn smoke later passed on live global 0.1.12 `:18790`
-(checkpoints 6→8, access-log 295→297). The full long-cloud gate remains
-pending.
+(checkpoints 6→8, access-log 295→297). On exact global 0.1.13, a finite
+20-check high-reasoning cloud stream completed in 10.731s: headers/first event
+961/962ms, maximum inter-event gap 270ms, one completed event, one client
+`[DONE]`, and usage 582/2981. Continuation completed in 710ms with usage
+600/22. A separate abort received its first chunk, left `/health` green, and
+published no state file (21→21). Root/catalog hashes were unchanged.
 
 Use a controlled loopback upstream to delay response headers past 30
 seconds, then run a long cloud reasoning turn and a stream with a
@@ -323,9 +343,27 @@ contents. If there is no measurable live claim, mark G15 not applicable.
 
 ## G17 — compact quality / context policy
 
-**Status — NOT RUN (2026-08-24):** no same-corpus comparison was completed.
-The default remains omitted effort → wire `high`, 256k active context, no cloud
-max advertisement, and no `auto_compact_token_limit`.
+**Status — PASS WITH NO DEFAULT CHANGE (global 0.1.13 artifact, isolated homes,
+2026-08-24):** every executed lane used the same 134-item, 51,671-byte corpus
+(SHA-256 `554c6ece4cdd13fba93e28be323fdc4ba89f23fe51b97ba90060ab41426361a9`),
+produced all seven required handoff sections, and retained both exact
+constraint/pending-work checks across two continuations.
+
+| Variant | Compact latency | Summary bytes | Compact tokens in/out | First/second Ollama wire | Disposition |
+| --- | ---: | ---: | ---: | ---: | --- |
+| baseline, omitted → high | 3297ms | 830 | 13896/561 | 1167/1821 B | PASS; shipped default |
+| `low` | 4703ms | 852 | 13817/1131 | 1173/1912 B | REJECT; slower and ~2× output |
+| `none` | 1488ms | 780 | 13817/225 | 1117/1701 B | PASS; isolated opt-in candidate |
+| cloud max, high | 2040ms | 815 | 13896/456 | 1136/1794 B | Schema/quality PASS; presentation opt-in only |
+
+Cloud-max generation was accepted by Desktop 0.149-alpha and PATH 0.149 with
+`context_window=256000` and `max_context_window=1048576`. Candidate D was not
+run: both current native skeletons omit `auto_compact_token_limit`, so cob's
+capability guard correctly omitted the requested `230400` field. The default
+therefore remains omitted effort → wire `high`, active 256k, cloud max off,
+and auto-limit omitted. A future default change for `none` needs a broader
+quality corpus and a separately authorized release; this gate alone does not
+mutate 0.1.13 policy.
 
 Same long-task 0731 corpus for baseline and candidate. Do not claim G17 from
 the G8 shrink alone. Isolated Stages 3–4 stay off the live default until this
@@ -477,6 +515,127 @@ Pass requires every negative control to fail for its intended stable code,
 every declared lane to pass without false positives, and zero checkpoint
 publication for rejected turns. A green unit suite alone is not G19; a real
 declared tool call alone does not prove the rejection boundary.
+
+## G20 / Gate 5 — isolated child-native apply_patch
+
+This gate is default-off and may run only with `cob start --dev` plus an
+explicit `[catalog] apply_patch = true` in the isolated home. Before starting,
+record the root-config and live-catalog SHA values; after stopping, prove they
+are unchanged and restore the dev policy bytes.
+
+The configured Ollama spawn row must advertise
+`apply_patch_tool_type="freeform"`, `shell_type="disabled"`, and
+`multi_agent_version="v1"`. Other Ollama rows receive no patch field and
+native rows remain byte-for-byte native. On the wire, Ollama sees only cob's
+declared function alias. Codex sees a custom `apply_patch` call and matching
+custom output. Malformed/undeclared calls, alias collisions, encrypted fields,
+and invalid history fail closed; diagnostics contain no tool name, alias,
+patch body, nonce, heredoc, or output.
+
+Gold requires structural child-session evidence and a real filesystem effect:
+
+1. The child emits exactly one completed Codex-facing custom patch call and
+   one output with the same call id.
+2. The child uses no `exec_command` write, temporary patch binary, heredoc, or
+   parent-applied patch. Read-only pre/post inspection is allowed and recorded.
+3. The fixture's expected bytes and inode prove the in-place edit; model text
+   such as `GATE5_PASS` is corroboration only.
+4. The parent only spawns, waits, and verifies; it does not repair the result.
+5. Dev `:18791` is stopped and the fixture/dev opt-in are cleaned up. No pack,
+   install, Desktop hop, root-config write, or live `:18790` change occurs.
+
+The 2026-08-24 run passed these checks. It does not close repeated messaging,
+worktree, nested V2, replay/compact/restart, or Desktop gates.
+
+## G21 / Gate 6 — isolated same-child message queue
+
+This gate reuses the default-off `[experimental] native_plaintext_spawn`
+fingerprint. It does not enable `[catalog] apply_patch`. Run only with
+`cob start --dev`. Record live root-config and catalog SHA values first.
+
+Gold is structural, not Sol text:
+
+1. Exactly one `collaboration.spawn_agent` and one child session/id.
+2. Two `collaboration.send_message` calls on that id with no `wait_agent`
+   between them, issued while the child is still running; the child session
+   records two `Message Type: MESSAGE` rows before any `FINAL_ANSWER`.
+3. After that child is completed/idle, two separate `followup_task` calls on
+   the same id, each with its own nonce, processed in order.
+4. Child `agent_message` order is spawn task, send1, send2, follow1, follow2
+   with exact nonce/Unicode fidelity. Duplicate, lost, overflow, or wrong
+   child id fails.
+5. Dev `:18791` is stopped afterward. No pack, install, Desktop hop, or live
+   `:18790` / root-config change.
+
+The 2026-08-24 canaries failed step 2: Sol inserted `wait_agent` after the
+first send, and the 0731 child `FINAL_ANSWER`ed after `SEND1`. A first-pass
+parent did eventually issue send2 plus two follow-ups onto the same child
+session in nonce order, but send2 was not an active-child queue. Retry
+stopped after one send. Isolated Gate 7–10 canaries later ran 2026-08-25
+and are recorded below; they are not product gold.
+
+## G21-H / Gate 6-H — sequencing harness
+
+Workspace-only. Not packed. Does not change live `:18790` or add a cob queue.
+
+```bash
+npm run gate6h
+```
+
+The harness starts isolated `cob start --dev`, runs PATH Codex `exec` with
+`gpt-5.6-sol` and the same 0731 fixture (30s child tool window), and reduces
+rollout JSONL as a state machine. If `wait_agent`, `list_agents`, or a parent
+`final` appears before the second `send_message`, the attempt is killed as
+`controller_sequencing_fail`. The same fixture is retried at most three times.
+Isolated Gate 7–10 canaries are separate from this harness.
+
+- Pass: one spawn, two same-turn sends, wait, two follow-ups, child plaintext
+  order spawn → send1 → send2 → follow1 → follow2, nonce/Unicode fidelity.
+- Three sequencing fails: record `controller_sequencing_observed` plus
+  `transport_unmeasured` and wait for upstream portable V2 or a direct
+  collaboration driver. Do not implement a cob-side queue. Isolated Gate 7–10
+  canaries are recorded separately and are not this harness.
+- Any live root-config or live-catalog SHA change is a harness failure.
+
+The 2026-08-24 `npm run gate6h` cut recorded that blocked verdict after three
+`controller_sequencing_fail` attempts (wait, wait, then list_agents before
+send2). Live catalog SHA was unchanged; isolated `cob.toml` was restored.
+Root baseline for later work is `b6ec9273…` (Desktop/user rewrite; harness
+pre/post matched). Do not add a cob queue or a fourth Sol canary. Next is
+Upstream U1: a model-free Codex collaboration driver for
+`spawn → send1 → send2 → wait → followup1 → wait → followup2 → wait`.
+0.149 experimental app-server `ClientRequest` has no such method.
+
+## G22 / Gate 7 — isolated worktree + two native apply_patch
+
+Isolated `[catalog] apply_patch = true` only. Gold needs a distinct git
+worktree plus two child-native `apply_patch` edits. The 2026-08-25 canary
+failed `worktree_not_distinct`: two native patches landed in the parent
+repo cwd. That is not worktree gold.
+
+## G23 / Gate 8 — isolated gateway restart, same child
+
+Spawn one 0731 child, issue `wait_agent`, restart isolated cob (`stop --dev`
+then `start --dev`) while the child is still running, and prove the same
+child session completes. The 2026-08-25 `gate8b_replay` canary passed that
+mid-flight restart check. It is not L6 `previous_response_id` expand and
+not compact replay.
+
+## G24 / Gate 9 — isolated Ollama-thread compact + continuation
+
+Do not count live G8 as this gate. Gold needs a `compaction_trigger` on the
+0731 child, a cob summarizer handoff (`cob1.` Codex-facing, none on Ollama),
+and a continuation with `replay_ratio << 1`. The 2026-08-25 8k-catalog
+canary triggered compact but failed closed on
+`compaction_summary_incomplete` for the spawn turn; a later compact-ok
+follow-up did not make the parent wait succeed. Not live G8 gold.
+
+## G25 / Gate 10 — isolated nested V2 / child-originated spawn
+
+Ollama catalog rows stay `multi_agent_version=v1`. Gold would be a depth-2
+leaf child with a readable nested task. The 2026-08-25 canary failed closed:
+the 0731 child had no `collaboration.spawn_agent` tool (tool_search returned
+only GitHub). Do not advertise Ollama V2 to paper over this.
 
 ## What static tests are for
 

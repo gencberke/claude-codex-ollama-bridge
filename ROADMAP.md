@@ -1,11 +1,11 @@
-# Roadmap — implemented plan and remaining live gates
+# Roadmap — implemented plan and live disposition
 
 **Date:** 2026-08-24
-**Status:** WP1–WP8 are implemented; global 0.1.12 passed its authorized install and two-turn Ollama smoke, but the live listener was later found down; remaining G11–G17 lanes stay blocked/partial/unrun
-**Next:** preserve the uncommitted 0.1.9–0.1.12 source in a user-authorized checkpoint, recover the global listener before live work, align incompatible Codex consumers without repairing native rows, then rerun the remaining gates
+**Status:** WP1–WP8 are implemented; exact global 0.1.13 is live (pid 35004); G11, G12, G14, G17, G18, and G19 are closed at their documented evidence scope
+**Next:** retain the stable defaults; treat `ollama_effort = "none"` as an isolated opt-in candidate only, keep G13 local/G15/G16 limitations explicit, and revalidate after the next Desktop/Codex update
 
-This document records the implemented contract and the remaining live-proof
-queue. It replaces the earlier proposal list with decisions verified against
+This document records the implemented contract and live-proof disposition.
+It replaces the earlier proposal list with decisions verified against
 the current code, the current Codex Desktop/CLI installation, upstream
 documentation, and the 0.1.9 live cut.
 
@@ -122,19 +122,14 @@ Current packed candidate update (2026-08-24):
   published before one client `[DONE]`, promoted string history, and completed
   the HTTP-200 continuation; Ollama access-log delta 2, checkpoints 1→2.
   The same artifact was then installed globally and passed the authorized
-  two-turn smoke; its listener was later found down as recorded below.
+  two-turn smoke; host-network health remains `ok` after consumer alignment.
 
-Post-release review audit (2026-08-24):
+Post-release review and recovery audit (2026-08-24):
 
-- Git `HEAD` is still `64a0274` (the 0.1.8 checkpoint). The 0.1.9–0.1.12
-  source is present only in the dirty worktree: 35 tracked files are modified
-  and four source/test files are untracked. This is the largest verified
-  reproducibility risk. Exact 0.1.9, rejected 0.1.10, 0.1.11, and 0.1.12
-  tarballs are present locally with their recorded hashes; the contrary claim
-  that the later tarballs are absent is false. The next source-control action
-  requires explicit user authorization. Preserve the current 0.1.12 source
-  first; do not invent retroactive 0.1.9/0.1.11 source commits from production
-  tarballs that intentionally omit TypeScript and tests.
+- Git checkpoint `e932eb19c551fbda96dc83fe7fe34840afff2371` preserves the
+  complete 0.1.12 TypeScript, tests, and documentation. Its rebuilt production
+  JS matched tarball `684db47f…` byte-for-byte. Exact 0.1.9, rejected 0.1.10,
+  0.1.11, and 0.1.12 tarballs remain local. No tag, push, publish, or repack.
 - A read-only parser experiment confirmed the schema diagnosis behind live
   `cob status`: Desktop 0.149 emits native rows without
   `supports_parallel_tool_calls`, PATH 0.147 requires that field, and adding
@@ -143,33 +138,46 @@ Post-release review audit (2026-08-24):
   value. Native-row backfill therefore remains rejected; align the consumers
   instead. `unknown` remains exit 1 by design because catalog readiness is a
   different signal from `/health` and overlay readiness.
-- A later read-only recheck found global cob 0.1.12 still installed but
-  `:18790` closed; pid 21099 was stale and `/health` was unreachable. The
-  earlier install smoke remains valid historical evidence, not current
-  liveness. Recovery before further live gates is the documented global
-  `cob start`; do not use a workspace start against the live home.
+- PATH Codex was aligned to 0.149.0. Global sync regenerated the original
+  Desktop-produced candidate unchanged; both Desktop 0.149 alpha and PATH
+  0.149 validate it, provenance is fresh, and no native-row backfill was used.
+  After full Desktop quit/reopen the picker lists native and Ollama rows.
+  Host-network status is `ok`. The install-time root baseline was `70b10957…`;
+  later Desktop/user activity established current baseline `d24f79f…`; cob did
+  not make either rewrite during the closeout.
+- G11 then passed current native/Ollama wires and isolated validator-identity
+  stale/no-spawn proof. G12 default-on passed live 0.1.12. Its false rollback
+  exposed Ollama's namespace-qualified call identity; 0.1.13 fixes that exact
+  dialect edge and passed the real isolated MCP + V1 rollback. Merge gate is
+  344 tests (341 pass, 3 skip, 0 fail). Exact tarball SHA-256
+  `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72` is now
+  live global pid **35004**. The affected G12 rollback retrace later passed on
+  that exact global artifact with zero promotions or aliases.
 
-This version skew is not proof of a current picker failure. Live 0.1.12 makes
-the candidate producer and validator rejection explicit; the retained legacy
-catalog remains `unknown` until the consumers agree on its schema. Future skew
-is therefore reported rather than silently accepted.
+The resolved version skew was not proof of a picker failure. Live 0.1.12 made
+the producer/validator rejection explicit, then accepted the same unchanged
+candidate after PATH aligned to 0.149. Future skew is still reported rather
+than silently repaired.
 
 ## Code evidence map
 
 Isolated WP1–WP7 were packed in cob **0.1.8**; 0.1.9 added the audit fixes and
-0.1.11 added WP8. Global 0.1.12 is installed, although its listener was found
-down after the recorded live smoke. Gate disposition is evidence-specific:
+0.1.11 added WP8. Global 0.1.12 is installed and healthy; source checkpoint
+`e932eb1` preserves it. Gate disposition is evidence-specific:
 
 - Catalog producer/sidecar/status kinds are implemented (`catalog-provenance.ts`).
   Failed candidates are recorded redacted in the same versioned sidecar,
   missing catalogs are non-ready, and every recorded validator identity is
   checked without spawning Codex.
-  Live `cob status` can emit `stale` / `unknown`. G11 controlled lanes passed,
-  but successful live regeneration is blocked by PATH 0.147 vs Desktop 0.149
-  schema skew.
+  Live `cob status` can emit `stale` / `unknown`. Successful regeneration now
+  passes with PATH 0.149 and Desktop 0.149. G11 passed current native/Ollama
+  wires plus isolated identity-only stale/no-spawn proof.
 - Search defaults on; newest-first promotion is unchanged and turn-local alias
-  metrics now describe actual outbound mutations. G12 is blocked pending the
-  full Desktop restart and real deferred MCP/V1 function sequence.
+  metrics now describe actual outbound mutations. The default-on live G12
+  sequence passed. Its explicit-false rollback exposed Ollama's dot-qualified
+  namespace wire identity; live 0.1.13 now guards that exact name and
+  restores Codex namespace identity. Isolated and exact-global real MCP + V1
+  rollback traces passed.
 - Standalone `web.run` now has one exact native-only `/v1/alpha/search`
   compatibility route. This is not `supports_search_tool`; G18 passed on the
   packed global 0.1.9 build.
@@ -178,8 +186,8 @@ down after the recorded live smoke. Gate disposition is evidence-specific:
   low/high/max and deterministic error-boundary lanes passed; its local-model
   lane is unavailable because only cloud tags are installed.
 - Headers/idle/backpressure controlled lanes passed. G14 found the 0.1.11
-  DONE-less stream defect; exact packed 0.1.12 passes real stream + continuation,
-  while the full long-cloud installed gate remains pending.
+  DONE-less stream defect; exact packed 0.1.12 fixed it, and global 0.1.13
+  completed the long cloud stream, continuation, and abort/no-checkpoint lane.
 - Catalog file-identity cache, one-stringify metrics, and SSE reference-equality
   passthrough are isolated-only. G15 measured WP5A as a repeatable win; WP5B
   was slower and WP5C equal, so there is no blanket performance pass.
@@ -187,7 +195,10 @@ down after the recorded live smoke. Gate disposition is evidence-specific:
   reference merge rule. G16 passed its isolated tamper/restore matrix.
 - G8 passed on installed 0.1.7 (2026-08-23 20:29). WP7 Stages 2–4 are
   packed in cob **0.1.8**; 0.1.9 strictly validates the required handoff
-  skeleton. G17 remains the live acceptance gate.
+  skeleton. G17 same-corpus acceptance passed: `low` regressed, `none` was the
+  isolated winner, cloud max was cross-client accepted with active 256k, and
+  auto-limit remained correctly omitted by native-skeleton capability guard.
+  No shipped default changed.
 - The Ollama response path restores known deferred-tool aliases and now
   rejects an unknown `function_call.name` against the exact final outbound
   `tools[]` before alias restoration or checkpoint publication. Non-stream
@@ -290,7 +301,7 @@ Every work package must preserve these rules:
 | Default search support to true | **Do after current-build live proof** | It reduces tool-schema input cost and the shim already exists. |
 | Make promoted tools chronological/first-come | **Reject as written** | It can pin stale schemas and starve newer relevant tools. Measure before redesigning order. |
 | Raise all Ollama rows to a 1M active context | **Reject as default** | It increases paid input and delays lossy compaction without proven quality gain. |
-| Expose a verified cloud maximum separately | **Conditional** | Safe only after cross-client schema and G8/G17 proof. |
+| Expose a verified cloud maximum separately | **Opt-in proven; default off** | Desktop/PATH accepted active 256k + max 1,048,576 and G17 retained quality; it does not reduce compact cost by itself. |
 | Split headers/TTFB and stream-idle timeouts | **Do** | The current 30-second “connect” timer actually covers the entire fetch-to-headers phase. |
 | Estimate missing usage tokens | **Reject** | Invented counts can corrupt Codex context decisions and billing diagnostics. |
 | Map `xhigh` to `max` | **Reject** | Inherited native settings would unexpectedly turn into the slowest/costliest Ollama mode. |
@@ -1039,8 +1050,10 @@ not log summary text.
 Compare supported `none` (if the pinned model/version truly supports it) and
 `low` against the current behavior. Isolated: `compaction.ollama_effort`
 accepts `none` / `low` / `high` / `max`. Omit the key to keep the current G8
-wire (`high` after `prepareOllamaWire`). The likely candidate is `low`, but
-no default changes without a quality/latency trace. A malformed or incomplete
+wire (`high` after `prepareOllamaWire`). G17 rejected `low` (slower and roughly
+double output tokens) and identified `none` as the isolated same-corpus winner.
+`none` remains explicit opt-in until a broader quality corpus justifies a
+separate default-changing release. A malformed or incomplete
 skeleton fails closed with `compaction_summary_incomplete` /
 `requires_full_context`; cob does not automatically resend the full history
 because that doubles the most expensive input.
@@ -1070,6 +1083,14 @@ constraint retention, compact latency, total input/output tokens, first
 continuation size, and a second continuation. Pass only if the candidate
 preserves or improves task quality and does not create an unexplained cost
 regression.
+
+**Result (2026-08-24): PASS, no default change.** Fixed corpus SHA
+`554c6ece…` retained both quality checks and all section flags in baseline,
+`low`, `none`, and cloud-max lanes. Baseline compact was 3297ms / 561 output
+tokens; `low` regressed to 4703ms / 1131; `none` improved to 1488ms / 225.
+Cloud max was accepted by Desktop and PATH with active 256k. Auto-limit was
+not eligible because current native skeletons omit the field, and cob correctly
+did not emit it. Full metrics are in `LIVE-TESTING.md`.
 
 ### Rollback
 
@@ -1462,16 +1483,22 @@ Next execution units:
    `:18790` during the cut; health/overlay/root SHA verified; live two-turn
    Ollama smoke passed. The listener was later found down. Desktop was not
    quit/reopened. Remaining G11–G17 were not closed.
-5. **Source reproducibility checkpoint — authorization required:** preserve the
-   current 0.1.12 TypeScript, tests, and release documentation from the dirty
-   worktree. Verify the rebuilt production payload against the retained 0.1.12
-   tarball and record the intentional post-release documentation delta before
-   the commit. Do not tag, push, publish, or fabricate historical source snapshots.
-6. **Listener recovery and remaining evidence closeout:** run the globally
-   installed `cob start` before live work; unblock G11 only by compatible consumers,
-   not native-row repair; run G12 after a full Desktop restart; add a local G13
-   lane only when a local model exists; keep only WP5A's measured claim; retain
-   G16 isolated pass; run G17 on one fixed corpus before changing defaults.
+5. **Source/catalog/Desktop recovery — complete:** checkpoint `e932eb1`, PATH
+   0.149.0, fresh catalog `9748309e…`, full Desktop reopen, picker confirmed,
+   host-network `cob: ok`; no native-row repair or release mutation.
+6. **G11/G12 evidence closeout — complete:** G11 passed. G12 default-on
+   passed live 0.1.12; the false rollback failed there, produced the scoped
+   0.1.13 namespace fix, passed on the isolated workspace candidate, and then
+   passed against the exact global 0.1.13 artifact.
+7. **Authorized 0.1.13 global install — complete:** exact
+   tarball `81a99bad…` is live pid **35004**; health/overlay/provenance `ok`;
+   install-time root `70b10957…` and catalog `9748309e…` were unchanged.
+8. **G14/G17 live closeout — complete:** long cloud stream + continuation +
+   abort passed; the fixed 134-item compact corpus passed baseline, `low`,
+   `none`, and cloud-max lanes with the disposition above. Current root
+   `d24f79f…` and catalog `9748309e…` stayed unchanged; all dev listeners were
+   stopped. G13 local remains unavailable; retain G15 WP5A-only and G16
+   isolated-pass.
 
 Future fixes should not combine WP1, WP4, WP6, and WP7 failure domains without
 independent evidence and rollback points.
@@ -1489,8 +1516,7 @@ behavior edit, the implementer must still answer “yes” to all of these:
   be run only with authorization.
 - Existing dirty work is identified and will be preserved.
 
-For the next session, preserve installed 0.1.12's source checkpoint first and
-do not repack it under the same version. Recover the global listener before
-live work. The short live two-turn smoke is not the full G14 long-cloud gate.
-Continue only the still-available lanes. Do not claim a gate from installation,
-smoke, or a neighboring gate.
+For the next session, live is global 0.1.13 pid 35004. Never repack 0.1.12 or
+0.1.13. G12/G14/G17 are supported by their own traces, not installation,
+picker visibility, smoke, or a neighboring gate. Current defaults remain the
+G8 policy despite the isolated `none` result.

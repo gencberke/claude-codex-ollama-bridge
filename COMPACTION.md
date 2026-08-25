@@ -9,6 +9,10 @@ Desktop auto-compact on cob 0.1.6 reached the no-tools summarizer
 (`tools_n=0`) and failed at extract: 0731 called a tool on a ~1.14MB /
 146-pair history; cob refused the handoff. The later 0.1.7 flatten produced
 a text handoff and `replay_ratio ≈ 0.03`.
+G17 later passed a fixed same-corpus comparison on global 0.1.13: `low`
+regressed, `none` was the isolated latency/token winner, cloud max passed both
+current Codex consumers without raising the active 256k window, and auto-limit
+remained correctly omitted. Shipped defaults are unchanged.
 
 Reviewed as cob-appropriate (idea adapted, not OpenCodex source). OpenCodex
 remains a proof of the **idea**. Do not copy `nativeAlias`, root `config.toml`
@@ -116,7 +120,8 @@ ollama_threads = "summarize"
 # optional dedicated Ollama slug; default = thread model
 # ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
 # optional Stage 3 experiment; omit to keep G8 wire high
-# ollama_effort = "low"
+# G17 rejected low; none is isolated opt-in only
+# ollama_effort = "none"
 
 [catalog]
 # advertise_cloud_max_context = true
@@ -149,6 +154,8 @@ recorded G8 (flatten handoff, `cob1.` envelope, follow-up
 `replay_ratio ≈ 0.03`). Isolated L5 remains a recorded harness. WP7 Stages 2–4
 (single instruction copy, required section headings, opt-in effort, split
 max vs active context) are packed in cob **0.1.8**.
+G17 acceptance is recorded in `LIVE-TESTING.md`; it did not promote an
+experimental toggle to the default.
 Incomplete or malformed skeletons fail closed: headings must be exact, ordered,
 unique, and non-empty (`None` is explicit content). cob returns full-context
 recovery guidance and never automatically resends history. Defaults keep the

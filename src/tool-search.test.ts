@@ -213,6 +213,111 @@ describe("tool_search wire shim", () => {
 });
 
 describe("deferred tool promotion", () => {
+  it("restores Ollama dot-qualified calls from direct namespace tools", () => {
+    const payload: JsonObject = {
+      tools: [githubNamespace(), spawnNamespace()],
+      input: [
+        {
+          type: "function_call",
+          name: "_search_issues",
+          namespace: "mcp__codex_apps__github",
+          call_id: "gh-history",
+          arguments: JSON.stringify({ query: "repo:openai/codex" }),
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal((payload.input as JsonObject[])[0]?.name, "mcp__codex_apps__github._search_issues");
+    assert.equal("namespace" in ((payload.input as JsonObject[])[0] ?? {}), false);
+    assert.equal(bridge.aliasesAdded, 0);
+    assert.equal(bridge.aliasSha, "-");
+    assert.equal(bridge.usedAliasMissing, 0);
+
+    const rewritten = rewriteToolSearchFromOllama(
+      {
+        output: [
+          {
+            type: "function_call",
+            name: "mcp__codex_apps__github._search_issues",
+            call_id: "gh-1",
+            arguments: JSON.stringify({ query: "repo:openai/codex" }),
+          },
+          {
+            type: "function_call",
+            name: "multi_agent_v1.spawn_agent",
+            call_id: "spawn-1",
+            arguments: JSON.stringify({ task: "reply ok" }),
+          },
+        ],
+      },
+      bridge,
+    );
+    assert.deepEqual((rewritten as JsonObject).output, [
+      {
+        type: "function_call",
+        name: "_search_issues",
+        namespace: "mcp__codex_apps__github",
+        call_id: "gh-1",
+        arguments: JSON.stringify({ query: "repo:openai/codex" }),
+      },
+      {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "multi_agent_v1",
+        call_id: "spawn-1",
+        arguments: JSON.stringify({ task: "reply ok" }),
+      },
+    ]);
+  });
+
+  it("matches Ollama's recursive namespace prefixing when a leaf is already qualified", () => {
+    const payload: JsonObject = {
+      tools: [
+        {
+          type: "namespace",
+          name: "outer",
+          tools: [
+            {
+              type: "namespace",
+              name: "inner",
+              tools: [
+                {
+                  type: "function",
+                  name: "inner.leaf",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      input: [],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    const rewritten = rewriteToolSearchFromOllama(
+      {
+        output: [
+          {
+            type: "function_call",
+            name: "outer.inner.leaf",
+            call_id: "nested-1",
+            arguments: "{}",
+          },
+        ],
+      },
+      bridge,
+    );
+    assert.deepEqual((rewritten as JsonObject).output, [
+      {
+        type: "function_call",
+        name: "inner.leaf",
+        namespace: "outer.inner",
+        call_id: "nested-1",
+        arguments: "{}",
+      },
+    ]);
+  });
+
   it("promotes live-shaped spawn_agent as a namespace-aware alias and keeps the search output", () => {
     const payload: JsonObject = {
       tools: [SEARCH_TOOL, { type: "function", name: "exec_command", parameters: { type: "object" } }],

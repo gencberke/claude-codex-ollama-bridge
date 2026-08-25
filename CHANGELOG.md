@@ -17,6 +17,67 @@ Packed `README.md` / `CHANGELOG.md` / `RELEASE.md` later recorded the live
 `:18790` install and two-turn smoke; those doc-only diffs are in this tree
 and do not change the 0.1.12 artifact. Do not repack 0.1.12.
 
+The default-off, isolated Gate 5 experiment now bridges one declared Codex
+custom/freeform `apply_patch` tool through a fixed Ollama function alias and
+restores the Codex custom call/output identity. Capability advertisement is
+limited to configured Ollama spawn rows; native rows remain verbatim and shell
+stays disabled. Live `~/.codex` start forces both `apply_patch` and
+`native_plaintext_spawn` off and drops any stored schema fingerprint.
+Strict declaration, collision, encrypted-field, history, JSON,
+and SSE guards fail closed without logging patch content. JSON provider
+responses are now normalized before any checkpoint is published; a
+normalization or identity failure returns a redacted 502 and never relays
+the raw provider body. Ollama requests reject non-empty `encrypted_*`
+fields and cob/ocx1/Fernet prefixes. Native alias outputs reject extra keys
+and non-Ollama spawn models. Summarizer HTTP failures log only
+status/bytes/SHA. Gate 6-H requires child-side phase evidence and records
+`controller_sequencing_observed` with `transport_unmeasured`.
+A real 0731 child
+canary completed one native custom patch edit without a shell/temp-binary or
+parent-applied patch. This is not packed, installed, or enabled on live
+`:18790`. The isolated gates preserved the current root baseline `b976c134…`
+and live catalog `9748309e…`.
+
+## 0.1.13 — 2026-08-24
+
+G12 explicit-false rollback compatibility for Ollama 0.32.15 namespace tools.
+Exact tarball SHA-256
+`81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72` is now
+the authorized live global (pid **35004**). Isolated-live MCP + V1 rollback
+passed before install; the affected rollback later passed against this exact
+global artifact. G14 and G17 also closed without repacking. No commit, tag,
+push, or publish.
+
+- Ollama's pinned Responses implementation expands a namespace declaration to
+  a dot-qualified wire name such as `namespace.function`. cob now snapshots
+  that exact final wire identity instead of the unqualified leaf, so the WP8
+  undeclared-tool guard authorizes only the function Ollama was actually
+  offered.
+- Dot-qualified Ollama calls are restored to Codex's separate `name` and
+  `namespace` fields before client execution. Replayed namespaced history uses
+  the same wire identity, including Ollama's recursive prefix rule.
+- Deferred `supports_search_tool=true` promotion is unchanged. The fix is for
+  the explicit-false full namespace catalog and does not weaken the empty or
+  undeclared catalog guard.
+- The first isolated rollback run reproduced the 0.1.12 failure as
+  `ollama_undeclared_tool_call`. The corrected 0.1.13 workspace completed one
+  real GitHub MCP leaf plus one V1 Ollama child and returned `G12_FALSE_OK`;
+  all turns reported `promoted_n=0`, `alias_sha=-`, and
+  `used_alias_missing=0`.
+- Post-install G12 retrace repeated the real read-only GitHub MCP + V1 child
+  lane against exact global 0.1.13 with zero promotions/aliases and no guard
+  error. G14 then passed a 10.7s long cloud stream, continuation, and
+  abort-without-checkpoint lane. G17 passed its fixed 134-item same-corpus
+  comparison: `low` regressed, `none` was the isolated winner, cloud-max was
+  accepted by Desktop/PATH with active 256k, and auto-limit remained correctly
+  omitted by the native-skeleton guard. Shipped defaults did not change.
+- Merge gate: `npx tsc --noEmit`; 344 tests, 341 passed, 3 intentional skips,
+  0 failures. The local tarball contains 43 files / 37 production JS files and
+  no test or harness JS. Authorized global install replaced 0.1.12 pid 21099;
+  root SHA `70b10957…` and catalog SHA `9748309e…` were unchanged at install.
+  Later Desktop/user activity established root `d24f79f…`; all closeout gates
+  preserved that current baseline and catalog `9748309e…`.
+
 ## 0.1.12 — 2026-08-24
 
 Real Ollama 0.32.15 cloud SSE compatibility after the 0.1.11 live gate exposed

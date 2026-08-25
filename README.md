@@ -67,8 +67,8 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 ## Requirements
 
 - Node.js 22+
-- Codex CLI (developed against 0.147.0; this machine’s Desktop bundles
-  `codex-cli 0.149.0-alpha.4.1`)
+- Codex CLI 0.149.0; this machine’s Desktop bundles
+  `codex-cli 0.149.0-alpha.4.1`
 - Ollama with `/v1/responses` (0.13.3+)
 
 ## Live vs develop
@@ -80,7 +80,7 @@ user-owned.
 
 ```bash
 npm run pack
-npm install -g ./codex-ollama-bridge-0.1.12.tgz
+npm install -g ./codex-ollama-bridge-0.1.13.tgz
 cob start
 cob status
 codex --profile cob
@@ -156,6 +156,22 @@ The V1 spawn window is the first five `visibility=list` rows (priority ASC). Wit
 
 Encrypted V2 child tasks return HTTP 400 and are never sent to Ollama. v1 is Responses-only: Chat Completions are not translated. For an Ollama `POST /v1/responses`, a top-level `previous_response_id` is resolved from cob's local checkpoint archive, provider-safe history is merged with the new input, and the field is removed before the Ollama request. Missing, corrupt, incompatible, or unsafe state fails closed with a structured 4xx response asking for full context. Native compaction is triggered only by one terminal `compaction_trigger` item; the trigger is transient and never enters Ollama history. Ollama threads summarize that history locally and return a cob-owned compaction envelope to Codex.
 
+Gate 1-3 research exception (default off): an isolated `cob.toml` `[experimental]` policy may rewrite only an exact, explicitly fingerprinted `gpt-5.6-sol` `collaboration.spawn_agent`, `collaboration.send_message`, and `collaboration.followup_task` schema to non-reserved plaintext aliases and restore each V2 identity on the native response. This is a dev canary, not Ollama V2 support: Ollama rows remain `multi_agent_version = "v1"`, live `:18790` is unchanged, and schema absence, drift, ambiguity, or encrypted child content fails closed. Isolated Gate 4 additionally proves the preserved canonical `interrupt_agent` leaf can stop an active child; it adds no alias or catalog capability. Restart/replay behavior remains unenabled. Enable only in an isolated home after recording `native_plaintext_spawn_schema_sha256`.
+
+Gate 5 is a separate, default-off catalog opt-in for an isolated `--dev` home:
+`[catalog] apply_patch = true` adds cob-owned
+`apply_patch_tool_type = "freeform"` only to Ollama rows whose slugs are listed
+in `[subagents].models`. Native GPT rows remain verbatim, Ollama rows keep
+`shell_type = "disabled"` and `multi_agent_version = "v1"`, and the live
+`:18790` gateway/pack/catalog path does not enable it. On that isolated route,
+cob translates the one declared Codex custom/freeform `apply_patch` tool to a
+fixed Ollama function alias with a string input wrapper, then restores the
+Codex custom call/output identity. Missing declarations, alias collisions,
+encrypted fields, malformed history, and undeclared calls fail closed without
+logging the patch body. The 2026-08-24 Gate 5 canary proved one real 0731 child
+edit through that custom tool; `exec_command` plus a temporary patch binary is
+not gold and shell remains disabled.
+
 Ollama accepts a string as a complete first-turn `input`, but replayed history
 uses `input[]`, whose entries must be typed items. cob preserves the first-turn
 shorthand on the wire and promotes archived strings to typed user-message
@@ -178,7 +194,8 @@ Policy lives in cob-owned `~/.codex/cob.toml` (not the Codex profile):
 provider = "native"
 ollama_threads = "summarize"
 # ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
-# ollama_effort = "low"
+# Isolated G17 candidate only; shipped default omits this key (wire high).
+# ollama_effort = "none"
 
 [subagents]
 models = [
@@ -190,10 +207,25 @@ models = [
 # wire shape and promotes discovered leaves onto the next Ollama tools[]
 # (aliased). Set false to send the full tool list every turn.
 # supports_search_tool = false
+# Gate 5; isolated --dev only and default false. Only configured Ollama spawn
+# rows receive apply_patch_tool_type = "freeform"; shell remains disabled.
+apply_patch = false
+# Set the preceding key to true only in the isolated --dev cob.toml canary.
 # advertise_cloud_max_context = true
 # active_context_window = 256000
 # auto_compact_token_limit = 230400
+
+[experimental]
+# Gate 1-3 only; default is false and the schema digest is mandatory when true.
+native_plaintext_spawn = false
+# native_plaintext_spawn_schema_sha256 = "<64 hex chars from the isolated schema canary>"
 ```
+
+G17's fixed-corpus trace rejected `low` and found `none` faster/cheaper with
+the same two continuation checks. That is not a default change: omit
+`ollama_effort` for the shipped high path. Cloud-max advertisement is also
+opt-in, and `auto_compact_token_limit` is emitted only when the native Codex
+skeleton already supports that field. Exact measurements: [LIVE-TESTING.md](./LIVE-TESTING.md).
 
 `provider = "ollama"` and `provider = "disabled"` are no longer valid; cob reports a migration error instead of converting them silently. `--compaction-model` is still accepted (native ChatGPT slug). `--compaction-provider`, if passed, must be `native`. Envelope details: [COMPACTION.md](./COMPACTION.md).
 

@@ -254,7 +254,7 @@ describe("compaction v2", () => {
         content: [{ type: "input_text", text: "ok" }],
         nested: { encrypted_content: "gAAAAA" },
       }) ?? "",
-      /encrypted_content/,
+      /encrypted/,
     );
   });
 

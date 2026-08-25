@@ -14,7 +14,7 @@ export type OllamaChildProfile = {
   supportsParallelToolCalls: false;
   supportsReasoning: boolean;
   supportsVision: boolean;
-  supportsApplyPatch: false;
+  supportsApplyPatch: boolean;
   supportsShell: false;
   supportsSearch: false;
   previousResponseState: "unsupported";
@@ -40,7 +40,11 @@ export function evidenceFromOllamaTag(tag: OllamaTag): OllamaCapabilityEvidence 
   };
 }
 
-export function ollamaChildProfile(evidence: OllamaCapabilityEvidence): OllamaChildProfile {
+export function ollamaChildProfile(
+  evidence: OllamaCapabilityEvidence,
+  opts: boolean | { supportsApplyPatch?: boolean } = false,
+): OllamaChildProfile {
+  const supportsApplyPatch = typeof opts === "boolean" ? opts : opts.supportsApplyPatch === true;
   return {
     transport: "responses",
     subagentRole: "child-only",
@@ -49,7 +53,7 @@ export function ollamaChildProfile(evidence: OllamaCapabilityEvidence): OllamaCh
     supportsParallelToolCalls: false,
     supportsReasoning: evidence.thinking,
     supportsVision: evidence.vision,
-    supportsApplyPatch: false,
+    supportsApplyPatch,
     supportsShell: false,
     supportsSearch: false,
     previousResponseState: "unsupported",
@@ -71,9 +75,11 @@ export function ollamaChildCatalogFields(opts: {
   contextWindow: number;
   maxContextWindow?: number;
   supportsSearchTool?: boolean;
+  /** Explicit Gate 5 opt-in for this configured Ollama spawn row. */
+  applyPatch?: boolean;
   autoCompactTokenLimit?: number;
 }): JsonObject {
-  const profile = ollamaChildProfile(opts.evidence);
+  const profile = ollamaChildProfile(opts.evidence, { supportsApplyPatch: opts.applyPatch === true });
   const levels = reasoningLevelsForEvidence(opts.skeleton, profile.supportsReasoning);
   const maxContextWindow = opts.maxContextWindow ?? opts.contextWindow;
   const fields: JsonObject = {
@@ -91,6 +97,7 @@ export function ollamaChildCatalogFields(opts: {
     supports_parallel_tool_calls: false,
     supports_image_detail_original: profile.supportsVision,
     supports_search_tool: opts.supportsSearchTool === true,
+    ...(profile.supportsApplyPatch ? { apply_patch_tool_type: "freeform" } : {}),
     // Parser-required. `disabled` is the schema-safe value that does not advertise shell.
     shell_type: "disabled",
     // Parser-required shape. Not copied from a native GPT row.

@@ -5,6 +5,12 @@ import {
   OLLAMA_SSE_TERMINAL_EVENTS,
   OLLAMA_UNREVIEWED_CALL_KINDS,
 } from "./ollama-dialect.js";
+import {
+  inspectApplyPatchJson,
+  inspectApplyPatchSseEvent,
+  type ApplyPatchBridge,
+  type ApplyPatchGuardIssue,
+} from "./apply-patch.js";
 import { sha256Hex8 } from "./request-metrics.js";
 import { sseDoneTerminal } from "./relay.js";
 import type { JsonObject } from "./types.js";
@@ -21,6 +27,9 @@ export type OllamaToolDeclaration = {
   readonly names: ReadonlySet<string>;
   readonly count: number;
   readonly sha8: string;
+  readonly applyPatch?: ApplyPatchBridge;
+  /** Gate 5 failures are structural only; never echo a tool name to Codex. */
+  readonly redactCallDetails?: boolean;
 };
 
 export type OllamaGuardCode =
@@ -35,6 +44,7 @@ export type OllamaGuardFailure = {
   nameLength: number;
   nameSha8: string;
   preview: string;
+  redact?: boolean;
 };
 
 export type OllamaResponseGuardState = {
@@ -45,7 +55,10 @@ export function emptyOllamaToolDeclaration(): OllamaToolDeclaration {
   return declareOllamaWireTools({});
 }
 
-export function declareOllamaWireTools(payload: JsonObject): OllamaToolDeclaration {
+export function declareOllamaWireTools(
+  payload: JsonObject,
+  applyPatch?: ApplyPatchBridge,
+): OllamaToolDeclaration {
   const ordered: string[] = [];
   const names = new Set<string>();
   for (const name of collectOllamaWireToolNames(payload.tools)) {
@@ -57,23 +70,23 @@ export function declareOllamaWireTools(payload: JsonObject): OllamaToolDeclarati
     names,
     count: ordered.length,
     sha8: sha256Hex8(ordered),
+    ...(applyPatch ? { applyPatch, redactCallDetails: applyPatch.enabled } : {}),
   });
 }
 
 export function collectOllamaWireToolNames(tools: unknown): string[] {
   if (!Array.isArray(tools)) return [];
-  const names: string[] = [];
-  for (const tool of flattenToolDefs(tools)) {
-    const name = toolFunctionName(tool);
-    if (name) names.push(name);
-  }
-  return names;
+  return collectQualifiedToolNames(tools);
 }
 
 export function guardOllamaJsonResponse(
   value: unknown,
   declaration: OllamaToolDeclaration,
 ): OllamaGuardFailure | undefined {
+  if (declaration.applyPatch) {
+    const patchIssue = inspectApplyPatchJson(value, declaration.applyPatch);
+    if (patchIssue) return applyPatchIssueToFailure(patchIssue, declaration);
+  }
   return inspectOutputBearingValue(value, declaration);
 }
 
@@ -81,6 +94,10 @@ export function inspectOllamaSseEvent(
   value: unknown,
   declaration: OllamaToolDeclaration,
 ): OllamaGuardFailure | undefined {
+  if (declaration.applyPatch) {
+    const patchIssue = inspectApplyPatchSseEvent(value, declaration.applyPatch);
+    if (patchIssue) return applyPatchIssueToFailure(patchIssue, declaration);
+  }
   if (!isRecord(value)) return undefined;
   const type = typeof value.type === "string" ? value.type : undefined;
   if (type && SSE_OUTPUT_ITEMS.has(type)) {
@@ -144,9 +161,9 @@ export function ollamaGuardMessage(failure: OllamaGuardFailure): string {
     }
     return "Ollama returned a client tool call with an invalid name.";
   }
-  if (failure.preview.length > 0) {
-    return `Ollama returned a client tool call that was not in the final outbound catalog: ${failure.preview}`;
-  }
+  // Never echo an upstream-provided tool name (or any surrounding call
+  // detail) into a client-facing guard error. The bounded preview remains an
+  // internal diagnostic field and is intentionally absent from this message.
   return "Ollama returned a client tool call that was not in the final outbound catalog.";
 }
 
@@ -178,7 +195,7 @@ function inspectCallItem(item: unknown, declaration: OllamaToolDeclaration): Oll
   const kind = classifyCallType(item.type);
   if (kind === undefined) return undefined;
   if (kind === "unreviewed") {
-    return guardFailure("invalid_type", OLLAMA_DIALECT.response.invalidTool, readRawCallName(item));
+    return guardFailure("invalid_type", OLLAMA_DIALECT.response.invalidTool, readRawCallName(item), declaration);
   }
   return inspectReviewedCallName(item, declaration);
 }
@@ -189,14 +206,14 @@ function inspectReviewedCallName(
 ): OllamaGuardFailure | undefined {
   const raw = readRawCallName(item);
   if (typeof raw !== "string") {
-    return guardFailure("invalid_name", OLLAMA_DIALECT.response.invalidTool, raw);
+    return guardFailure("invalid_name", OLLAMA_DIALECT.response.invalidTool, raw, declaration);
   }
   const name = raw.trim();
   if (name.length === 0) {
-    return guardFailure("empty_name", OLLAMA_DIALECT.response.invalidTool, raw);
+    return guardFailure("empty_name", OLLAMA_DIALECT.response.invalidTool, raw, declaration);
   }
   if (!declaration.names.has(name)) {
-    return guardFailure("undeclared", OLLAMA_DIALECT.response.undeclaredTool, name);
+    return guardFailure("undeclared", OLLAMA_DIALECT.response.undeclaredTool, name, declaration);
   }
   return undefined;
 }
@@ -215,7 +232,12 @@ function readRawCallName(item: JsonObject): unknown {
   return undefined;
 }
 
-function guardFailure(kind: OllamaGuardKind, code: OllamaGuardCode, rawName: unknown): OllamaGuardFailure {
+function guardFailure(
+  kind: OllamaGuardKind,
+  code: OllamaGuardCode,
+  rawName: unknown,
+  declaration?: OllamaToolDeclaration,
+): OllamaGuardFailure {
   const name = typeof rawName === "string" ? rawName : "";
   return {
     code,
@@ -223,6 +245,23 @@ function guardFailure(kind: OllamaGuardKind, code: OllamaGuardCode, rawName: unk
     nameLength: name.length,
     nameSha8: sha256Hex8(typeof rawName === "string" ? rawName : null),
     preview: safeNamePreview(name),
+    redact: declaration?.redactCallDetails === true,
+  };
+}
+
+function applyPatchIssueToFailure(
+  issue: ApplyPatchGuardIssue,
+  declaration: OllamaToolDeclaration,
+): OllamaGuardFailure {
+  const rawName = issue.name;
+  const name = typeof rawName === "string" ? rawName : "";
+  return {
+    code: issue.code,
+    kind: issue.kind,
+    nameLength: name.length,
+    nameSha8: sha256Hex8(typeof rawName === "string" ? rawName : null),
+    preview: safeNamePreview(name),
+    redact: declaration.redactCallDetails === true,
   };
 }
 
@@ -237,17 +276,23 @@ function safeNamePreview(name: string): string {
     : escaped;
 }
 
-function flattenToolDefs(tools: unknown[]): JsonObject[] {
-  const flat: JsonObject[] = [];
+function collectQualifiedToolNames(tools: unknown[]): string[] {
+  const names: string[] = [];
   for (const tool of tools) {
     if (!isRecord(tool)) continue;
     if (tool.type === "namespace" && Array.isArray(tool.tools)) {
-      flat.push(...flattenToolDefs(tool.tools));
+      const name = typeof tool.name === "string" && tool.name.trim().length > 0
+        ? tool.name.trim()
+        : undefined;
+      const nested = collectQualifiedToolNames(tool.tools);
+      names.push(...nested.map((nestedName) => name ? qualifyOllamaToolName(name, nestedName) : nestedName));
       continue;
     }
-    flat.push(tool);
+    const name = toolFunctionName(tool);
+    if (!name) continue;
+    names.push(name);
   }
-  return flat;
+  return names;
 }
 
 function toolFunctionName(tool: JsonObject): string | undefined {
@@ -256,4 +301,9 @@ function toolFunctionName(tool: JsonObject): string | undefined {
     return tool.function.name.trim();
   }
   return undefined;
+}
+
+function qualifyOllamaToolName(namespace: string, name: string): string {
+  const prefix = `${namespace}.`;
+  return name.startsWith(prefix) ? name : `${prefix}${name}`;
 }

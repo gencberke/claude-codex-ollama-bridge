@@ -12,7 +12,13 @@ import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
 import { MAX_RAW_BODY_BYTES } from "./limits.js";
 import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton, ollamaFollowUpInputError } from "./compaction.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./ollama.js";
-import type { CatalogFile } from "./types.js";
+import { APPLY_PATCH_TOOL_NAME, COB_APPLY_PATCH_ALIAS } from "./apply-patch.js";
+import {
+  nativePlaintextSpawnSchemaSha256,
+  NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
+  NATIVE_PLAINTEXT_SEND_ALIAS,
+} from "./native-plaintext-spawn.js";
+import type { CatalogFile, JsonObject } from "./types.js";
 
 const TEST_CATALOG: CatalogFile = {
   models: [
@@ -24,6 +30,87 @@ const TEST_CATALOG: CatalogFile = {
     { slug: "ollama/library%2Fqwen2.5:7b", visibility: "list", priority: 20 },
   ],
 };
+
+function gate1Payload(): Record<string, unknown> {
+  const spawn = {
+    type: "function",
+    name: "spawn_agent",
+    description: "Spawn a child agent.",
+    parameters: {
+      type: "object",
+      properties: {
+        message: { type: "string", encrypted: true, description: "Task message." },
+        model: { type: "string" },
+      },
+      required: ["message", "model"],
+      additionalProperties: false,
+    },
+    strict: true,
+  };
+  return {
+    model: "gpt-5.6-sol",
+    input: [{
+      type: "additional_tools",
+      role: "developer",
+      tools: [
+        {
+          type: "namespace",
+          name: "functions",
+          description: "Ordinary functions.",
+          tools: [{ type: "function", name: "exec_command" }],
+        },
+        {
+          type: "namespace",
+          name: "collaboration",
+          description: "Reserved collaboration tools.",
+          tools: [
+            {
+              type: "function",
+              name: "followup_task",
+              parameters: {
+                type: "object",
+                properties: {
+                  target: { type: "string" },
+                  message: { type: "string", encrypted: true },
+                },
+                required: ["target", "message"],
+                additionalProperties: false,
+              },
+              strict: false,
+            },
+            { type: "function", name: "interrupt_agent" },
+            { type: "function", name: "list_agents" },
+            {
+              type: "function",
+              name: "send_message",
+              parameters: {
+                type: "object",
+                properties: {
+                  target: { type: "string" },
+                  message: { type: "string", encrypted: true },
+                },
+                required: ["target", "message"],
+                additionalProperties: false,
+              },
+              strict: true,
+            },
+            spawn,
+            { type: "function", name: "wait_agent" },
+          ],
+        },
+      ],
+    }],
+  };
+}
+
+function gate1SchemaDigest(payload: Record<string, unknown>): string {
+  const input = payload.input as JsonObject[];
+  const additional = input[0]!;
+  const tools = additional.tools as JsonObject[];
+  const namespace = tools.find((tool) => tool.name === "collaboration");
+  assert.ok(namespace);
+  return nativePlaintextSpawnSchemaSha256(namespace);
+}
 
 async function errorCode(response: Response): Promise<string | undefined> {
   const parsed: unknown = await response.json().catch(() => null);
@@ -179,6 +266,75 @@ describe("gateway", () => {
       });
       assert.equal(slashed.ok, true, await slashed.text());
       assert.equal(seen.ollamaModel, "library/qwen2.5:7b");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not relay a successful Ollama response whose body is not JSON", async () => {
+    const secret = "SECRET_OLLAMA_HTML_BODY";
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      ollamaFetch: async () => new Response(`<html>${secret}</html>`, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi" }),
+      });
+      const text = await response.text();
+      assert.equal(response.status, 502);
+      const body = JSON.parse(text) as { error?: { code?: string } };
+      assert.equal(body.error?.code, "ollama_response_invalid_json");
+      assert.equal(text.includes(secret), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not relay malformed data lines on the Gate 5 Ollama SSE path", async () => {
+    const secret = "SECRET_MALFORMED_SSE_DATA";
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      applyPatch: true,
+      ollamaFetch: async () => new Response(`data: ${secret}\n\n`, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: "hi",
+          tools: [{
+            type: "custom",
+            name: APPLY_PATCH_TOOL_NAME,
+            format: { type: "grammar", syntax: "lark", definition: "start: /[^\\n]*/" },
+          }],
+        }),
+      });
+      const text = await response.text();
+      // Headers are committed before streaming, so the provider-safe failure
+      // is an SSE terminal while retaining the upstream 2xx status.
+      assert.equal(response.status, 200);
+      assert.match(text, /upstream_stream_error/);
+      assert.match(text, /SSE data payload is invalid/);
+      assert.equal(text.includes(secret), false);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -530,13 +686,26 @@ describe("gateway", () => {
     }
   });
 
-  it("strips plaintext encrypted_content instead of failing closed", () => {
+  it("rejects plaintext-looking encrypted_content instead of guessing", () => {
     const prepared = prepareOllamaPayload({
       model: "ollama/deepseek-v4-flash:cloud",
       input: [{ type: "reasoning", encrypted_content: "1. The user asks to reply with pong." }],
     });
-    assert.equal("status" in prepared && "body" in prepared, false);
-    assert.equal(JSON.stringify(prepared).includes("encrypted_content"), false);
+    assert.equal("status" in prepared && "body" in prepared, true);
+    assert.equal((prepared as { body: { error: { code: string } } }).body.error.code, "encrypted_content_unsupported");
+  });
+
+  it("rejects sibling encrypted_* fields and cob envelopes on the Ollama request", () => {
+    const args = prepareOllamaPayload({
+      model: "ollama/deepseek-v4-flash:cloud",
+      input: [{ type: "function_call", name: "exec_command", encrypted_function_args: ["secret"] }],
+    });
+    assert.equal((args as { body: { error: { code: string } } }).body.error.code, "encrypted_content_unsupported");
+    const envelope = prepareOllamaPayload({
+      model: "ollama/deepseek-v4-flash:cloud",
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "cob1.1.abc" }] }],
+    });
+    assert.equal((envelope as { body: { error: { code: string } } }).body.error.code, "encrypted_content_unsupported");
   });
 
   it("rejects object encrypted_content instead of forwarding it to Ollama", () => {
@@ -1154,7 +1323,7 @@ describe("gateway", () => {
           ],
         }),
       });
-      assert.equal(response.status, 200, await response.text());
+      assert.equal(response.status, 200);
       assert.deepEqual(seen.body?.reasoning, { effort: "low" });
     } finally {
       await new Promise<void>((resolve, reject) => {
@@ -1889,6 +2058,539 @@ describe("gateway", () => {
     }
   });
 
+  it("fails Gate 1 before the native upstream on a missing or mismatched Sol fingerprint", async () => {
+    let nativeHits = 0;
+    const catalog: CatalogFile = {
+      models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+    };
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog,
+      nativePlaintextSpawn: { enabled: true, schemaSha256: "0".repeat(64) },
+      nativeFetch: async () => {
+        nativeHits += 1;
+        return new Response(JSON.stringify({ ok: "must not hit native" }), { status: 500 });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(gate1Payload()),
+      });
+      assert.equal(response.status, 409);
+      assert.equal(await errorCode(response), "native_plaintext_spawn_schema_mismatch");
+      assert.equal(nativeHits, 0);
+
+      const missing = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-5.6-sol", input: [] }),
+      });
+      assert.equal(missing.status, 409);
+      assert.equal(await errorCode(missing), "native_plaintext_spawn_schema_missing");
+      assert.equal(nativeHits, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rewrites and restores Gate 2 send_message without cross-mapping the spawn alias", async () => {
+    const payload = gate1Payload();
+    const digest = gate1SchemaDigest(payload);
+    let seen: JsonObject | undefined;
+    const message = "line 1\r\nline 2 \"quoted\" 😀 e\u0301";
+    const argumentsJson = JSON.stringify({ target: "child-0731", message });
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+      },
+      nativePlaintextSpawn: { enabled: true, schemaSha256: digest },
+      nativeFetch: async (_url, init) => {
+        seen = JSON.parse(init.body.toString("utf8")) as JsonObject;
+        return new Response(JSON.stringify({
+          type: "response",
+          output: [{
+            type: "function_call",
+            name: NATIVE_PLAINTEXT_SEND_ALIAS,
+            call_id: "call_send",
+            arguments: argumentsJson,
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+      ollamaFetch: async () => new Response("must not hit Ollama", { status: 500 }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as JsonObject;
+      const mapped = (body.output as JsonObject[])[0]!;
+      assert.deepEqual(mapped, {
+        type: "function_call",
+        name: "send_message",
+        namespace: "collaboration",
+        call_id: "call_send",
+        arguments: argumentsJson,
+        encrypted_function_args: [],
+      });
+      assert.ok(seen);
+      const additional = (seen.input as JsonObject[])[0]!;
+      const tools = additional.tools as JsonObject[];
+      assert.deepEqual(tools.map((tool) => tool.name), [
+        "functions",
+        "collaboration",
+        "cob_plaintext_spawn_agent",
+        NATIVE_PLAINTEXT_SEND_ALIAS,
+        NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
+      ]);
+      const namespace = tools.find((tool) => tool.name === "collaboration")!;
+      assert.deepEqual(
+        (namespace.tools as JsonObject[]).map((tool) => tool.name),
+        ["interrupt_agent", "list_agents", "wait_agent"],
+      );
+      const sendAlias = tools.find((tool) => tool.name === NATIVE_PLAINTEXT_SEND_ALIAS)!;
+      const sendMessage = ((sendAlias.parameters as JsonObject).properties as JsonObject).message as JsonObject;
+      assert.equal("encrypted" in sendMessage, false);
+      const spawnAlias = tools.find((tool) => tool.name === "cob_plaintext_spawn_agent")!;
+      assert.equal(spawnAlias.name, "cob_plaintext_spawn_agent");
+      const followupAlias = tools.find((tool) => tool.name === NATIVE_PLAINTEXT_FOLLOWUP_ALIAS)!;
+      const followupMessage = ((followupAlias.parameters as JsonObject).properties as JsonObject).message as JsonObject;
+      assert.equal("encrypted" in followupMessage, false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rewrites and restores Gate 3 followup_task while preserving its target", async () => {
+    const payload = gate1Payload();
+    const digest = gate1SchemaDigest(payload);
+    let seen: JsonObject | undefined;
+    const message = "follow-up line 1\r\nfollow-up 😀";
+    const argumentsJson = JSON.stringify({ target: "child-0731", message });
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+      },
+      nativePlaintextSpawn: { enabled: true, schemaSha256: digest },
+      nativeFetch: async (_url, init) => {
+        seen = JSON.parse(init.body.toString("utf8")) as JsonObject;
+        return new Response(JSON.stringify({
+          type: "response",
+          output: [{
+            type: "function_call",
+            name: NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
+            call_id: "call_followup",
+            arguments: argumentsJson,
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+      ollamaFetch: async () => new Response("must not hit Ollama", { status: 500 }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as JsonObject;
+      assert.deepEqual((body.output as JsonObject[])[0], {
+        type: "function_call",
+        name: "followup_task",
+        namespace: "collaboration",
+        call_id: "call_followup",
+        arguments: argumentsJson,
+        encrypted_function_args: [],
+      });
+      assert.ok(seen);
+      const additional = (seen.input as JsonObject[])[0]!;
+      const tools = additional.tools as JsonObject[];
+      assert.deepEqual(tools.map((tool) => tool.name), [
+        "functions",
+        "collaboration",
+        "cob_plaintext_spawn_agent",
+        NATIVE_PLAINTEXT_SEND_ALIAS,
+        NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
+      ]);
+      const namespace = tools.find((tool) => tool.name === "collaboration")!;
+      assert.deepEqual((namespace.tools as JsonObject[]).map((tool) => tool.name), [
+        "interrupt_agent",
+        "list_agents",
+        "wait_agent",
+      ]);
+      const followupAlias = tools.find((tool) => tool.name === NATIVE_PLAINTEXT_FOLLOWUP_ALIAS)!;
+      const properties = (followupAlias.parameters as JsonObject).properties as JsonObject;
+      assert.deepEqual(properties.target, { type: "string" });
+      assert.equal("encrypted" in (properties.message as JsonObject), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns and logs only structural diagnostics for rejected Gate 1 responses", async () => {
+    const payload = gate1Payload();
+    const digest = gate1SchemaDigest(payload);
+    const upstreamBodies = [
+      "not-json SECRET_ARGUMENT",
+      JSON.stringify(["SECRET_ARGUMENT"]),
+      JSON.stringify({
+        id: "resp_secret",
+        output: [{
+          type: "function_call",
+          name: "collaboration.spawn_agent",
+          arguments: JSON.stringify({ message: "SECRET_ARGUMENT" }),
+        }],
+      }),
+    ];
+    const expectedCodes = [
+      "native_plaintext_spawn_response_invalid_json",
+      "native_plaintext_spawn_response_top_level_array",
+      "native_plaintext_spawn_canonical_output",
+    ];
+    const logs: string[] = [];
+    const originalError = console.error;
+    let nativeHits = 0;
+    const port = await freePort();
+    console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+      },
+      nativePlaintextSpawn: { enabled: true, schemaSha256: digest },
+      nativeFetch: async () => new Response(upstreamBodies[nativeHits++]!, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+    try {
+      for (const expectedCode of expectedCodes) {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await response.text();
+        const parsed = JSON.parse(text) as {
+          error?: {
+            code?: string;
+            diagnostics?: {
+              upstream_status?: number;
+              upstream_content_type?: string;
+              raw_byte_length?: number;
+              json_classification?: string;
+              top_level_type?: string;
+              top_level_keys?: string[];
+              mapper_error_class?: string;
+              mapper_error_code?: string;
+            };
+          };
+        };
+        assert.equal(response.status, 502);
+        assert.equal(parsed.error?.code, expectedCode);
+        assert.equal(parsed.error?.diagnostics?.upstream_status, 200);
+        assert.equal(parsed.error?.diagnostics?.upstream_content_type, "application/json");
+        assert.equal(typeof parsed.error?.diagnostics?.raw_byte_length, "number");
+        assert.equal(parsed.error?.diagnostics?.mapper_error_class, "NativePlaintextSpawnError");
+        assert.equal(parsed.error?.diagnostics?.mapper_error_code, expectedCode);
+        assert.equal(text.includes("SECRET_ARGUMENT"), false);
+        assert.equal(text.includes("resp_secret"), false);
+      }
+      assert.equal(nativeHits, 3);
+      const joined = logs.join("\n");
+      assert.match(joined, /upstream_status=200/);
+      assert.match(joined, /upstream_content_type="application\/json"/);
+      assert.match(joined, /json_classification=invalid/);
+      assert.match(joined, /json_classification=array/);
+      assert.match(joined, /json_classification=object/);
+      assert.match(joined, /mapper_error_code="native_plaintext_spawn_canonical_output"/);
+      assert.equal(joined.includes("SECRET_ARGUMENT"), false);
+      assert.equal(joined.includes("resp_secret"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("maps headerless native Gate 1 SSE and preserves the protocol terminal", async () => {
+    const payload = gate1Payload();
+    const digest = gate1SchemaDigest(payload);
+    const alias = "cob_plaintext_spawn_agent";
+    const message = "line 1\r\nline 2 \"quoted\" 😀 e\u0301";
+    const argumentsJson = JSON.stringify({ message });
+    const sse = [
+      `data: ${JSON.stringify({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", name: alias, call_id: "call_headerless" },
+      })}\r\n`,
+      `data: ${JSON.stringify({
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          name: alias,
+          call_id: "call_headerless",
+          arguments: argumentsJson,
+        },
+      })}\r\n`,
+      `data: ${JSON.stringify({
+        type: "response.completed",
+        response: {
+          id: "resp_headerless",
+          object: "response",
+          status: "completed",
+          output: [{
+            type: "function_call",
+            name: alias,
+            call_id: "call_headerless",
+            arguments: argumentsJson,
+          }],
+        },
+      })}\r\n`,
+      "data: [DONE]\r\n",
+      "\r\n",
+    ].join("\r\n");
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+      },
+      nativePlaintextSpawn: { enabled: true, schemaSha256: digest },
+      nativeFetch: async () => new Response(Buffer.from(sse, "utf8"), { status: 200 }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("content-type"), "text/event-stream");
+      assert.equal(response.headers.get("content-length"), String(Buffer.byteLength(body, "utf8")));
+      assert.equal(body.includes(alias), false);
+      assert.match(body, /data: \[DONE\]\n/);
+      const events = parseSsePayloads(body.replace(/\r\n/g, "\n"));
+      const added = events.find(
+        (event) => event && typeof event === "object" && (event as { type?: string }).type === "response.output_item.added",
+      ) as { item?: Record<string, unknown> } | undefined;
+      const done = events.find(
+        (event) => event && typeof event === "object" && (event as { type?: string }).type === "response.output_item.done",
+      ) as { item?: Record<string, unknown> } | undefined;
+      const completed = events.find(
+        (event) => event && typeof event === "object" && (event as { type?: string }).type === "response.completed",
+      ) as { response?: { output?: Record<string, unknown>[] } } | undefined;
+      assert.deepEqual(
+        { name: added?.item?.name, namespace: added?.item?.namespace, encrypted: added?.item?.encrypted_function_args },
+        { name: "spawn_agent", namespace: "collaboration", encrypted: [] },
+      );
+      assert.equal(done?.item?.name, "spawn_agent");
+      assert.equal(done?.item?.namespace, "collaboration");
+      assert.deepEqual(done?.item?.encrypted_function_args, []);
+      assert.equal(completed?.response?.output?.[0]?.name, "spawn_agent");
+      assert.equal(completed?.response?.output?.[0]?.namespace, "collaboration");
+      assert.deepEqual(completed?.response?.output?.[0]?.encrypted_function_args, []);
+      assert.equal(completed?.response?.output?.[0]?.arguments, argumentsJson);
+      assert.equal(events.filter((event) => event === "[DONE]").length, 1);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("fails closed for malformed or canonical headerless Gate 1 SSE without leaking the alias", async () => {
+    const payload = gate1Payload();
+    const digest = gate1SchemaDigest(payload);
+    const alias = "cob_plaintext_spawn_agent";
+    const malformed = `data: {"type":"response.completed","response":{"output":[{"type":"function_call","name":"${alias}","arguments":"not-json"}]}}\n\n`;
+    const canonical = `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        output: [{ type: "function_call", name: "collaboration.spawn_agent", arguments: "{}" }],
+      },
+    })}\n\n`;
+    let nativeHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+      },
+      nativePlaintextSpawn: { enabled: true, schemaSha256: digest },
+      nativeFetch: async () => new Response(Buffer.from(nativeHits++ === 0 ? malformed : canonical, "utf8"), { status: 200 }),
+    });
+    try {
+      for (const expectedCode of ["native_plaintext_spawn_arguments_invalid", "native_plaintext_spawn_canonical_output"]) {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await response.text();
+        assert.equal(response.status, 502);
+        assert.equal((JSON.parse(text) as { error?: { code?: string } }).error?.code, expectedCode);
+        assert.equal(text.includes(alias), false);
+        assert.equal(text.includes("not-json"), false);
+        assert.equal(text.includes("collaboration.spawn_agent"), false);
+      }
+      assert.equal(nativeHits, 2);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not leak a Gate alias from bare JSON or malformed SSE data", async () => {
+    const payload = gate1Payload();
+    const digest = gate1SchemaDigest(payload);
+    const alias = NATIVE_PLAINTEXT_FOLLOWUP_ALIAS;
+    const bareJson = JSON.stringify({
+      type: "response",
+      output: [{
+        type: "function_call",
+        name: alias,
+        arguments: JSON.stringify({ target: "child-0731", message: "SECRET_ARGUMENT" }),
+      }],
+    });
+    const malformedData = `data: ${alias} SECRET_ARGUMENT\n\n`;
+    let nativeHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+      },
+      nativePlaintextSpawn: { enabled: true, schemaSha256: digest },
+      nativeFetch: async () => new Response(Buffer.from(nativeHits++ === 0 ? bareJson : malformedData, "utf8"), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    });
+    try {
+      for (const expectedMessage of [/unsupported field/, /SSE data payload is invalid/]) {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await response.text();
+        assert.equal(response.status, 200);
+        assert.match(text, /upstream_stream_error/);
+        assert.match(text, expectedMessage);
+        assert.equal(text.includes(alias), false);
+        assert.equal(text.includes("SECRET_ARGUMENT"), false);
+      }
+      assert.equal(nativeHits, 2);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects encrypted or unsupported agent_message input before any Ollama upstream call", async () => {
+    let ollamaHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response(JSON.stringify({ ok: "must not hit ollama" }), { status: 500 });
+      },
+    });
+    try {
+      for (const input of [
+        [{ type: "agent_message", content: [{ type: "input_text", text: "ok" }, { type: "output_text", text: "bad" }] }],
+        [{ type: "message", encrypted_content: "plain-looking" }],
+      ]) {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input }),
+        });
+        assert.equal(response.status, 400);
+        assert.ok(["agent_message_unsupported", "encrypted_content_unsupported"].includes((await errorCode(response)) ?? ""));
+      }
+      assert.equal(ollamaHits, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("retains the provider-safe agent_message projection through continuation assembly", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-agent-message-projection-"));
+    let sent: JsonObject | undefined;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async (_url, init) => {
+        sent = JSON.parse(init.body.toString("utf8")) as JsonObject;
+        return new Response(
+          JSON.stringify({
+            id: "agent-message-projection-1",
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: [{
+            type: "agent_message",
+            content: [{ type: "input_text", text: "child plaintext nonce" }],
+          }],
+        }),
+      });
+      assert.equal(response.status, 200, await response.text());
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+    const input = sent?.input;
+    assert.ok(Array.isArray(input));
+    assert.deepEqual(input[0], {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "child plaintext nonce" }],
+    });
+    assert.equal(JSON.stringify(input).includes("agent_message"), false);
+    assert.equal(checkpointNames(stateDir).length, 1);
+  });
+
   it("snapshots ordinary and tools Ollama outbound keys and rejects unknown fields", async () => {
     const sent: Record<string, unknown>[] = [];
     const port = await freePort();
@@ -2336,7 +3038,7 @@ describe("WP8 Ollama response integrity", () => {
       assert.equal(response.status, 502);
       assert.equal(body.error?.type, "upstream_error");
       assert.equal(body.error?.code, "ollama_undeclared_tool_call");
-      assert.match(String(body.error?.message), /apply_patch/);
+      assert.equal(String(body.error?.message).includes("apply_patch"), false);
       assert.deepEqual(checkpointNames(stateDir), []);
       const joined = logs.join("\n");
       assert.match(joined, /\[cob\] ollama guard rejected/);
@@ -2456,6 +3158,162 @@ describe("WP8 Ollama response integrity", () => {
     }
   });
 
+  it("replays a raw apply_patch alias checkpoint and pairs the next custom output", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-g5-continuation-"));
+    const patchInput = "*** Begin Patch\n*** End Patch\n";
+    const patchTool = {
+      type: "custom",
+      name: APPLY_PATCH_TOOL_NAME,
+      format: { type: "grammar", syntax: "lark", definition: "start: /[^\\n]*/" },
+    };
+    const sent: JsonObject[] = [];
+    let turn = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      applyPatch: true,
+      ollamaFetch: async (_url, init) => {
+        turn += 1;
+        sent.push(JSON.parse(init.body.toString("utf8")) as JsonObject);
+        if (turn === 1) {
+          return new Response(
+            JSON.stringify({
+              id: "resp_patch",
+              object: "response",
+              status: "completed",
+              output: [{
+                type: "function_call",
+                id: "patch_item",
+                call_id: "patch_call",
+                name: COB_APPLY_PATCH_ALIAS,
+                arguments: JSON.stringify({ input: patchInput }),
+              }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: "resp_patch_2",
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: "continued" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          tools: [patchTool],
+          input: "patch this",
+        }),
+      });
+      assert.equal(first.status, 200, await first.clone().text());
+      const firstBody = (await first.json()) as JsonObject;
+      assert.equal((firstBody.output as JsonObject[])[0]?.type, "custom_tool_call");
+      assert.equal(checkpointNames(stateDir).length, 1);
+
+      const second = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          previous_response_id: "resp_patch",
+          tools: [patchTool],
+          input: [{
+            type: "custom_tool_call_output",
+            call_id: "patch_call",
+            output: "Applied",
+          }],
+        }),
+      });
+      assert.equal(second.status, 200, await second.text());
+      assert.equal(turn, 2);
+      const replay = (sent[1]?.input as JsonObject[]) ?? [];
+      const replayCall = replay.find((item) => item.type === "function_call" && item.name === COB_APPLY_PATCH_ALIAS);
+      const replayOutput = replay.find((item) => item.type === "function_call_output" && item.call_id === "patch_call");
+      assert.equal(replayCall?.name, COB_APPLY_PATCH_ALIAS);
+      assert.equal(replayOutput?.output, "Applied");
+      assert.equal(replay.filter((item) => item.type === "custom_tool_call" || item.type === "custom_tool_call_output").length, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects conflicting apply_patch JSON identities without a checkpoint or raw relay", async () => {
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const patchInput = "*** Begin Patch\nSECRET_HEREDOC\n*** End Patch\n";
+    const args = JSON.stringify({ input: patchInput });
+    const patchTool = {
+      type: "custom",
+      name: APPLY_PATCH_TOOL_NAME,
+      format: { type: "grammar", syntax: "lark", definition: "start: /[^\\n]*/" },
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-g5-conflict-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      applyPatch: true,
+      ollamaFetch: async () =>
+        new Response(
+          JSON.stringify({
+            id: "resp_conflict",
+            object: "response",
+            status: "completed",
+            output: [
+              { type: "function_call", id: "item_a", call_id: "shared", name: COB_APPLY_PATCH_ALIAS, arguments: args },
+              { type: "function_call", id: "item_b", call_id: "shared", name: COB_APPLY_PATCH_ALIAS, arguments: args },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          tools: [patchTool],
+          input: "patch this",
+        }),
+      });
+      const text = await response.text();
+      const body = JSON.parse(text) as { error?: { type?: string; code?: string; message?: string } };
+      assert.equal(response.status, 502);
+      assert.equal(body.error?.type, "upstream_error");
+      assert.equal(body.error?.code, "ollama_tool_call_invalid");
+      assert.equal(text.includes(COB_APPLY_PATCH_ALIAS), false);
+      assert.equal(text.includes("SECRET_HEREDOC"), false);
+      assert.equal(text.includes("shared"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+      const joined = logs.join("\n");
+      assert.match(joined, /\[cob\] ollama guard rejected/);
+      assert.equal(joined.includes("SECRET_HEREDOC"), false);
+      assert.equal(joined.includes(COB_APPLY_PATCH_ALIAS), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("rejects an undeclared SSE function_call with one failed terminal and no checkpoint", async () => {
     const logs: string[] = [];
     const originalError = console.error;
@@ -2497,7 +3355,7 @@ describe("WP8 Ollama response integrity", () => {
       ) as { response?: { error?: { message?: string; code?: string } } } | undefined;
       assert.equal(response.headers.get("content-type")?.includes("text/event-stream"), true);
       assert.equal(failed?.response?.error?.code, "ollama_undeclared_tool_call");
-      assert.match(String(failed?.response?.error?.message), /apply_patch/);
+      assert.equal(String(failed?.response?.error?.message).includes("apply_patch"), false);
       assert.equal(events.filter((event) => event === "[DONE]").length, 1);
       assert.equal(
         events.some((event) => event && typeof event === "object" && (event as { type?: string }).type === "response.completed"),

@@ -880,6 +880,7 @@ function findRejectedValidator(
 }
 
 const SAFE_CATALOG_FIELD_HINTS = [
+  "apply_patch_tool_type",
   "auto_compact_token_limit",
   "base_instructions",
   "context_window",

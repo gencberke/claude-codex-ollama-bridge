@@ -38,6 +38,11 @@ export type CatalogPolicy = {
    */
   supportsSearchTool: boolean;
   /**
+   * Isolated Gate 5 opt-in. When true, cob may advertise its freeform
+   * apply_patch alias on configured Ollama spawn rows. Default false.
+   */
+  applyPatch: boolean;
+  /**
    * When true, verified cloud tags advertise their tag `context_length` as
    * `max_context_window` without raising the active `context_window`. Default false.
    */
@@ -53,13 +58,32 @@ export type CatalogPolicy = {
   autoCompactTokenLimit?: number;
 };
 
+/**
+ * Isolated Gate 1 experiment. This is deliberately not a catalog capability:
+ * it changes the native Sol request/response wire and is therefore disabled
+ * unless a caller supplies the exact schema fingerprint observed in its
+ * isolated Codex home.
+ */
+export type NativePlaintextSpawnPolicy = {
+  enabled: boolean;
+  schemaSha256?: string;
+};
+
+export type ExperimentalPolicy = {
+  nativePlaintextSpawn: NativePlaintextSpawnPolicy;
+};
+
 export type CobFileConfig = {
   compaction: CompactionPolicy;
   subagents: SubagentPolicy;
   catalog?: CatalogPolicy;
+  experimental?: ExperimentalPolicy;
 };
 
-export const DEFAULT_CATALOG_POLICY: CatalogPolicy = { supportsSearchTool: true };
+export const DEFAULT_CATALOG_POLICY: CatalogPolicy = { supportsSearchTool: true, applyPatch: false };
+export const DEFAULT_EXPERIMENTAL_POLICY: ExperimentalPolicy = {
+  nativePlaintextSpawn: { enabled: false },
+};
 
 export const DEFAULT_SPAWNABLE_OLLAMA_SLUGS = ["ollama/deepseek-v4-flash:0731-cloud"] as const;
 
@@ -151,6 +175,9 @@ export function parseCobToml(text: string): CobFileConfig {
   let advertiseCloudMaxContext: boolean | undefined;
   let activeContextWindow: number | undefined;
   let autoCompactTokenLimit: number | undefined;
+  let applyPatch: boolean | undefined;
+  let nativePlaintextSpawn: boolean | undefined;
+  let nativePlaintextSpawnSchemaSha256: string | undefined;
   let arrayKey: string | undefined;
   let arrayItems: string[] = [];
 
@@ -216,6 +243,15 @@ export function parseCobToml(text: string): CobFileConfig {
     if (section === "catalog" && key === "auto_compact_token_limit") {
       autoCompactTokenLimit = parsePositiveInt(value, "catalog.auto_compact_token_limit");
     }
+    if (section === "catalog" && key === "apply_patch") {
+      applyPatch = parseTomlBool(value, "catalog.apply_patch");
+    }
+    if (section === "experimental" && key === "native_plaintext_spawn") {
+      nativePlaintextSpawn = parseTomlBool(value, "experimental.native_plaintext_spawn");
+    }
+    if (section === "experimental" && key === "native_plaintext_spawn_schema_sha256") {
+      nativePlaintextSpawnSchemaSha256 = parseSchemaSha256(value, "experimental.native_plaintext_spawn_schema_sha256");
+    }
   }
   if (arrayKey) {
     throw new CobConfigError("invalid_cob_toml", "unterminated array in cob.toml");
@@ -235,6 +271,11 @@ export function parseCobToml(text: string): CobFileConfig {
       advertiseCloudMaxContext,
       activeContextWindow,
       autoCompactTokenLimit,
+      applyPatch: applyPatch ?? DEFAULT_CATALOG_POLICY.applyPatch,
+    }),
+    experimental: experimentalPolicy({
+      nativePlaintextSpawn: nativePlaintextSpawn ?? DEFAULT_EXPERIMENTAL_POLICY.nativePlaintextSpawn.enabled,
+      schemaSha256: nativePlaintextSpawnSchemaSha256,
     }),
   };
 }
@@ -266,6 +307,8 @@ export function renderCobToml(config: CobFileConfig): string {
     "[catalog]",
     "# Default true. Set false to send the full tool list on every Ollama turn.",
     `supports_search_tool = ${config.catalog?.supportsSearchTool !== false ? "true" : "false"}`,
+    "# Gate 5: isolated --dev only; default false. Enables freeform apply_patch on configured Ollama spawn rows.",
+    `apply_patch = ${config.catalog?.applyPatch === true ? "true" : "false"}`,
   );
   if (config.catalog?.advertiseCloudMaxContext === true) {
     lines.push("advertise_cloud_max_context = true");
@@ -278,6 +321,15 @@ export function renderCobToml(config: CobFileConfig): string {
   }
   if (typeof config.catalog?.autoCompactTokenLimit === "number") {
     lines.push(`auto_compact_token_limit = ${config.catalog.autoCompactTokenLimit}`);
+  }
+  const nativePlaintextSpawn = config.experimental?.nativePlaintextSpawn ?? DEFAULT_EXPERIMENTAL_POLICY.nativePlaintextSpawn;
+  lines.push(
+    "",
+    "[experimental]",
+    `native_plaintext_spawn = ${nativePlaintextSpawn.enabled ? "true" : "false"}`,
+  );
+  if (nativePlaintextSpawn.schemaSha256) {
+    lines.push(`native_plaintext_spawn_schema_sha256 = ${tomlString(nativePlaintextSpawn.schemaSha256)}`);
   }
   lines.push("");
   return lines.join("\n");
@@ -309,6 +361,9 @@ export function resolveCobConfig(opts: {
   advertiseCloudMaxContext?: boolean;
   activeContextWindow?: number;
   autoCompactTokenLimit?: number;
+  applyPatch?: boolean;
+  nativePlaintextSpawn?: boolean;
+  nativePlaintextSpawnSchemaSha256?: string;
   env?: NodeJS.ProcessEnv;
 }): CobFileConfig {
   const env = opts.env ?? process.env;
@@ -351,6 +406,24 @@ export function resolveCobConfig(opts: {
     opts.autoCompactTokenLimit ??
     parsePositiveInt(env.COB_AUTO_COMPACT_TOKEN_LIMIT, "COB_AUTO_COMPACT_TOKEN_LIMIT") ??
     file?.catalog?.autoCompactTokenLimit;
+  const applyPatch =
+    opts.applyPatch ??
+    file?.catalog?.applyPatch ??
+    DEFAULT_CATALOG_POLICY.applyPatch ??
+    false;
+  const nativePlaintextSpawn =
+    opts.nativePlaintextSpawn ??
+    parseEnvBool(env.COB_NATIVE_PLAINTEXT_SPAWN, "COB_NATIVE_PLAINTEXT_SPAWN") ??
+    file?.experimental?.nativePlaintextSpawn.enabled ??
+    DEFAULT_EXPERIMENTAL_POLICY.nativePlaintextSpawn.enabled;
+  const nativePlaintextSpawnSchemaSha256 = parseSchemaSha256(
+    firstNonEmpty(
+      opts.nativePlaintextSpawnSchemaSha256,
+      env.COB_NATIVE_PLAINTEXT_SPAWN_SCHEMA_SHA256,
+      file?.experimental?.nativePlaintextSpawn.schemaSha256,
+    ),
+    "experimental.native_plaintext_spawn_schema_sha256",
+  );
   return {
     compaction: compactionPolicy({ provider, model, ollamaThreads, ollamaModel, ollamaEffort }),
     subagents: subagentModels ? { models: subagentModels } : {},
@@ -359,6 +432,11 @@ export function resolveCobConfig(opts: {
       advertiseCloudMaxContext,
       activeContextWindow,
       autoCompactTokenLimit,
+      applyPatch,
+    }),
+    experimental: experimentalPolicy({
+      nativePlaintextSpawn,
+      schemaSha256: nativePlaintextSpawnSchemaSha256,
     }),
   };
 }
@@ -379,6 +457,10 @@ export function resolveSpawnableOllamaSlugs(config: CobFileConfig): string[] {
 
 export function catalogSupportsSearchTool(config: CobFileConfig): boolean {
   return config.catalog?.supportsSearchTool === true;
+}
+
+export function catalogSupportsApplyPatch(config: CobFileConfig): boolean {
+  return config.catalog?.applyPatch === true;
 }
 
 export function cobTomlExists(path: string): boolean {
@@ -442,12 +524,26 @@ function catalogPolicy(opts: {
   advertiseCloudMaxContext?: boolean;
   activeContextWindow?: number;
   autoCompactTokenLimit?: number;
+  applyPatch?: boolean;
 }): CatalogPolicy {
   return {
     supportsSearchTool: opts.supportsSearchTool,
+    applyPatch: opts.applyPatch === true,
     ...(opts.advertiseCloudMaxContext === true ? { advertiseCloudMaxContext: true } : {}),
     ...(typeof opts.activeContextWindow === "number" ? { activeContextWindow: opts.activeContextWindow } : {}),
     ...(typeof opts.autoCompactTokenLimit === "number" ? { autoCompactTokenLimit: opts.autoCompactTokenLimit } : {}),
+  };
+}
+
+function experimentalPolicy(opts: {
+  nativePlaintextSpawn: boolean;
+  schemaSha256?: string;
+}): ExperimentalPolicy {
+  return {
+    nativePlaintextSpawn: {
+      enabled: opts.nativePlaintextSpawn,
+      ...(opts.schemaSha256 ? { schemaSha256: opts.schemaSha256 } : {}),
+    },
   };
 }
 
@@ -478,10 +574,20 @@ function parseTomlBool(value: string, field: string): boolean {
   throw new CobConfigError("invalid_cob_toml", `${field} must be true or false`);
 }
 
-function parseEnvBool(value: string | undefined): boolean | undefined {
+function parseEnvBool(value: string | undefined, field = "COB_SUPPORTS_SEARCH_TOOL"): boolean | undefined {
   if (value === undefined || value.trim().length === 0) return undefined;
   const trimmed = value.trim().toLowerCase();
   if (trimmed === "1" || trimmed === "true") return true;
   if (trimmed === "0" || trimmed === "false") return false;
-  throw new CobConfigError("invalid_cob_toml", `COB_SUPPORTS_SEARCH_TOOL must be true or false`);
+  throw new CobConfigError("invalid_cob_toml", `${field} must be true or false`);
+}
+
+function parseSchemaSha256(value: string | undefined, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.length === 0) return undefined;
+  if (!/^[0-9a-f]{64}$/.test(trimmed)) {
+    throw new CobConfigError("invalid_cob_toml", `${field} must be a 64-character SHA-256 hex digest`);
+  }
+  return trimmed;
 }

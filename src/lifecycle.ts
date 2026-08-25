@@ -41,6 +41,7 @@ import { resolvePaths, type CobPaths } from "./paths.js";
 import { detectInstall, formatInstallLine, isLiveCodexHome } from "./install.js";
 import {
   catalogSupportsSearchTool,
+  catalogSupportsApplyPatch,
   DEFAULT_CATALOG_POLICY,
   resolveCobConfig,
   resolveSpawnableOllamaSlugs,
@@ -250,6 +251,8 @@ export async function syncCatalog(opts: {
   paths: CobPaths;
   ollamaUrl: string;
   spawnableOllamaSlugs?: readonly string[];
+  applyPatch?: boolean;
+  cob?: CobFileConfig;
   locked?: boolean;
   discovery?: CatalogDiscovery;
   inspect?: InspectCodexIo;
@@ -270,15 +273,22 @@ async function syncCatalogUnlocked(opts: {
   ollamaUrl: string;
   spawnableOllamaSlugs?: readonly string[];
   supportsSearchTool?: boolean;
+  applyPatch?: boolean;
+  cob?: CobFileConfig;
   discovery?: CatalogDiscovery;
   inspect?: InspectCodexIo;
   keepLastGoodOnReject?: boolean;
 }): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
   assertLoopbackHttpUrl(opts.ollamaUrl, "Ollama URL");
-  const cob = resolveCobConfig({ paths: opts.paths });
+  const cob = opts.cob ?? resolveCobConfig({ paths: opts.paths });
   const spawnable =
     opts.spawnableOllamaSlugs ?? resolveSpawnableOllamaSlugs(cob);
   const supportsSearchTool = opts.supportsSearchTool ?? catalogSupportsSearchTool(cob);
+  // Gate 5 is an isolated development capability. A live ~/.codex home must
+  // never receive the advertised alias even if a stale opt-in is present.
+  const applyPatch =
+    !isLiveCodexHome(opts.paths.codexHome) &&
+    (opts.applyPatch ?? catalogSupportsApplyPatch(cob));
   const discovery =
     opts.discovery ??
     discoverCodexBins({
@@ -307,6 +317,7 @@ async function syncCatalogUnlocked(opts: {
   const catalog = mergeCatalogWithFallback(bundled, tags, previous, Boolean(ollamaError), {
     spawnableOllamaSlugs: spawnable,
     supportsSearchTool,
+    applyPatch,
     advertiseCloudMaxContext: cob.catalog?.advertiseCloudMaxContext === true,
     activeContextWindow: cob.catalog?.activeContextWindow,
     autoCompactTokenLimit: cob.catalog?.autoCompactTokenLimit,
@@ -336,7 +347,11 @@ async function syncCatalogUnlocked(opts: {
       throw error;
     }
   }
-  const wrote = writeCatalogIfChanged(opts.paths.catalog, catalog, { allowSearchTool: supportsSearchTool });
+  const wrote = writeCatalogIfChanged(opts.paths.catalog, catalog, {
+    allowSearchTool: supportsSearchTool,
+    allowApplyPatch: applyPatch,
+    spawnableOllamaSlugs: spawnable,
+  });
   writeCatalogProvenance({
     metaPath: opts.paths.catalogMeta,
     catalogBytes: readFileSync(opts.paths.catalog),
@@ -377,7 +392,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
   const paths = opts.paths ?? resolvePaths();
   const port = opts.port ?? DEFAULT_PORT;
   const ollamaUrl = opts.ollamaUrl ?? DEFAULT_OLLAMA_URL;
-  const cob =
+  const resolvedCob =
     opts.cob ??
     resolveCobConfig({
       paths,
@@ -387,6 +402,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
       ollamaModel: opts.compaction?.ollamaModel,
       ollamaEffort: opts.compaction?.ollamaEffort,
     });
+  const cob = restrictExperimentalToIsolatedHome(resolvedCob, isLiveCodexHome(paths.codexHome));
   const spawnable = resolveSpawnableOllamaSlugs(cob);
   const before = readRootConfig(paths);
   const synced = await syncCatalogUnlocked({
@@ -394,6 +410,8 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     ollamaUrl,
     spawnableOllamaSlugs: spawnable,
     supportsSearchTool: catalogSupportsSearchTool(cob),
+    applyPatch: catalogSupportsApplyPatch(cob),
+    cob,
     discovery: opts.discovery,
     inspect: opts.inspect,
     keepLastGoodOnReject: true,
@@ -403,6 +421,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     compaction: cob.compaction,
     subagents: { models: spawnable },
     catalog: cob.catalog ?? DEFAULT_CATALOG_POLICY,
+    experimental: cob.experimental,
   });
   assertRootConfigUnchanged(paths, before);
   return {
@@ -414,6 +433,31 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     ollamaError: synced.ollamaError,
     compaction: cob.compaction,
     cob,
+  };
+}
+
+/** Isolated-only experiments are never persisted or armed in the live Desktop home. */
+export function restrictExperimentalToIsolatedHome(cob: CobFileConfig, liveHome: boolean): CobFileConfig {
+  if (!liveHome) return cob;
+  const applyPatchOn = cob.catalog?.applyPatch === true;
+  const spawn = cob.experimental?.nativePlaintextSpawn;
+  const spawnOn = spawn?.enabled === true;
+  const spawnDigest = typeof spawn?.schemaSha256 === "string" && spawn.schemaSha256.length > 0;
+  if (!applyPatchOn && !spawnOn && !spawnDigest) return cob;
+  return {
+    ...cob,
+    catalog: applyPatchOn
+      ? {
+          ...(cob.catalog ?? DEFAULT_CATALOG_POLICY),
+          applyPatch: false,
+        }
+      : cob.catalog,
+    experimental:
+      spawnOn || spawnDigest
+        ? {
+            nativePlaintextSpawn: { enabled: false },
+          }
+        : cob.experimental,
   };
 }
 
@@ -444,6 +488,12 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
         catalogPath: next.paths.catalog,
         nonce,
         compaction: next.compaction,
+        nativePlaintextSpawn: next.cob.experimental?.nativePlaintextSpawn,
+        // The gateway owns the wire translator; lifecycle only threads the
+        // isolated catalog decision into the implemented Gate 5 bridge.
+        ...(catalogSupportsApplyPatch(next.cob) && !isLiveCodexHome(next.paths.codexHome)
+          ? { applyPatch: true }
+          : {}),
         stateDir: next.paths.stateDir,
       });
       const install = detectInstall();

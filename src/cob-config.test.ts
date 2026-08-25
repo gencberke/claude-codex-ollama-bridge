@@ -130,7 +130,64 @@ auto_compact_token_limit = 230400
     assert.equal(policy.compaction.model, undefined);
     assert.equal(policy.compaction.ollamaThreads, "summarize");
     assert.equal(policy.catalog?.supportsSearchTool, true);
+    assert.equal(policy.catalog?.applyPatch, false);
     assert.deepEqual(resolveSpawnableOllamaSlugs(policy), ["ollama/deepseek-v4-flash:0731-cloud"]);
+  });
+
+  it("keeps Gate 5 default-off and preserves an explicit false through render/resolve", () => {
+    const defaults = parseCobToml("[catalog]\n");
+    assert.equal(defaults.catalog?.applyPatch, false);
+    const explicitFalse = parseCobToml("[catalog]\napply_patch = false\n");
+    assert.equal(explicitFalse.catalog?.applyPatch, false);
+
+    const dir = mkdtempSync(join(tmpdir(), "cob-toml-patch-off-"));
+    const path = join(dir, "cob.toml");
+    writeCobToml(path, {
+      compaction: { provider: "native" },
+      subagents: {},
+      catalog: { supportsSearchTool: true, applyPatch: false },
+    });
+    assert.match(readFileSync(path, "utf8"), /apply_patch = false/);
+    const resolved = resolveCobConfig({ paths: { cobConfig: path }, env: {} });
+    assert.equal(resolved.catalog?.applyPatch, false);
+    writeCobToml(path, resolved);
+    assert.match(readFileSync(path, "utf8"), /apply_patch = false/);
+  });
+
+  it("parses and resolves Gate 5 true only when explicitly selected", () => {
+    const parsed = parseCobToml("[catalog]\napply_patch = true\n");
+    assert.equal(parsed.catalog?.applyPatch, true);
+    const dir = mkdtempSync(join(tmpdir(), "cob-toml-patch-on-"));
+    const path = join(dir, "cob.toml");
+    writeCobToml(path, {
+      compaction: { provider: "native" },
+      subagents: {},
+      catalog: { supportsSearchTool: true, applyPatch: true },
+    });
+    const text = readFileSync(path, "utf8");
+    assert.match(text, /apply_patch = true/);
+    assert.equal(resolveCobConfig({ paths: { cobConfig: path }, env: {} }).catalog?.applyPatch, true);
+    assert.equal(resolveCobConfig({ paths: { cobConfig: path }, applyPatch: false, env: {} }).catalog?.applyPatch, false);
+    assert.equal(resolveCobConfig({ paths: { cobConfig: path }, applyPatch: true, env: {} }).catalog?.applyPatch, true);
+    assert.throws(
+      () => parseCobToml("[catalog]\napply_patch = \"yes\"\n"),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_cob_toml",
+    );
+  });
+
+  it("keeps the Gate 1-3 native plaintext experiment disabled and fingerprint-gated", () => {
+    const defaults = resolveCobConfig({ env: {} });
+    assert.equal(defaults.experimental?.nativePlaintextSpawn.enabled, false);
+    const digest = "a".repeat(64);
+    const parsed = parseCobToml(`[experimental]\nnative_plaintext_spawn = true\nnative_plaintext_spawn_schema_sha256 = "${digest}"\n`);
+    assert.deepEqual(parsed.experimental?.nativePlaintextSpawn, { enabled: true, schemaSha256: digest });
+    const rendered = renderCobToml(parsed);
+    assert.match(rendered, /native_plaintext_spawn = true/);
+    assert.match(rendered, new RegExp(digest));
+    assert.throws(
+      () => parseCobToml(`[experimental]\nnative_plaintext_spawn_schema_sha256 = "short"\n`),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_cob_toml",
+    );
   });
 
   it("treats an explicit empty spawn list as none spawnable", () => {
@@ -165,7 +222,7 @@ auto_compact_token_limit = 230400
     writeCobToml(path, {
       compaction: { provider: "native" },
       subagents: {},
-      catalog: { supportsSearchTool: false },
+      catalog: { supportsSearchTool: false, applyPatch: false },
     });
     const text = readFileSync(path, "utf8");
     assert.match(text, /supports_search_tool = false/);
@@ -186,7 +243,7 @@ supports_search_tool = true
     writeCobToml(path, {
       compaction: { provider: "native" },
       subagents: {},
-      catalog: { supportsSearchTool: true },
+      catalog: { supportsSearchTool: true, applyPatch: false },
     });
     const fromFile = resolveCobConfig({ paths: { cobConfig: path }, env: {} });
     assert.equal(fromFile.catalog?.supportsSearchTool, true);

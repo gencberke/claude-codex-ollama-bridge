@@ -134,4 +134,17 @@ describe("bounded SSE parser", () => {
     const error = await boom;
     assert.equal(error instanceof SseLimitError, true);
   });
+
+  it("fails before relaying malformed data when the caller enables strict mode", async () => {
+    const transform = sseRewriteTransform((value) => value, undefined, { failOnError: true });
+    const chunks: Buffer[] = [];
+    transform.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const boom = new Promise<Error>((resolve) => {
+      transform.on("error", (error: Error) => resolve(error));
+    });
+    transform.end(Buffer.from('data: {"ok":true}\ndata: SECRET_NOT_JSON\n', "utf8"));
+    const error = await boom;
+    assert.equal(error.message, "SSE data payload is invalid");
+    assert.equal(Buffer.concat(chunks).toString("utf8").includes("SECRET_NOT_JSON"), false);
+  });
 });

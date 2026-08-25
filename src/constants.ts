@@ -79,6 +79,7 @@ export const OLLAMA_CATALOG_FIELDS = [
   "supports_parallel_tool_calls",
   "supports_image_detail_original",
   "supports_search_tool",
+  "apply_patch_tool_type",
   "shell_type",
   "truncation_policy",
   "experimental_supported_tools",

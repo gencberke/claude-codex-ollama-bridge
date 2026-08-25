@@ -201,6 +201,7 @@ describe("npm pack manifest", () => {
     assert.equal(pkg.files.includes("dist/*.js"), true);
     assert.equal(pkg.files.includes("!dist/*.test.js"), true);
     assert.equal(pkg.files.includes("!dist/*.harness.js"), true);
+    assert.equal(pkg.files.includes("!dist/gate6h.js"), true);
     assert.equal(pkg.files.includes("src"), false);
   });
 });

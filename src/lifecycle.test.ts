@@ -28,6 +28,7 @@ import {
   prepareProfileAndCatalog,
   readRuntime,
   readStartLease,
+  restrictExperimentalToIsolatedHome,
   restoreCob,
   restoreOverlays,
   serveForeground,
@@ -43,6 +44,26 @@ import { resolvePaths } from "./paths.js";
 import { cobProcessIdentity, isOurCobArgv, processStartKey } from "./process-info.js";
 
 describe("lifecycle primitives", () => {
+  it("forces Gate 5 and native plaintext off before a live home policy is persisted", () => {
+    const cob = {
+      compaction: { provider: "native" as const },
+      subagents: { models: ["ollama/deepseek-v4-flash:0731-cloud"] },
+      catalog: { supportsSearchTool: true, applyPatch: true },
+      experimental: {
+        nativePlaintextSpawn: { enabled: true, schemaSha256: "5".repeat(64) },
+      },
+    };
+    const isolated = restrictExperimentalToIsolatedHome(cob, false);
+    assert.equal(isolated.catalog?.applyPatch, true);
+    assert.equal(isolated.experimental?.nativePlaintextSpawn.enabled, true);
+    assert.equal(isolated.experimental?.nativePlaintextSpawn.schemaSha256, "5".repeat(64));
+
+    const live = restrictExperimentalToIsolatedHome(cob, true);
+    assert.equal(live.catalog?.applyPatch, false);
+    assert.equal(live.experimental?.nativePlaintextSpawn.enabled, false);
+    assert.equal(live.experimental?.nativePlaintextSpawn.schemaSha256, undefined);
+  });
+
   it("gives unique temp names for concurrent writes", () => {
     const target = join(tmpdir(), "cob-atomic-target");
     const names = new Set(Array.from({ length: 20 }, () => uniqueTempPath(target)));
@@ -982,6 +1003,66 @@ describe("overlay rollback and start lease", () => {
       else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
       if (previousBin === undefined) delete process.env.COB_CODEX_BIN;
       else process.env.COB_CODEX_BIN = previousBin;
+    }
+  });
+
+  it("keeps Gate 5 isolated and applies patch only to the configured spawn row during sync", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-patch-opt-in-"));
+    const paths = resolvePaths(dir);
+    const bin = join(dir, "fake-codex");
+    writeFileSync(
+      bin,
+      "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\",\"visibility\":\"list\",\"apply_patch_tool_type\":\"freeform\"}]}'\n",
+    );
+    chmodSync(bin, 0o755);
+    writeFileSync(
+      paths.cobConfig,
+      `[compaction]\nprovider = "native"\n\n[subagents]\nmodels = ["ollama/deepseek-v4-flash:0731-cloud"]\n\n[catalog]\napply_patch = true\n`,
+    );
+    const ollamaPort = await freePort();
+    const ollama = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          models: [
+            { name: "deepseek-v4-flash:cloud", capabilities: ["completion", "tools", "thinking"] },
+            { name: "deepseek-v4-flash:0731-cloud", capabilities: ["completion", "tools", "thinking"] },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve, reject) => {
+      ollama.once("error", reject);
+      ollama.listen(ollamaPort, "127.0.0.1", () => resolve());
+    });
+    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
+    process.env.COB_SKIP_CATALOG_CHECK = "1";
+    try {
+      await syncCatalog({
+        paths,
+        ollamaUrl: `http://127.0.0.1:${ollamaPort}`,
+        locked: true,
+        discovery: { liveHome: false, platform: "darwin", pathBin: bin },
+        inspect: { readVersion: () => "codex-cli test" },
+      });
+      const catalog = JSON.parse(readFileSync(paths.catalog, "utf8")) as {
+        models: Array<Record<string, unknown>>;
+      };
+      const spawn = catalog.models.find((model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud");
+      const nonSpawn = catalog.models.find((model) => model.slug === "ollama/deepseek-v4-flash:cloud");
+      const native = catalog.models.find((model) => model.slug === "gpt-5.6-sol");
+      assert.equal(spawn?.apply_patch_tool_type, "freeform");
+      assert.equal("apply_patch_tool_type" in (nonSpawn ?? {}), false);
+      assert.equal(native?.apply_patch_tool_type, "freeform");
+      assert.equal(spawn?.shell_type, "disabled");
+      assert.equal(spawn?.multi_agent_version, "v1");
+      assert.match(readFileSync(paths.cobConfig, "utf8"), /apply_patch = true/);
+    } finally {
+      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
+      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
+      await new Promise<void>((resolve, reject) => {
+        ollama.close((error) => (error ? reject(error) : resolve()));
+      });
     }
   });
 
