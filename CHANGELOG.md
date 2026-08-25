@@ -32,6 +32,10 @@ fields and cob/ocx1/Fernet prefixes. Native alias outputs reject extra keys
 and non-Ollama spawn models. Summarizer HTTP failures log only
 status/bytes/SHA. Gate 6-H requires child-side phase evidence and records
 `controller_sequencing_observed` with `transport_unmeasured`.
+Pack-excluded eval fixtures add isolated approval preflight (G2–G4
+read-only/`never`, G5 disposable workspace-write/`never`), G8-R completed
+checkpoint replay, G9 compact protocol scoring, and content-free hashed
+receipts. They do not authorize a live canary, cob queue, or pack.
 A real 0731 child
 canary completed one native custom patch edit without a shell/temp-binary or
 parent-applied patch. This is not packed, installed, or enabled on live

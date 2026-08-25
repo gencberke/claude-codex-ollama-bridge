@@ -11,7 +11,8 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultDevHome, defaultLiveHome, findPackageRoot } from "./install.js";
+import { DEFAULT_DEV_PORT, defaultDevHome, defaultLiveHome, findPackageRoot } from "./install.js";
+import { runEvalPreflight } from "./eval-preflight.js";
 import {
   GATE6H_CONTROLLER_SEQUENCING_OBSERVED,
   GATE6H_MAX_ATTEMPTS,
@@ -65,6 +66,21 @@ async function main(): Promise<void> {
 
   const liveBefore = snapshotLive();
   assertDevHome();
+  const preflight = runEvalPreflight({
+    lane: "g6h_controller",
+    codexHome: DEV_HOME,
+    gatewayPort: DEFAULT_DEV_PORT,
+    requireDevPort: true,
+    liveHome: defaultLiveHome(),
+    sandbox: "workspace-write",
+    approvalPolicy: "never",
+    nativePlaintextSpawn: true,
+    expectedLive: {
+      configSha256: liveBefore.config,
+      catalogSha256: liveBefore.catalog,
+    },
+  });
+  if (!preflight.ok) throw new Error(`${preflight.code}: ${preflight.message}`);
   const cobTomlPath = join(DEV_HOME, "cob.toml");
   const previousToml = existsSync(cobTomlPath) ? readFileSync(cobTomlPath) : undefined;
   writeFileSync(cobTomlPath, COB_TOML_RESTORE);

@@ -12,6 +12,7 @@
     "!dist/*.test.js",
     "!dist/*.harness.js",
     "!dist/gate6h.js",
+    "!dist/eval-*.js",
     "README.md",
     "CHANGELOG.md",
     "RELEASE.md",

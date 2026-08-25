@@ -613,19 +613,30 @@ worktree plus two child-native `apply_patch` edits. The 2026-08-25 canary
 failed `worktree_not_distinct`: two native patches landed in the parent
 repo cwd. That is not worktree gold.
 
-## G23 / Gate 8 — isolated gateway restart, same child
+## G23 / Gate 8 — isolated gateway restart
 
-Spawn one 0731 child, issue `wait_agent`, restart isolated cob (`stop --dev`
-then `start --dev`) while the child is still running, and prove the same
-child session completes. The 2026-08-25 `gate8b_replay` canary passed that
-mid-flight restart check. It is not L6 `previous_response_id` expand and
-not compact replay.
+Two distinct lanes:
+
+- **G8-M** (mid-flight): spawn one 0731 child, issue `wait_agent`, restart
+  isolated cob (`stop --dev` then `start --dev`) while the child is still
+  running, and prove the same child session completes. The 2026-08-25
+  `gate8b_replay` canary passed that check. It is not L6
+  `previous_response_id` expand and not compact replay.
+- **G8-R** (completed checkpoint replay): one completed checkpoint, epoch A
+  stop with the port closed, epoch B start on the same state dir,
+  `previous_response_id` expand, exactly one new checkpoint, and a
+  provider-safe Ollama body (no `previous_response_id`, cob envelope,
+  trigger, or ciphertext). Workspace protocol fixture only until an
+  isolated 0731 canary is authorized.
 
 ## G24 / Gate 9 — isolated Ollama-thread compact + continuation
 
 Do not count live G8 as this gate. Gold needs a `compaction_trigger` on the
 0731 child, a cob summarizer handoff (`cob1.` Codex-facing, none on Ollama),
-and a continuation with `replay_ratio << 1`. The 2026-08-25 8k-catalog
+and two same-child continuations with `replay_ratio << 1`. The workspace
+protocol fixture fail-closes incomplete summaries without cob retry; a
+later compact-ok without those continuations is
+`compaction_continuation_incomplete`, not PASS. The 2026-08-25 8k-catalog
 canary triggered compact but failed closed on
 `compaction_summary_incomplete` for the spawn turn; a later compact-ok
 follow-up did not make the parent wait succeed. Not live G8 gold.

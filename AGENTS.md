@@ -89,9 +89,12 @@ and retries the same fixture at most three times. It does not add a cob
 queue. Three sequencing fails record `controller_sequencing_observed` with
 `transport_unmeasured`. Do not pack the harness, run a fourth Sol canary, or
 write a cob-owned queue.
-Isolated 2026-08-25 canaries: Gate 7 FAIL `worktree_not_distinct`; Gate 8
-PASS same-child continue after mid-flight `cob stop --dev`/`start --dev`;
-Gate 9 FAIL `compaction_summary_incomplete` (8k catalog lie; not live G8);
+Isolated 2026-08-25 canaries: Gate 7 FAIL `worktree_not_distinct`; Gate 8-M
+PASS same-child continue after mid-flight `cob stop --dev`/`start --dev`
+(not G8-R completed-checkpoint replay); Gate 9 FAIL
+`compaction_summary_incomplete` (8k catalog lie; a later compact-ok is not
+gold without continuation; not live G8). Pack-excluded eval fixtures cover
+G2–G5 approval preflight, G8-R replay, and G9 protocol without a live canary.
 Gate 10 FAIL no nested leaf (`collaboration.spawn_agent` absent from the
 0731 child toolset). Desktop hop stays separately authorized. Next Gate 6
 work is cob-external Upstream U1 (direct Codex collaboration driver). If

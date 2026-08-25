@@ -41,7 +41,7 @@ native slugs to “survive” an update.
 | cob gateway | global **0.1.13**, pid **35004**, `127.0.0.1:18790`, host-network health `ok`, overlay `ok`; catalog provenance currently `stale` after a Desktop producer file-identity change. Dev isolate `:18791` is down. |
 | Packed live | **0.1.13**, 43-file tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`; globally installed 2026-08-24. G12 rollback, G14, and G17 later passed on this exact listener/artifact. |
 | Prior live | **0.1.12**, 43-file tarball SHA-256 `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`; G11 + G12 default-on + two-turn smoke. Do not repack. |
-| Source checkpoint | `e932eb19c551fbda96dc83fe7fe34840afff2371` on `master`; clean tree at handoff. Rebuilt production JS matched the retained 0.1.12 tarball byte-for-byte. No tag/push/publish. |
+| Source checkpoint | `7cfc338` on `master` (isolated V2/apply_patch hardening on the 0.1.12 JS checkpoint). Do not treat this as a live pack. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | **26.818.41509** (WP0 2026-08-23), bundled `codex-cli 0.149.0-alpha.4.1`. Earlier gold hop: 26.818.22352 / alpha.21 |
 | Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). 0.32.14→0.32.15 on 2026-08-21; cob unchanged. |
@@ -76,6 +76,9 @@ The Gate 6-H harness pre/post hashes matched this value. Catalog remains
 - Isolated Gate 7–10 canaries ran 2026-08-25 on `:18791` (see Proven). They
   are not product gold. Gate 6-H remains pack-excluded (`npm run gate6h`).
   Desktop hop stays separately authorized.
+- Workspace eval fixtures (pack-excluded) cover G2–G5 approval preflight,
+  G8-R completed-checkpoint replay, and G9 compact protocol scoring. They
+  are not isolated 0731 gold and do not authorize a live canary.
 
 Next work is cob-external **Upstream U1**: find or design a Codex
 collaboration runtime driver that, without a model choosing tools, runs
