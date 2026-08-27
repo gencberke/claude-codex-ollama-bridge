@@ -2,6 +2,19 @@ import { StringDecoder } from "node:string_decoder";
 import { Transform } from "node:stream";
 import { MAX_SSE_LINE_BYTES } from "./limits.js";
 
+/** Codex/OpenAI Responses SSE error terminal. Never sent on Claude or raw relays. */
+export function sseErrorTerminal(message: string): string {
+  const payload = JSON.stringify({
+    error: { type: "server_error", code: "upstream_stream_error", message },
+  });
+  return `data: ${payload}\n\ndata: [DONE]\n\n`;
+}
+
+/** Codex/OpenAI Responses SSE completion terminal. */
+export function sseDoneTerminal(): string {
+  return "data: [DONE]\n\n";
+}
+
 export class SseLimitError extends Error {
   readonly code = "sse_frame_too_large";
   readonly status = 413;

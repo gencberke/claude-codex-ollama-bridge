@@ -3,6 +3,12 @@ import { PassThrough, type Readable, type Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { IdleTimeoutError } from "./timeouts.js";
 
+/**
+ * Surface-owned writer invoked when an upstream stream fails after response
+ * headers were sent. The raw relay itself never emits a protocol terminal.
+ */
+export type StreamFailureWriter = (res: ServerResponse, error: unknown) => void | Promise<void>;
+
 export function attachCancellation(req: IncomingMessage, res: ServerResponse): AbortController {
   const abort = new AbortController();
   const trip = (): void => {
@@ -25,21 +31,10 @@ export function attachCancellation(req: IncomingMessage, res: ServerResponse): A
   return abort;
 }
 
-export function sseErrorTerminal(message: string): string {
-  const payload = JSON.stringify({
-    error: { type: "server_error", code: "upstream_stream_error", message },
-  });
-  return `data: ${payload}\n\ndata: [DONE]\n\n`;
-}
-
-export function sseDoneTerminal(): string {
-  return "data: [DONE]\n\n";
-}
-
 export async function relayPassthrough(
   source: Readable,
   res: ServerResponse,
-  opts: { idleMs: number; abort: AbortController },
+  opts: { idleMs: number; abort: AbortController; onUpstreamFailure?: StreamFailureWriter },
 ): Promise<boolean> {
   return relayThrough(source, res, opts);
 }
@@ -48,7 +43,13 @@ export async function relayTransformed(
   source: Readable,
   transform: Transform,
   res: ServerResponse,
-  opts: { idleMs: number; abort: AbortController; endResponse?: boolean; appendErrorTerminal?: boolean },
+  opts: {
+    idleMs: number;
+    abort: AbortController;
+    endResponse?: boolean;
+    appendErrorTerminal?: boolean;
+    onUpstreamFailure?: StreamFailureWriter;
+  },
 ): Promise<boolean> {
   const idle = watchIdle(source, opts.idleMs, opts.abort);
   const sink = responseSink(res, opts.endResponse !== false, idle);
@@ -57,7 +58,7 @@ export async function relayTransformed(
   } catch (error) {
     idle.clear();
     if (!res.headersSent || opts.appendErrorTerminal === false) throw error;
-    await failRelayedResponse(res, error);
+    await finishFailedRelay(res, error, opts.onUpstreamFailure);
     return false;
   }
   idle.clear();
@@ -67,7 +68,7 @@ export async function relayTransformed(
 async function relayThrough(
   source: Readable,
   res: ServerResponse,
-  opts: { idleMs: number; abort: AbortController },
+  opts: { idleMs: number; abort: AbortController; onUpstreamFailure?: StreamFailureWriter },
 ): Promise<boolean> {
   const idle = watchIdle(source, opts.idleMs, opts.abort);
   const sink = responseSink(res, true, idle);
@@ -76,26 +77,38 @@ async function relayThrough(
   } catch (error) {
     idle.clear();
     if (!res.headersSent) throw error;
-    await failRelayedResponse(res, error);
+    await finishFailedRelay(res, error, opts.onUpstreamFailure);
     return false;
   }
   idle.clear();
   return true;
 }
 
-export async function failRelayedResponse(res: ServerResponse, error: unknown): Promise<void> {
+/**
+ * Protocol-free failure ending: benign aborts and upstream failures both end
+ * the truncated response without writing any protocol body. Surfaces that own
+ * a terminal contract pass onUpstreamFailure.
+ */
+async function finishFailedRelay(
+  res: ServerResponse,
+  error: unknown,
+  onUpstreamFailure?: StreamFailureWriter,
+): Promise<void> {
   if (isBenignAbort(error)) {
     if (!res.writableEnded) res.end();
     return;
   }
-  const message = error instanceof Error ? error.message : String(error);
-  if (!res.headersSent) {
+  if (res.writableEnded) return;
+  if (!onUpstreamFailure) {
+    try {
+      res.end();
+    } catch {
+      res.destroy();
+    }
     return;
   }
-  if (res.writableEnded) return;
   try {
-    res.write(sseErrorTerminal(message));
-    res.end();
+    await onUpstreamFailure(res, error);
   } catch {
     res.destroy();
   }

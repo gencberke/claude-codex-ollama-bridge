@@ -27,8 +27,9 @@ import { applyCobRouteDirective, formatClaudeRouteLog } from "./claude-route.js"
 import { ANTHROPIC_COUNT_TOKENS_URL, ANTHROPIC_MESSAGES_URL } from "./claude-constants.js";
 import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import { assertLoopbackBindHost, assertLoopbackHttpUrl } from "./loopback.js";
+import { BodyAbortedError, BodyLimitError, readLimitedBody } from "./limits.js";
 import { attachCancellation, relayPassthrough } from "./relay.js";
-import { fetchWithHeadersTimeout, IdleTimeoutError } from "./timeouts.js";
+import { fetchWithHeadersTimeout, HeadersTimeoutError, IdleTimeoutError } from "./timeouts.js";
 
 const HEADERS_TIMEOUT_MS = 30_000;
 const OLLAMA_HEADERS_TIMEOUT_MS = 240_000;
@@ -85,7 +86,7 @@ export function createClaudeGateway(options: ClaudeGatewayOptions): Server {
         if (!res.writableEnded) res.end();
         return;
       }
-      if (error instanceof IdleTimeoutError) {
+      if (error instanceof HeadersTimeoutError || error instanceof IdleTimeoutError) {
         anthropicError(res, 504, "timeout_error", error.message);
         return;
       }
@@ -144,7 +145,17 @@ async function handleClaudeRequest(
     return;
   }
 
-  const raw = await readBody(req, MAX_BODY_BYTES);
+  let raw: Buffer;
+  try {
+    raw = await readLimitedBody(req, { maxBytes: MAX_BODY_BYTES });
+  } catch (error) {
+    if (error instanceof BodyLimitError) {
+      anthropicError(res, 413, "invalid_request_error", error.message);
+      return;
+    }
+    if (error instanceof BodyAbortedError) return;
+    throw error;
+  }
   let payload: JsonObject;
   try {
     const parsed: unknown = JSON.parse(raw.toString("utf8"));
@@ -274,24 +285,6 @@ function pickHeaders(req: IncomingMessage, allowlist: readonly string[]): Record
 function anthropicError(res: ServerResponse, status: number, type: string, message: string): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify({ type: "error", error: { type, message } }));
-}
-
-function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > maxBytes) {
-        req.destroy();
-        reject(new Error("request body too large"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
 }
 
 async function defaultFetch(

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { listenClaudeGateway } from "./claude-gateway.js";
+import { MAX_RAW_BODY_BYTES } from "./limits.js";
 import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
+import { HeadersTimeoutError } from "./timeouts.js";
 
 describe("cob claude gateway", () => {
   it("health is cob claude and unknown routes fail closed", async () => {
@@ -233,6 +236,117 @@ describe("cob claude gateway", () => {
       assert.match(logs[1] ?? "", /backend=anthropic/);
       assert.match(logs[1] ?? "", /cob_route=0/);
       assert.match(logs[1] ?? "", /cob_route_ignored=native_id/);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("maps an oversized body to typed 413 invalid_request_error", async () => {
+    const server = await listenClaudeGateway({ port: 0, listOllamaTags: async () => [] });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const { status, body } = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port,
+            path: "/v1/messages",
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "content-length": String(MAX_RAW_BODY_BYTES + 1),
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () => {
+              resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") });
+            });
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      assert.equal(status, 413);
+      const payload = JSON.parse(body) as { type: string; error: { type: string; message: string } };
+      assert.equal(payload.type, "error");
+      assert.equal(payload.error.type, "invalid_request_error");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("maps an upstream headers timeout to 504 timeout_error", async () => {
+    const server = await listenClaudeGateway({
+      port: 0,
+      ollamaUrl: "http://127.0.0.1:9",
+      fetchImpl: async () => {
+        throw new HeadersTimeoutError();
+      },
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: "POST",
+        headers: { authorization: "Bearer oauth-token", "content-type": "application/json" },
+        body: JSON.stringify({ model: "opus", messages: [] }),
+      });
+      assert.equal(response.status, 504);
+      const payload = (await response.json()) as { type: string; error: { type: string } };
+      assert.equal(payload.type, "error");
+      assert.equal(payload.error.type, "timeout_error");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("ends a mid-stream upstream failure without a Codex terminal body", async () => {
+    const server = await listenClaudeGateway({
+      port: 0,
+      ollamaUrl: "http://127.0.0.1:9",
+      fetchImpl: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("event: message_start\n\n"));
+            },
+            async pull(controller) {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              controller.error(new Error("upstream exploded"));
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const body = await new Promise<string>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port,
+            path: "/v1/messages",
+            method: "POST",
+            headers: {
+              authorization: "Bearer oauth-token",
+              "content-type": "application/json",
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+            res.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+          },
+        );
+        req.on("error", reject);
+        req.end(JSON.stringify({ model: "opus", messages: [] }));
+      });
+      assert.equal(body.includes("message_start"), true);
+      assert.equal(body.includes("[DONE]"), false);
+      assert.equal(body.includes("upstream_stream_error"), false);
+      assert.equal(body.includes("server_error"), false);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

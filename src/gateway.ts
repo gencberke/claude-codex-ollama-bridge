@@ -80,13 +80,13 @@ import {
 } from "./limits.js";
 import {
   attachCancellation,
+  isBenignAbort,
   relayPassthrough,
   relayTransformed,
-  sseDoneTerminal,
-  sseErrorTerminal,
+  type StreamFailureWriter,
 } from "./relay.js";
 import { HeadersTimeoutError, IdleTimeoutError } from "./timeouts.js";
-import { sseRewriteTransform, type SseObserver } from "./sse.js";
+import { sseDoneTerminal, sseErrorTerminal, sseRewriteTransform, type SseObserver } from "./sse.js";
 import type { CatalogFile } from "./types.js";
 import type { JsonObject } from "./json.js";
 import { isRecord } from "./json.js";
@@ -1487,6 +1487,25 @@ function copyUpstreamHeaders(upstream: Response): Record<string, string> {
   return headers;
 }
 
+/**
+ * Codex-owned failure writer: after headers are sent, upstream stream failures
+ * end with the OpenAI Responses error terminal. Claude and raw relays never use it.
+ */
+const codexStreamFailure: StreamFailureWriter = async (res, error) => {
+  if (isBenignAbort(error)) {
+    if (!res.writableEnded) res.end();
+    return;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (res.writableEnded) return;
+  try {
+    res.write(sseErrorTerminal(message));
+    res.end();
+  } catch {
+    res.destroy();
+  }
+};
+
 async function relay(
   upstream: Response,
   res: ServerResponse,
@@ -1504,6 +1523,7 @@ async function relay(
   await relayPassthrough(nodeStream, res, {
     idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
     abort,
+    onUpstreamFailure: codexStreamFailure,
   });
 }
 
@@ -1537,6 +1557,7 @@ async function relayNativePlaintextSpawn(
         idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
         abort,
         endResponse: true,
+        onUpstreamFailure: codexStreamFailure,
       },
     );
     return;
@@ -1685,6 +1706,7 @@ async function relayOllama(
           abort,
           endResponse: false,
           appendErrorTerminal: !failClosedSse,
+          onUpstreamFailure: codexStreamFailure,
         },
       );
     } catch (error) {

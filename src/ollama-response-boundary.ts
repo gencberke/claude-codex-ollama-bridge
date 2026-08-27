@@ -12,7 +12,7 @@ import {
   type ApplyPatchGuardIssue,
 } from "./apply-patch.js";
 import { sha256Hex8 } from "./request-metrics.js";
-import { sseDoneTerminal } from "./relay.js";
+import { sseDoneTerminal } from "./sse.js";
 import type { JsonObject } from "./json.js";
 import { isRecord } from "./json.js";
 
