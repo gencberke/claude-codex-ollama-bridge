@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readFileBufferOrNull, writeFileAtomic } from "../core/atomic.js";
+import { isRecord, type JsonObject } from "../core/json.js";
 import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./constants.js";
 import { claudeDesktopInferenceModels } from "./models.js";
 import { assertLoopbackHttpUrl } from "../core/loopback.js";
@@ -265,19 +266,18 @@ function cobMetaEntries(existing: unknown): Array<{ id: string; name: string }> 
   return entries;
 }
 
-function readJsonObject(path: string): Record<string, unknown> {
+function readJsonObject(path: string): JsonObject {
   const bytes = readFileBufferOrNull(path);
   if (!bytes) return {};
   try {
     const parsed: unknown = JSON.parse(bytes.toString("utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return parsed as Record<string, unknown>;
+    return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
   }
 }
 
-function writeJson(path: string, value: Record<string, unknown>): void {
+function writeJson(path: string, value: JsonObject): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 }

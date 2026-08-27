@@ -31,6 +31,7 @@ import { BodyAbortedError, BodyLimitError, readLimitedBody } from "../core/http/
 import { attachCancellation } from "../core/http/cancellation.js";
 import { relayPassthrough } from "../core/http/relay.js";
 import { fetchWithHeadersTimeout, HeadersTimeoutError, IdleTimeoutError } from "../core/http/timeouts.js";
+import type { JsonObject } from "../core/json.js";
 
 const HEADERS_TIMEOUT_MS = 30_000;
 const OLLAMA_HEADERS_TIMEOUT_MS = 240_000;
@@ -59,8 +60,6 @@ export type ClaudeGatewayOptions = {
   spawnAllowlist?: readonly string[];
   logLine?: (line: string) => void;
 };
-
-type JsonObject = { [key: string]: unknown };
 
 export function createClaudeGateway(options: ClaudeGatewayOptions): Server {
   const ollamaUrl = (options.ollamaUrl ?? DEFAULT_OLLAMA_URL).replace(/\/$/, "");

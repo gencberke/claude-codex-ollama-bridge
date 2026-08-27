@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
@@ -65,22 +65,37 @@ function forbidden(from: Area, to: Area): boolean {
   return false;
 }
 
+function collectViolations(baseDir: string, label: string, violations: string[]): void {
+  for (const area of AREAS) {
+    const areaDir = join(baseDir, area);
+    if (!existsSync(areaDir)) continue;
+    for (const file of listModules(areaDir)) {
+      const from = areaOf(file);
+      if (!from) continue;
+      for (const specifier of importSpecifiers(readFileSync(file, "utf8"))) {
+        const to = targetArea(file, specifier);
+        if (to && forbidden(from, to)) {
+          violations.push(`${label}/${relative(rootDir, file)} -> ${specifier}`);
+        }
+      }
+    }
+  }
+}
+
 describe("architecture dependency direction", () => {
   it("keeps core self-contained and the two surfaces isolated", () => {
     const violations: string[] = [];
-    for (const area of AREAS) {
-      const files = listModules(join(rootDir, area));
-      assert.equal(files.length > 0, true, `${area}/ must exist`);
-      for (const file of files) {
-        const from = areaOf(file);
-        if (!from) continue;
-        for (const specifier of importSpecifiers(readFileSync(file, "utf8"))) {
-          const to = targetArea(file, specifier);
-          if (to && forbidden(from, to)) {
-            violations.push(`${relative(rootDir, file)} -> ${specifier}`);
-          }
-        }
+    const distCore = join(rootDir, "core");
+    if (existsSync(distCore)) {
+      collectViolations(rootDir, "dist", violations);
+      // The compiled tree alone cannot see type-only imports (erased at emit),
+      // so audit the TypeScript sources too when they sit next to dist.
+      const srcDir = join(rootDir, "..", "src");
+      if (existsSync(join(srcDir, "core"))) {
+        collectViolations(srcDir, "src", violations);
       }
+    } else {
+      collectViolations(rootDir, "src", violations);
     }
     assert.deepEqual(violations, []);
   });

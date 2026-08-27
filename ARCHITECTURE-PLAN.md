@@ -1,6 +1,6 @@
 # COB Mimari Ayrıştırma ve Uygulama Planı
 
-Tarih: 2026-08-27  
+Tarih: 2026-08-27
 Durum: Nihai filtreleme kararı; implementasyon başlamadı
 
 ## 1. Son karar
