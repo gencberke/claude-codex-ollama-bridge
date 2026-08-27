@@ -6,7 +6,7 @@ import {
   ollamaUpstreamModel,
   routeModel,
   stripOllamaPrefix,
-} from "./route.js";
+} from "./codex/route.js";
 
 const native = new Set(["gpt-5.6-luna", "gpt-5.6-sol", "o3", "codex-mini"]);
 

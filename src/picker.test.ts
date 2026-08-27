@@ -5,14 +5,14 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type AddressInfo } from "node:net";
-import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./catalog.js";
-import { listenGateway } from "./gateway.js";
-import { renderCobProfile } from "./profile.js";
-import { resolvePaths } from "./paths.js";
-import { restoreCob } from "./lifecycle.js";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "./json.js";
-import type { OllamaTag } from "./ollama-tags.js";
+import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./codex/catalog.js";
+import { listenGateway } from "./codex/gateway.js";
+import { renderCobProfile } from "./codex/profile.js";
+import { resolvePaths } from "./codex/paths.js";
+import { restoreCob } from "./codex/lifecycle.js";
+import type { CatalogFile } from "./codex/types.js";
+import type { JsonObject } from "./core/json.js";
+import type { OllamaTag } from "./core/ollama/tags.js";
 
 function native(partial: JsonObject): JsonObject {
   return {

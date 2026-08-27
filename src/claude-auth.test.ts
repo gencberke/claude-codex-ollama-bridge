@@ -6,7 +6,7 @@ import {
   parseClaudeCodeCredentialBlob,
   readClaudeCodeAuth,
   resolveAnthropicUpstreamHeaders,
-} from "./claude-auth.js";
+} from "./claude/auth.js";
 
 describe("cob claude anthropic auth", () => {
   it("forwards real OAuth and replaces the cob Desktop placeholder", () => {

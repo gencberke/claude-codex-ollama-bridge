@@ -12,7 +12,7 @@ import {
   sameFilesystemPath,
   summarizeCobStatus,
   type DesktopOverlayInput,
-} from "./root-config.js";
+} from "./codex/root-config.js";
 
 const catalog = "/Users/example/.codex/cob-catalog.json";
 const home = "/Users/example/.codex";

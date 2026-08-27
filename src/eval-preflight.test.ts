@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DEFAULT_PORT } from "./constants.js";
-import { DEFAULT_DEV_PORT } from "./install.js";
+import { DEFAULT_PORT } from "./codex/constants.js";
+import { DEFAULT_DEV_PORT } from "./codex/home.js";
 import { runEvalPreflight, snapshotFileSha256, snapshotLiveEval } from "./eval-preflight.js";
 
 function tempDir(prefix: string): string {

@@ -9,12 +9,12 @@ import {
   OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS,
   OLLAMA_ADVISORY_FIELDS,
   OLLAMA_REQUEST_ALLOWLIST,
-} from "./ollama-boundary.js";
-import { isOllamaReject, prepareOllamaWire, sanitizeOllamaPayload } from "./ollama.js";
-import { buildOllamaSummarizerPayload } from "./compaction.js";
-import { extractOllamaUsage } from "./request-metrics.js";
-import type { JsonObject } from "./json.js";
-import { isRecord } from "./json.js";
+} from "./codex/ollama-boundary.js";
+import { isOllamaReject, prepareOllamaWire, sanitizeOllamaPayload } from "./codex/ollama.js";
+import { buildOllamaSummarizerPayload } from "./codex/compaction.js";
+import { extractOllamaUsage } from "./codex/request-metrics.js";
+import type { JsonObject } from "./core/json.js";
+import { isRecord } from "./core/json.js";
 
 function wireKeys(payload: JsonObject, supportsReasoning = true): string[] {
   const wire = prepareOllamaWire(payload, { supportsReasoning });

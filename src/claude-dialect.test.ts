@@ -6,7 +6,7 @@ import {
   isAnthropicClaudeModel,
   routeClaudeRequestModel,
   stripOllamaPrefix,
-} from "./claude-dialect.js";
+} from "./claude/dialect.js";
 
 describe("cob claude dialect", () => {
   it("keeps native Claude ids on Anthropic and never rewrites them", () => {

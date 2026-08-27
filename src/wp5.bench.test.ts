@@ -4,9 +4,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { loadCatalogFile, resetCatalogFileCache } from "./catalog.js";
-import { formatRequestMetrics, summarizeRequest } from "./request-metrics.js";
-import { rewriteSseLine } from "./sse.js";
+import { loadCatalogFile, resetCatalogFileCache } from "./codex/catalog.js";
+import { formatRequestMetrics, summarizeRequest } from "./codex/request-metrics.js";
+import { rewriteSseLine } from "./codex/sse.js";
 
 const WARMUP = 30;
 const MEASURED = 100;

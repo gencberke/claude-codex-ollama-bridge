@@ -23,8 +23,8 @@ import {
   resolveCompactPlan,
   resolveNativeCompactModel,
   unsupportedOllamaCompactMediaError,
-} from "./compaction.js";
-import type { JsonObject } from "./json.js";
+} from "./codex/compaction.js";
+import type { JsonObject } from "./core/json.js";
 
 const native = new Set(["codex-mini", "o3"]);
 

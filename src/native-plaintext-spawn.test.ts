@@ -13,9 +13,9 @@ import {
   NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
   NATIVE_PLAINTEXT_SPAWN_ALIAS,
   prepareNativePlaintextSpawn,
-} from "./native-plaintext-spawn.js";
-import { isOllamaReject, prepareOllamaPayload } from "./ollama.js";
-import type { JsonObject } from "./json.js";
+} from "./codex/experimental/native-plaintext-spawn.js";
+import { isOllamaReject, prepareOllamaPayload } from "./codex/ollama.js";
+import type { JsonObject } from "./core/json.js";
 
 function spawnTool(extra: JsonObject = {}): JsonObject {
   return {

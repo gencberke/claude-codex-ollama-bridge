@@ -4,15 +4,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { packReleaseTarball, parseCliArgs, resolveClaudeCliSession, resolveCliSession, resolveListenPort } from "./cli-session.js";
-import { LIVE_HOME_REFUSAL, assertWorkspaceMayTouchHome, seedIsolatedCodexHome } from "./install.js";
-import { USER_CLAUDE_HOME_REFUSAL } from "./claude-home.js";
+import { LIVE_HOME_REFUSAL, assertWorkspaceMayTouchHome, seedIsolatedCodexHome } from "./codex/home.js";
+import { USER_CLAUDE_HOME_REFUSAL } from "./claude/home.js";
 import {
   PACKAGE_NAME,
   detectInstall,
   findPackageRoot,
   formatInstallLine,
   samePath,
-} from "./install-detection.js";
+} from "./core/install-detection.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

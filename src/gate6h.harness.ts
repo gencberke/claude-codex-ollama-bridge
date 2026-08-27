@@ -11,8 +11,8 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_DEV_PORT, defaultDevHome, defaultLiveHome } from "./install.js";
-import { findPackageRoot } from "./install-detection.js";
+import { DEFAULT_DEV_PORT, defaultDevHome, defaultLiveHome } from "./codex/home.js";
+import { findPackageRoot } from "./core/install-detection.js";
 import { runEvalPreflight } from "./eval-preflight.js";
 import {
   GATE6H_CONTROLLER_SEQUENCING_OBSERVED,

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
-import { responseSink, watchIdle } from "./relay.js";
-import { IdleTimeoutError } from "./timeouts.js";
+import { responseSink, watchIdle } from "./core/http/relay.js";
+import { IdleTimeoutError } from "./core/http/timeouts.js";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

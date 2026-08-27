@@ -5,20 +5,20 @@ import { createServer, type AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS, writeCobToml } from "./cob-config.js";
-import { loadBundledCatalog, mergeCatalog, serializeCatalog } from "./catalog.js";
-import { loadOllamaTags } from "./ollama-tags.js";
-import { NATIVE_RESPONSES_URL } from "./constants.js";
-import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
-import { listenGateway } from "./gateway.js";
-import { isForbiddenOllamaHeader } from "./ollama.js";
-import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton } from "./compaction.js";
-import { writeCobProfile } from "./profile.js";
-import { resolvePaths } from "./paths.js";
-import { ollamaUpstreamModel } from "./route.js";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "./json.js";
-import { isRecord } from "./json.js";
+import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS, writeCobToml } from "./codex/cob-config.js";
+import { loadBundledCatalog, mergeCatalog, serializeCatalog } from "./codex/catalog.js";
+import { loadOllamaTags } from "./core/ollama/tags.js";
+import { NATIVE_RESPONSES_URL } from "./codex/constants.js";
+import { DEFAULT_OLLAMA_URL } from "./core/ollama/constants.js";
+import { listenGateway } from "./codex/gateway.js";
+import { isForbiddenOllamaHeader } from "./codex/ollama.js";
+import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton } from "./codex/compaction.js";
+import { writeCobProfile } from "./codex/profile.js";
+import { resolvePaths } from "./codex/paths.js";
+import { ollamaUpstreamModel } from "./codex/route.js";
+import type { CatalogFile } from "./codex/types.js";
+import type { JsonObject } from "./core/json.js";
+import { isRecord } from "./core/json.js";
 
 const CATALOG: CatalogFile = {
   models: [

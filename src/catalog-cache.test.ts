@@ -3,12 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { writeFileAtomic } from "./atomic.js";
+import { writeFileAtomic } from "./core/atomic.js";
 import {
   catalogFileIdentityKey,
   loadCatalogFile,
   resetCatalogFileCache,
-} from "./catalog.js";
+} from "./codex/catalog.js";
 
 function writeCatalog(path: string, slugs: string[]): void {
   writeFileSync(path, `${JSON.stringify({ models: slugs.map((slug) => ({ slug })) })}\n`);

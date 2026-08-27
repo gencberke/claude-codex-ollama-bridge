@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderCobProfile } from "./profile.js";
-import { restoreCob } from "./lifecycle.js";
-import { resolvePaths } from "./paths.js";
+import { renderCobProfile } from "./codex/profile.js";
+import { restoreCob } from "./codex/lifecycle.js";
+import { resolvePaths } from "./codex/paths.js";
 
 describe("cob profile", () => {
   it("pins openai provider, keeps V1 child spawn, and enables native remote compaction v2", () => {

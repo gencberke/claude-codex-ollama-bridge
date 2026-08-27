@@ -4,7 +4,7 @@ import {
   applyCobRouteDirective,
   extractCobRouteTarget,
   formatClaudeRouteLog,
-} from "./claude-route.js";
+} from "./claude/route.js";
 
 const ALLOW = ["deepseek-v4-flash:0731-cloud"] as const;
 

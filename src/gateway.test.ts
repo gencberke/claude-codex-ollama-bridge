@@ -6,21 +6,21 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { zstdCompressSync } from "node:zlib";
-import { listenGateway } from "./gateway.js";
-import { resetCompactAttemptLog } from "./compact-attempt-log.js";
-import { pickForwardHeaders } from "./native.js";
-import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
-import { MAX_RAW_BODY_BYTES } from "./limits.js";
-import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton, ollamaFollowUpInputError } from "./compaction.js";
-import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./ollama.js";
-import { APPLY_PATCH_TOOL_NAME, COB_APPLY_PATCH_ALIAS } from "./apply-patch.js";
+import { listenGateway } from "./codex/gateway.js";
+import { resetCompactAttemptLog } from "./codex/compact-attempt-log.js";
+import { pickForwardHeaders } from "./codex/native.js";
+import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./codex/constants.js";
+import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
+import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton, ollamaFollowUpInputError } from "./codex/compaction.js";
+import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./codex/ollama.js";
+import { APPLY_PATCH_TOOL_NAME, COB_APPLY_PATCH_ALIAS } from "./codex/experimental/apply-patch.js";
 import {
   nativePlaintextSpawnSchemaSha256,
   NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
   NATIVE_PLAINTEXT_SEND_ALIAS,
-} from "./native-plaintext-spawn.js";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "./json.js";
+} from "./codex/experimental/native-plaintext-spawn.js";
+import type { CatalogFile } from "./codex/types.js";
+import type { JsonObject } from "./core/json.js";
 
 const TEST_CATALOG: CatalogFile = {
   models: [

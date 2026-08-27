@@ -5,7 +5,7 @@ import {
   ollamaChildCatalogFields,
   ollamaChildProfile,
   evidenceFromOllamaTag,
-} from "./capabilities.js";
+} from "./codex/capabilities.js";
 
 describe("ollama child capability profile", () => {
   it("does not infer parallel tools, apply_patch, or shell from the tools tag", () => {

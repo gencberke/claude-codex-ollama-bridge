@@ -11,16 +11,16 @@ import {
   ollamaCatalogWindows,
   mergeCatalog,
   mergeCatalogWithFallback,
-} from "./catalog.js";
-import { loadOllamaTags } from "./ollama-tags.js";
-import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./constants.js";
+} from "./codex/catalog.js";
+import { loadOllamaTags } from "./core/ollama/tags.js";
+import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./codex/constants.js";
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "./json.js";
-import type { OllamaTag } from "./ollama-tags.js";
-import type { CodexBinaryRecord } from "./catalog-provenance.js";
+import type { CatalogFile } from "./codex/types.js";
+import type { JsonObject } from "./core/json.js";
+import type { OllamaTag } from "./core/ollama/tags.js";
+import type { CodexBinaryRecord } from "./codex/catalog-provenance.js";
 
 function native(partial: JsonObject): JsonObject {
   return {

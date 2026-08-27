@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CLAUDE_DESKTOP_NATIVE_MODELS, buildClaudeModelsResponse } from "./claude-models.js";
+import { CLAUDE_DESKTOP_NATIVE_MODELS, buildClaudeModelsResponse } from "./claude/models.js";
 
 describe("cob claude models catalog", () => {
   it("lists real Claude ids and Ollama tags without remapping Claude onto Ollama", () => {

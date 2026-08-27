@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { decodeOllamaId, encodeOllamaId } from "./slug-codec.js";
+import { decodeOllamaId, encodeOllamaId } from "./codex/slug-codec.js";
 
 describe("ollama slug codec", () => {
   it("leaves colon tags unchanged", () => {

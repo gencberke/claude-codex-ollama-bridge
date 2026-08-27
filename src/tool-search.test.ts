@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isOllamaReject, normalizeOllamaResponse, prepareOllamaWire, sanitizeOllamaPayload } from "./ollama.js";
+import { isOllamaReject, normalizeOllamaResponse, prepareOllamaWire, sanitizeOllamaPayload } from "./codex/ollama.js";
 import {
   applyDeferredToolsToOllama,
   rewriteToolSearchFromOllama,
   rewriteToolSearchToOllama,
-} from "./tool-search.js";
-import { sha256Hex8 } from "./request-metrics.js";
-import type { JsonObject } from "./json.js";
+} from "./codex/tool-search.js";
+import { sha256Hex8 } from "./codex/request-metrics.js";
+import type { JsonObject } from "./core/json.js";
 
 const SEARCH_TOOL = {
   type: "tool_search",

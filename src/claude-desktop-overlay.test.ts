@@ -11,7 +11,7 @@ import {
   restoreClaudeDesktopOverlay,
   snapshotSha,
   targetsFromRoots,
-} from "./claude-desktop-overlay.js";
+} from "./claude/desktop-overlay.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

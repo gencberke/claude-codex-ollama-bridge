@@ -15,7 +15,7 @@ import {
   resolveCompactionPolicy,
   resolveSpawnableOllamaSlugs,
   writeCobToml,
-} from "./cob-config.js";
+} from "./codex/cob-config.js";
 
 describe("cob.toml compaction policy", () => {
   it("rejects legacy ollama and disabled providers", () => {

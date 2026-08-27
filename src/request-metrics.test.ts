@@ -8,7 +8,7 @@ import {
   jsonUtf8Bytes,
   sha256Hex8,
   summarizeRequest,
-} from "./request-metrics.js";
+} from "./codex/request-metrics.js";
 
 describe("request-metrics", () => {
   it("splits payload bytes by top-level field and hashes tools without logging schemas", () => {

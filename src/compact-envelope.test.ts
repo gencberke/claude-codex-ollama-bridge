@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { looksLikeCiphertext } from "./encrypted.js";
+import { looksLikeCiphertext } from "./codex/encrypted.js";
 import {
   CobCompactEnvelopeError,
   COB_COMPACT_VERSION,
@@ -9,7 +9,7 @@ import {
   isCobCompactEnvelope,
   MAX_COB_COMPACT_SUMMARY_BYTES,
   newCobCompactIds,
-} from "./compact-envelope.js";
+} from "./codex/compact-envelope.js";
 
 describe("cob compact envelope", () => {
   it("round-trips UTF-8 summaries with cob magic and version", () => {

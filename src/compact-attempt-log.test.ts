@@ -5,8 +5,8 @@ import {
   formatCompactAttemptLog,
   noteCompactAttempt,
   resetCompactAttemptLog,
-} from "./compact-attempt-log.js";
-import { sha256Hex8 } from "./request-metrics.js";
+} from "./codex/compact-attempt-log.js";
+import { sha256Hex8 } from "./codex/request-metrics.js";
 
 describe("compact-attempt-log", () => {
   it("increments attempts for the same parent without logging the raw id", () => {

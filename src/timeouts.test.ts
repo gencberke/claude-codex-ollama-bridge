@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { HeadersTimeoutError, fetchWithHeadersTimeout } from "./timeouts.js";
+import { HeadersTimeoutError, fetchWithHeadersTimeout } from "./core/http/timeouts.js";
 
 describe("timeouts", () => {
   it("applies the headers deadline independently of later body activity", async () => {

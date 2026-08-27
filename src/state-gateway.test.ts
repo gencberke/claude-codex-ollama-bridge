@@ -4,11 +4,11 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ConversationStateStore, type PublishCheckpoint } from "./conversation-state.js";
-import { listenGateway } from "./gateway.js";
-import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./compaction.js";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "./json.js";
+import { ConversationStateStore, type PublishCheckpoint } from "./codex/conversation-state.js";
+import { listenGateway } from "./codex/gateway.js";
+import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./codex/compaction.js";
+import type { CatalogFile } from "./codex/types.js";
+import type { JsonObject } from "./core/json.js";
 
 const CATALOG: CatalogFile = {
   models: [{ slug: "codex-mini" }, { slug: "ollama/test" }],

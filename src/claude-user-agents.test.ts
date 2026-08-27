@@ -3,13 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { CLAUDE_AGENT_MARKER } from "./claude-agents.js";
+import { CLAUDE_AGENT_MARKER } from "./claude/agents.js";
 import {
   applyUserClaudeAgentsOverlay,
   restoreUserClaudeAgentsOverlay,
   userClaudeAgentsDir,
   userAgentsOverlayStatus,
-} from "./claude-user-agents.js";
+} from "./claude/user-agents.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

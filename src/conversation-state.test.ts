@@ -19,7 +19,7 @@ import {
   historyItemIdentity,
   mergeStateHistory,
   type StateHistoryItem,
-} from "./conversation-state.js";
+} from "./codex/conversation-state.js";
 
 function newStore(options?: ConstructorParameters<typeof ConversationStateStore>[1]): ConversationStateStore {
   return new ConversationStateStore(mkdtempSync(join(tmpdir(), "cob-state-test-")), options);

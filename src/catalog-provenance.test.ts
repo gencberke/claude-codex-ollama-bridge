@@ -17,9 +17,9 @@ import {
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
   writeCatalogValidationFailure,
-} from "./catalog-provenance.js";
-import { serializeCatalog } from "./catalog.js";
-import type { CatalogFile } from "./types.js";
+} from "./codex/catalog-provenance.js";
+import { serializeCatalog } from "./codex/catalog.js";
+import type { CatalogFile } from "./codex/types.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
-import { listenClaudeGateway } from "./claude-gateway.js";
-import { MAX_RAW_BODY_BYTES } from "./limits.js";
-import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
-import { HeadersTimeoutError } from "./timeouts.js";
+import { listenClaudeGateway } from "./claude/gateway.js";
+import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./core/ollama/default-model.js";
+import { HeadersTimeoutError } from "./core/http/timeouts.js";
 
 describe("cob claude gateway", () => {
   it("health is cob claude and unknown routes fail closed", async () => {

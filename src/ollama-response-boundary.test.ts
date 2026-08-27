@@ -7,7 +7,7 @@ import {
   normalizeOllamaResponse,
   ollamaSseTransform,
   prepareOllamaWire,
-} from "./ollama.js";
+} from "./codex/ollama.js";
 import {
   collectOllamaWireToolNames,
   declareOllamaWireTools,
@@ -21,9 +21,9 @@ import {
   ollamaGuardSseTerminal,
   type OllamaResponseGuardState,
   type OllamaToolDeclaration,
-} from "./ollama-response-boundary.js";
-import { PROMOTED_LEAF_CAP } from "./tool-search.js";
-import type { JsonObject } from "./json.js";
+} from "./codex/ollama-response-boundary.js";
+import { PROMOTED_LEAF_CAP } from "./codex/tool-search.js";
+import type { JsonObject } from "./core/json.js";
 
 function declarationOf(tools: unknown): OllamaToolDeclaration {
   return declareOllamaWireTools({ tools });

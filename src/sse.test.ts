@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { rewriteSseLine, SSE_OMIT_LINE, sseRewriteTransform, SseLimitError } from "./sse.js";
+import { rewriteSseLine, SSE_OMIT_LINE, sseRewriteTransform, SseLimitError } from "./codex/sse.js";
 
 function sseData(line: string | typeof SSE_OMIT_LINE): string {
   assert.equal(typeof line, "string");

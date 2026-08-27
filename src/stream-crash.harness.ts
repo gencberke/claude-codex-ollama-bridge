@@ -1,4 +1,4 @@
-import { listenGateway } from "./gateway.js";
+import { listenGateway } from "./codex/gateway.js";
 import { createServer, type AddressInfo } from "node:net";
 
 process.on("uncaughtException", (error) => {

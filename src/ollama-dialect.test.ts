@@ -4,7 +4,7 @@ import {
   OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS as BOUNDARY_PINNED,
   OLLAMA_ADVISORY_FIELDS as BOUNDARY_ADVISORY,
   OLLAMA_REQUEST_ALLOWLIST as BOUNDARY_ALLOWLIST,
-} from "./ollama-boundary.js";
+} from "./codex/ollama-boundary.js";
 import {
   OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS,
   OLLAMA_ADVISORY_FIELDS,
@@ -15,7 +15,7 @@ import {
   OLLAMA_RESPONSES_ENDPOINT,
   OLLAMA_REVIEWED_SOURCE_PATH,
   OLLAMA_REVIEWED_VERSION,
-} from "./ollama-dialect.js";
+} from "./codex/ollama-dialect.js";
 
 describe("Ollama dialect authority", () => {
   it("is the single owner of request-field lists consumed by the boundary", () => {

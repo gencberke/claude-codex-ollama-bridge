@@ -4,9 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { resolveClaudePaths } from "./claude-paths.js";
-import { stopClaudeGateway } from "./claude-lifecycle.js";
-import { acquireLock, releaseLock } from "./lock.js";
+import { resolveClaudePaths } from "./claude/paths.js";
+import { stopClaudeGateway } from "./claude/lifecycle.js";
+import { acquireLock, releaseLock } from "./core/lock.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

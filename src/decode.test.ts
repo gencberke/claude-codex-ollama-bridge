@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { gzipSync, zstdCompressSync } from "node:zlib";
-import { decodeRequestBody, RequestDecodeError } from "./decode.js";
+import { decodeRequestBody, RequestDecodeError } from "./codex/decode.js";
 
 describe("decodeRequestBody", () => {
   it("round-trips Codex zstd JSON", () => {

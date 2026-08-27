@@ -6,7 +6,7 @@ import {
   looksLikeCiphertext,
   NON_STRING_ENCRYPTED_CONTENT,
   stripPlaintextEncryptedContent,
-} from "./encrypted.js";
+} from "./codex/encrypted.js";
 
 describe("encrypted_content", () => {
   it("finds nested Fernet payloads", () => {

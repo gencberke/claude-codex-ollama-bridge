@@ -7,16 +7,16 @@ import {
   prepareApplyPatchToOllama,
   validateApplyPatchPayload,
   type ApplyPatchBridge,
-} from "./apply-patch.js";
+} from "./codex/experimental/apply-patch.js";
 import {
   declareOllamaWireTools,
   formatOllamaGuardLog,
   guardOllamaJsonResponse,
   ollamaGuardHttpBody,
   type OllamaResponseGuardState,
-} from "./ollama-response-boundary.js";
-import { normalizeOllamaResponse, ollamaSseTransform, prepareOllamaWire } from "./ollama.js";
-import type { JsonObject } from "./json.js";
+} from "./codex/ollama-response-boundary.js";
+import { normalizeOllamaResponse, ollamaSseTransform, prepareOllamaWire } from "./codex/ollama.js";
+import type { JsonObject } from "./core/json.js";
 
 const PATCH_GRAMMAR = "start: /[^\\n]*/";
 

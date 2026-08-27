@@ -16,13 +16,13 @@ import {
   restoreClaudeDesktopOverlay,
   snapshotSha,
   type OverlayApplyResult,
-} from "./claude-desktop-overlay.js";
-import { CLAUDE_SPAWN_AGENTS, syncClaudeSpawnAgents, syncProjectClaudeAgents } from "./claude-agents.js";
+} from "./claude/desktop-overlay.js";
+import { CLAUDE_SPAWN_AGENTS, syncClaudeSpawnAgents, syncProjectClaudeAgents } from "./claude/agents.js";
 import {
   applyUserClaudeAgentsOverlay,
   restoreUserClaudeAgentsOverlay,
   type UserAgentsApplyResult,
-} from "./claude-user-agents.js";
+} from "./claude/user-agents.js";
 import {
   claudeStatusReport,
   openClaudeLog,
@@ -30,8 +30,8 @@ import {
   serveClaudeForeground,
   startClaudeGatewayDetached,
   stopClaudeGateway,
-} from "./claude-lifecycle.js";
-import { detectInstall, formatInstallLine } from "./install-detection.js";
+} from "./claude/lifecycle.js";
+import { detectInstall, formatInstallLine } from "./core/install-detection.js";
 import {
   restoreCob,
   serveForeground,
@@ -39,12 +39,12 @@ import {
   statusReport,
   stopGateway,
   syncCatalog,
-} from "./lifecycle.js";
-import { listVisibleTopSlugs, parseCatalogJson } from "./catalog.js";
-import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./catalog-provenance.js";
-import { CobConfigError, DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./cob-config.js";
-import { readFileBufferOrNull } from "./atomic.js";
-import { runSmoke } from "./smoke.js";
+} from "./codex/lifecycle.js";
+import { listVisibleTopSlugs, parseCatalogJson } from "./codex/catalog.js";
+import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./codex/catalog-provenance.js";
+import { CobConfigError, DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./codex/cob-config.js";
+import { readFileBufferOrNull } from "./core/atomic.js";
+import { runSmoke } from "./codex/smoke.js";
 
 type StartCompaction = { provider: "native"; model?: string };
 const DEFAULT_CLAUDE_AGENT = CLAUDE_SPAWN_AGENTS[0]!;

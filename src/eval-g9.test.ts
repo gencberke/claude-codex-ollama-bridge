@@ -4,12 +4,12 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ollamaCompactHandoffSkeleton } from "./compaction.js";
+import { ollamaCompactHandoffSkeleton } from "./codex/compaction.js";
 import { ollamaWireUnsafeReason } from "./eval-g8r.js";
 import { finalizeG9, initialG9State, reduceG9 } from "./eval-g9.js";
-import { listenGateway } from "./gateway.js";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "./json.js";
+import { listenGateway } from "./codex/gateway.js";
+import type { CatalogFile } from "./codex/types.js";
+import type { JsonObject } from "./core/json.js";
 
 const CATALOG: CatalogFile = {
   models: [{ slug: "codex-mini" }, { slug: "ollama/test" }],

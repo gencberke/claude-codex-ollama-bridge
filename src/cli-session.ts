@@ -1,14 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { DEFAULT_PORT } from "./constants.js";
-import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
+import { DEFAULT_PORT } from "./codex/constants.js";
+import { DEFAULT_OLLAMA_URL } from "./core/ollama/constants.js";
 import {
   assertNotUserClaudeHome,
   assertWorkspaceMayTouchClaudeHome,
   defaultDevClaudeHome,
   defaultLiveClaudeHome,
   isLiveClaudeHome,
-} from "./claude-home.js";
-import { CLAUDE_DEFAULT_DEV_PORT, CLAUDE_DEFAULT_PORT } from "./claude-constants.js";
+} from "./claude/home.js";
+import { CLAUDE_DEFAULT_DEV_PORT, CLAUDE_DEFAULT_PORT } from "./claude/constants.js";
 import {
   DEFAULT_DEV_PORT,
   assertWorkspaceMayTouchHome,
@@ -16,12 +16,12 @@ import {
   defaultLiveHome,
   isLiveCodexHome,
   seedIsolatedCodexHome,
-} from "./install.js";
-import { detectInstall, type CobInstall } from "./install-detection.js";
-import { parseCompactionProvider } from "./cob-config.js";
-import { assertLoopbackHttpUrl } from "./loopback.js";
-import { resolveCodexHome, resolvePaths, type CobPaths } from "./paths.js";
-import { resolveClaudeHome, resolveClaudePaths, type ClaudePaths } from "./claude-paths.js";
+} from "./codex/home.js";
+import { detectInstall, type CobInstall } from "./core/install-detection.js";
+import { parseCompactionProvider } from "./codex/cob-config.js";
+import { assertLoopbackHttpUrl } from "./core/loopback.js";
+import { resolveCodexHome, resolvePaths, type CobPaths } from "./codex/paths.js";
+import { resolveClaudeHome, resolveClaudePaths, type ClaudePaths } from "./claude/paths.js";
 import { DEFAULT_SURFACE, isCobSurface, type CobSurface } from "./surface.js";
 
 export type CliFlags = {
