@@ -1,27 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { DEFAULT_PORT } from "./codex/constants.js";
-import { DEFAULT_OLLAMA_URL } from "./core/ollama/constants.js";
-import {
-  assertNotUserClaudeHome,
-  assertWorkspaceMayTouchClaudeHome,
-  defaultDevClaudeHome,
-  defaultLiveClaudeHome,
-  isLiveClaudeHome,
-} from "./claude/home.js";
 import { CLAUDE_DEFAULT_DEV_PORT, CLAUDE_DEFAULT_PORT } from "./claude/constants.js";
-import {
-  DEFAULT_DEV_PORT,
-  assertWorkspaceMayTouchHome,
-  defaultDevHome,
-  defaultLiveHome,
-  isLiveCodexHome,
-  seedIsolatedCodexHome,
-} from "./codex/home.js";
-import { detectInstall, type CobInstall } from "./core/install-detection.js";
+import { DEFAULT_PORT } from "./codex/constants.js";
+import { DEFAULT_DEV_PORT } from "./codex/home.js";
 import { parseCompactionProvider } from "./codex/config/schema.js";
 import { assertLoopbackHttpUrl } from "./core/loopback.js";
-import { resolveCodexHome, resolvePaths, type CobPaths } from "./codex/paths.js";
-import { resolveClaudeHome, resolveClaudePaths, type ClaudePaths } from "./claude/paths.js";
+import { DEFAULT_OLLAMA_URL } from "./core/ollama/constants.js";
+import type { CobInstall } from "./core/install-detection.js";
 import { DEFAULT_SURFACE, isCobSurface, type CobSurface } from "./surface.js";
 
 export type CliFlags = {
@@ -39,22 +23,6 @@ export type CliFlags = {
   dir?: string;
   compactionProvider?: string;
   compactionModel?: string;
-};
-
-export type CliSession = {
-  flags: CliFlags;
-  paths: CobPaths;
-  port: number;
-  install: CobInstall;
-  isolated: boolean;
-};
-
-export type ClaudeCliSession = {
-  flags: CliFlags;
-  paths: ClaudePaths;
-  port: number;
-  install: CobInstall;
-  isolated: boolean;
 };
 
 const FLAG_WITH_VALUE = new Set([
@@ -178,40 +146,6 @@ export function resolveListenPort(opts: {
   return DEFAULT_PORT;
 }
 
-export function resolveCliSession(
-  flags: CliFlags,
-  env: NodeJS.ProcessEnv = process.env,
-): CliSession {
-  const install = detectInstall();
-  const liveHome = defaultLiveHome();
-  const home = flags.home ?? (flags.dev ? defaultDevHome() : resolveCodexHome(env.COB_CODEX_HOME));
-  const isolated = flags.dev || !isLiveCodexHome(home, liveHome);
-  const port = resolveListenPort({
-    isolated: flags.dev,
-    portExplicit: flags.portExplicit,
-    port: flags.port,
-    envPort: env.COB_PORT,
-    surface: "codex",
-  });
-  assertWorkspaceMayTouchHome({
-    command: flags.command,
-    install,
-    codexHome: home,
-    allowLiveHome: flags.liveHome || env.COB_ALLOW_LIVE_HOME === "1",
-    liveHome,
-  });
-  if ((flags.command === "start" || flags.command === "serve") && isolated) {
-    seedIsolatedCodexHome(home, liveHome);
-  }
-  return {
-    flags,
-    paths: resolvePaths(home),
-    port,
-    install,
-    isolated,
-  };
-}
-
 export type PackCommandRunner = (
   args: string[],
   cwd: string,
@@ -243,36 +177,4 @@ export function packReleaseTarball(
     throw new Error(`npm pack did not print a tarball name: ${packed.stdout}`);
   }
   return { filename, stdout: packed.stdout };
-}
-
-export function resolveClaudeCliSession(
-  flags: CliFlags,
-  env: NodeJS.ProcessEnv = process.env,
-): ClaudeCliSession {
-  const install = detectInstall();
-  const liveHome = defaultLiveClaudeHome();
-  const home = flags.home ?? (flags.dev ? defaultDevClaudeHome() : resolveClaudeHome(env.COB_CLAUDE_HOME));
-  assertNotUserClaudeHome(home);
-  const isolated = flags.dev || !isLiveClaudeHome(home, liveHome);
-  const port = resolveListenPort({
-    isolated: flags.dev,
-    portExplicit: flags.portExplicit,
-    port: flags.port,
-    envPort: env.COB_CLAUDE_PORT,
-    surface: "claude",
-  });
-  assertWorkspaceMayTouchClaudeHome({
-    command: flags.command,
-    install,
-    claudeHome: home,
-    allowLiveHome: flags.liveHome || env.COB_ALLOW_LIVE_HOME === "1",
-    liveHome,
-  });
-  return {
-    flags,
-    paths: resolveClaudePaths(home),
-    port,
-    install,
-    isolated,
-  };
 }

@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { packReleaseTarball, parseCliArgs, resolveClaudeCliSession, resolveCliSession, resolveListenPort } from "./cli-session.js";
+import { packReleaseTarball, parseCliArgs, resolveListenPort } from "./cli-session.js";
+import { resolveClaudeCliSession } from "./claude/session.js";
+import { resolveCliSession } from "./codex/session.js";
 import { LIVE_HOME_REFUSAL, assertWorkspaceMayTouchHome, seedIsolatedCodexHome } from "./codex/home.js";
 import { USER_CLAUDE_HOME_REFUSAL } from "./claude/home.js";
 import {
