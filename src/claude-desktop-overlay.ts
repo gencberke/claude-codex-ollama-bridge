@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readFileBufferOrNull, writeFileAtomic } from "./atomic.js";
-import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./constants.js";
+import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./claude-constants.js";
 import { claudeDesktopInferenceModels } from "./claude-models.js";
 import { assertLoopbackHttpUrl } from "./loopback.js";
 

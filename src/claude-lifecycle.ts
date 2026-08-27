@@ -1,12 +1,13 @@
 import type { ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { CLAUDE_DEFAULT_PORT, DEFAULT_OLLAMA_URL } from "./constants.js";
+import { CLAUDE_DEFAULT_PORT } from "./claude-constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import { listenClaudeGateway } from "./claude-gateway.js";
 import { desktopOverlayStatus } from "./claude-desktop-overlay.js";
 import { userAgentsOverlayStatus } from "./claude-user-agents.js";
 import { removeOwnedClaudeAgents } from "./claude-agents.js";
 import { resolveClaudePaths, type ClaudePaths } from "./claude-paths.js";
-import { detectInstall } from "./install.js";
+import { detectInstall } from "./install-detection.js";
 import { acquireLock, adoptLock, heldLockToken, releaseLock } from "./lock.js";
 import { isPidAlive } from "./process-info.js";
 

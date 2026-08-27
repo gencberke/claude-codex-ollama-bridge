@@ -7,7 +7,7 @@ import {
   rewriteToolSearchToOllama,
 } from "./tool-search.js";
 import { sha256Hex8 } from "./request-metrics.js";
-import type { JsonObject } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 const SEARCH_TOOL = {
   type: "tool_search",

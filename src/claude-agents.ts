@@ -2,13 +2,13 @@ import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmdirSy
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
 import type { ClaudePaths } from "./claude-paths.js";
-import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
 import {
   USER_CLAUDE_HOME_REFUSAL,
   assertNotUserClaudeHome,
   defaultUserClaudeHome,
-  samePath,
-} from "./install.js";
+} from "./claude-home.js";
+import { samePath } from "./install-detection.js";
 
 export const CLAUDE_AGENT_MARKER = "generated-by: cob";
 export const CLAUDE_CODE_DIRNAME = "code";

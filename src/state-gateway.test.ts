@@ -7,7 +7,8 @@ import { describe, it } from "node:test";
 import { ConversationStateStore, type PublishCheckpoint } from "./conversation-state.js";
 import { listenGateway } from "./gateway.js";
 import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./compaction.js";
-import type { CatalogFile, JsonObject } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 const CATALOG: CatalogFile = {
   models: [{ slug: "codex-mini" }, { slug: "ollama/test" }],

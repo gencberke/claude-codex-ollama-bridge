@@ -1,5 +1,3 @@
-import { NATIVE_RESPONSES_URL } from "./constants.js";
-
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 export function assertLoopbackHttpUrl(url: string, label: string): void {
@@ -14,12 +12,6 @@ export function assertLoopbackHttpUrl(url: string, label: string): void {
   }
   if (!LOOPBACK_HOSTS.has(parsed.hostname)) {
     throw new Error(`${label} must be loopback (127.0.0.1), got ${parsed.hostname}`);
-  }
-}
-
-export function assertNativeUrlPinned(url: string | undefined): void {
-  if (url && url !== NATIVE_RESPONSES_URL) {
-    throw new Error("native ChatGPT URL is pinned and cannot be overridden");
   }
 }
 

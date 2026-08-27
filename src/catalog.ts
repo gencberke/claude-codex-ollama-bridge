@@ -11,7 +11,7 @@ import {
   OLLAMA_CATALOG_FIELDS,
 } from "./constants.js";
 import { writeFileAtomic } from "./atomic.js";
-import { CODEX_CATALOG_TIMEOUT_MS, OLLAMA_TAGS_TIMEOUT_MS } from "./limits.js";
+import { CODEX_CATALOG_TIMEOUT_MS } from "./limits.js";
 import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./cob-config.js";
 import {
   evidenceFromOllamaTag,
@@ -21,8 +21,11 @@ import {
   type OllamaCapabilityEvidence,
 } from "./capabilities.js";
 import { ollamaCatalogSlug } from "./route.js";
-import type { CatalogFile, JsonObject, OllamaTag } from "./types.js";
-import { asPriority, asSlug, asVisibility, isRecord } from "./types.js";
+import type { OllamaTag } from "./ollama-tags.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { asPriority, asSlug, asVisibility } from "./types.js";
+import { isRecord } from "./json.js";
 
 const IDENTITY_DROP = new Set<string>(
   GPT_IDENTITY_FIELDS.filter((field) => field !== "base_instructions"),
@@ -113,50 +116,6 @@ export function loadBundledCatalog(codexBin = process.env.COB_CODEX_BIN ?? "code
     );
   }
   return parseCatalogJson(result.stdout);
-}
-
-export async function loadOllamaTags(
-  ollamaUrl: string,
-  timeoutMs = OLLAMA_TAGS_TIMEOUT_MS,
-): Promise<OllamaTag[]> {
-  const url = `${ollamaUrl.replace(/\/$/, "")}/api/tags`;
-  let response: Response;
-  try {
-    response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  } catch (error) {
-    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
-      throw new Error(`Ollama /api/tags timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  }
-  if (!response.ok) {
-    throw new Error(`Ollama /api/tags failed: ${response.status} ${response.statusText}`);
-  }
-  const payload: unknown = await response.json();
-  if (!isRecord(payload) || !Array.isArray(payload.models)) {
-    throw new Error("Ollama /api/tags returned an unexpected payload");
-  }
-  return payload.models.filter(isRecord).map((model) => ({
-    name: typeof model.name === "string" ? model.name : "",
-    model: typeof model.model === "string" ? model.model : undefined,
-    details: isRecord(model.details)
-      ? {
-          context_length:
-            typeof model.details.context_length === "number"
-              ? model.details.context_length
-              : undefined,
-          family: typeof model.details.family === "string" ? model.details.family : undefined,
-          parameter_size:
-            typeof model.details.parameter_size === "string"
-              ? model.details.parameter_size
-              : undefined,
-        }
-      : undefined,
-    capabilities: Array.isArray(model.capabilities)
-      ? model.capabilities.filter((item): item is string => typeof item === "string")
-      : [],
-    remote_host: typeof model.remote_host === "string" ? model.remote_host : undefined,
-  })).filter((tag) => tag.name.length > 0);
 }
 
 export function listVisibleTopSlugs(models: JsonObject[], limit = 5): string[] {

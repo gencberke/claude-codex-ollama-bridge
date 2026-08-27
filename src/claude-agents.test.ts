@@ -15,8 +15,8 @@ import {
 } from "./claude-agents.js";
 import { applyCobRouteDirective } from "./claude-route.js";
 import { resolveClaudePaths } from "./claude-paths.js";
-import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
-import { USER_CLAUDE_HOME_REFUSAL } from "./install.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
+import { USER_CLAUDE_HOME_REFUSAL } from "./claude-home.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

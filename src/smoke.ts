@@ -4,13 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadBundledCatalog, mergeCatalog, listVisibleTopSlugs, assertCodexAcceptsCatalog } from "./catalog.js";
 import { OLLAMA_BASE_INSTRUCTIONS } from "./constants.js";
-import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
 import { listenGateway } from "./gateway.js";
 import { restoreCob } from "./lifecycle.js";
 import { resolvePaths } from "./paths.js";
 import { renderCobProfile } from "./profile.js";
 import { routeModel } from "./route.js";
-import type { CatalogFile, OllamaTag } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { OllamaTag } from "./ollama-tags.js";
 
 export type SmokeOptions = {
   live?: boolean;

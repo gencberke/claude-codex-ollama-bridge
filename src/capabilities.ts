@@ -1,4 +1,6 @@
-import type { JsonObject, OllamaTag, ReasoningLevel } from "./types.js";
+import type { JsonObject } from "./json.js";
+import type { OllamaTag } from "./ollama-tags.js";
+import type { ReasoningLevel } from "./types.js";
 
 export type OllamaCapabilityEvidence = {
   tools: boolean;

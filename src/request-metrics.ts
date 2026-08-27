@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 const MAX_NAMED_TOOLS = 24;
 const SHA_HEX_LEN = 8;

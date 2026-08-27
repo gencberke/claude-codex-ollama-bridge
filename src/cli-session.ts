@@ -1,20 +1,23 @@
 import { spawnSync } from "node:child_process";
-import { DEFAULT_OLLAMA_URL } from "./constants.js";
+import { DEFAULT_PORT } from "./constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import {
   assertNotUserClaudeHome,
   assertWorkspaceMayTouchClaudeHome,
-  assertWorkspaceMayTouchHome,
   defaultDevClaudeHome,
-  defaultDevHome,
   defaultLiveClaudeHome,
-  defaultLiveHome,
-  detectInstall,
   isLiveClaudeHome,
+} from "./claude-home.js";
+import { CLAUDE_DEFAULT_DEV_PORT, CLAUDE_DEFAULT_PORT } from "./claude-constants.js";
+import {
+  DEFAULT_DEV_PORT,
+  assertWorkspaceMayTouchHome,
+  defaultDevHome,
+  defaultLiveHome,
   isLiveCodexHome,
-  resolveListenPort,
   seedIsolatedCodexHome,
-  type CobInstall,
 } from "./install.js";
+import { detectInstall, type CobInstall } from "./install-detection.js";
 import { parseCompactionProvider } from "./cob-config.js";
 import { assertLoopbackHttpUrl } from "./loopback.js";
 import { resolveCodexHome, resolvePaths, type CobPaths } from "./paths.js";
@@ -154,6 +157,25 @@ function baseFlags(command: string, env: NodeJS.ProcessEnv, surface: CobSurface 
     liveHome: env.COB_ALLOW_LIVE_HOME === "1",
     desktop: false,
   };
+}
+
+export function resolveListenPort(opts: {
+  isolated: boolean;
+  portExplicit: boolean;
+  port?: number;
+  envPort?: string;
+  surface?: CobSurface;
+}): number {
+  if (opts.portExplicit && opts.port !== undefined) return opts.port;
+  if (opts.envPort !== undefined && opts.envPort.length > 0) {
+    const parsed = Number(opts.envPort);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  if (opts.surface === "claude") {
+    return opts.isolated ? CLAUDE_DEFAULT_DEV_PORT : CLAUDE_DEFAULT_PORT;
+  }
+  if (opts.isolated) return DEFAULT_DEV_PORT;
+  return DEFAULT_PORT;
 }
 
 export function resolveCliSession(

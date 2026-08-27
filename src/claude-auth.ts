@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./constants.js";
+import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./claude-constants.js";
 
 export type ClaudeUpstreamAuth = {
   authorization?: string;

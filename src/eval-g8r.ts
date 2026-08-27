@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { evalReceipt, type EvalReceipt } from "./eval-receipt.js";
-import { isRecord } from "./types.js";
+import { isRecord } from "./json.js";
 
 /**
  * G8-R: completed checkpoint replay after gateway restart.

@@ -1,5 +1,5 @@
 import type { Transform } from "node:stream";
-import { DEFAULT_OLLAMA_URL } from "./constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import {
   APPLY_PATCH_OMIT,
   prepareApplyPatchToOllama,
@@ -20,8 +20,8 @@ import { isResponseEnvelope } from "./compaction.js";
 import { SSE_OMIT_LINE, sseRewriteTransform, type SseObserver } from "./sse.js";
 import { fetchWithHeadersTimeout } from "./timeouts.js";
 import { OLLAMA_HEADERS_TIMEOUT_MS } from "./limits.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 import type { UpstreamFetch } from "./native.js";
 import {
   applyOllamaRequestBoundary,

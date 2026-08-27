@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultDevClaudeHome, defaultLiveClaudeHome } from "./install.js";
+import { defaultDevClaudeHome, defaultLiveClaudeHome } from "./claude-home.js";
 
 export type ClaudePaths = {
   claudeHome: string;

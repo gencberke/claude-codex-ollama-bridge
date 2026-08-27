@@ -10,7 +10,9 @@ import { listenGateway } from "./gateway.js";
 import { renderCobProfile } from "./profile.js";
 import { resolvePaths } from "./paths.js";
 import { restoreCob } from "./lifecycle.js";
-import type { CatalogFile, JsonObject, OllamaTag } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
+import type { OllamaTag } from "./ollama-tags.js";
 
 function native(partial: JsonObject): JsonObject {
   return {

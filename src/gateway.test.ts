@@ -19,7 +19,8 @@ import {
   NATIVE_PLAINTEXT_FOLLOWUP_ALIAS,
   NATIVE_PLAINTEXT_SEND_ALIAS,
 } from "./native-plaintext-spawn.js";
-import type { CatalogFile, JsonObject } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 const TEST_CATALOG: CatalogFile = {
   models: [

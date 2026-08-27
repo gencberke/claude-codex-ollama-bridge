@@ -24,7 +24,7 @@ import {
   resolveNativeCompactModel,
   unsupportedOllamaCompactMediaError,
 } from "./compaction.js";
-import type { JsonObject } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 const native = new Set(["codex-mini", "o3"]);
 

@@ -1,5 +1,5 @@
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 /** Codex's native freeform tool identity. */
 export const APPLY_PATCH_TOOL_NAME = "apply_patch" as const;

@@ -7,7 +7,7 @@ import {
   isOwnedClaudeAgentFile,
   renderClaudeAgentFile,
 } from "./claude-agents.js";
-import { defaultUserClaudeHome } from "./install.js";
+import { defaultUserClaudeHome } from "./claude-home.js";
 
 export const USER_AGENTS_OVERLAY_SCHEMA = 1 as const;
 

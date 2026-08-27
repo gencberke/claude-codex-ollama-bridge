@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
+import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import { loadCatalogFile } from "./catalog.js";
 import { ollamaReasoningLadderForModel } from "./capabilities.js";
 import { decodeRequestBody, RequestDecodeError } from "./decode.js";
@@ -86,8 +87,9 @@ import {
 } from "./relay.js";
 import { HeadersTimeoutError, IdleTimeoutError } from "./timeouts.js";
 import { sseRewriteTransform, type SseObserver } from "./sse.js";
-import type { CatalogFile, JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 import {
   extractOllamaUsage,
   formatOllamaUsage,

@@ -1,9 +1,10 @@
-import { OLLAMA_PREFIX, PREFERRED_NATIVE_COMPACT_SLUGS } from "./constants.js";
+import { PREFERRED_NATIVE_COMPACT_SLUGS } from "./constants.js";
+import { OLLAMA_PREFIX } from "./ollama-constants.js";
 import type { CompactionPolicy } from "./cob-config.js";
 import { MAX_COB_COMPACT_SUMMARY_BYTES } from "./compact-envelope.js";
 import { isEncryptedFieldName } from "./encrypted.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 export const OLLAMA_COMPACT_HANDOFF_SECTIONS = [
   "Goal",

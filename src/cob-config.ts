@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
 import { OLLAMA_CATALOG_CONTEXT_CAP } from "./constants.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
 import type { CobPaths } from "./paths.js";
 
 export type CompactionProvider = "native";
@@ -84,9 +85,6 @@ export const DEFAULT_CATALOG_POLICY: CatalogPolicy = { supportsSearchTool: true,
 export const DEFAULT_EXPERIMENTAL_POLICY: ExperimentalPolicy = {
   nativePlaintextSpawn: { enabled: false },
 };
-
-/** Unprefixed model id sent to Ollama for the default V1 child on both surfaces. */
-export const DEFAULT_OLLAMA_SPAWN_MODEL = "deepseek-v4-flash:0731-cloud" as const;
 
 /** Catalog slug(s) that cob exposes as the default spawnable Ollama row. */
 export const DEFAULT_SPAWNABLE_OLLAMA_SLUGS = [`ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`] as const;

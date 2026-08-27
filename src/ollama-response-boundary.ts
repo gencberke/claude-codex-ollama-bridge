@@ -13,8 +13,8 @@ import {
 } from "./apply-patch.js";
 import { sha256Hex8 } from "./request-metrics.js";
 import { sseDoneTerminal } from "./relay.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 export const OLLAMA_GUARD_NAME_PREVIEW_CHARS = 100;
 

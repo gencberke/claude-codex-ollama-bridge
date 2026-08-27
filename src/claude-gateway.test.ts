@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AddressInfo } from "node:net";
 import { listenClaudeGateway } from "./claude-gateway.js";
-import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./ollama-default-model.js";
 
 describe("cob claude gateway", () => {
   it("health is cob claude and unknown routes fail closed", async () => {

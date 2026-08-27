@@ -17,8 +17,8 @@ import { findEncryptedContent } from "./encrypted.js";
 import { MAX_UPSTREAM_BODY_BYTES } from "./limits.js";
 import { withExclusiveLock } from "./lock.js";
 import { projectOllamaInputValue, ollamaFollowUpInputError } from "./compaction.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 export const CONVERSATION_STATE_SCHEMA_VERSION = 1;
 export const DEFAULT_STATE_MAX_NODES = 512;

@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { G8R_PASS, listCheckpointIds, ollamaWireUnsafeReason, scoreG8rReplay } from "./eval-g8r.js";
 import { listenGateway } from "./gateway.js";
-import type { CatalogFile, JsonObject } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 const CATALOG: CatalogFile = {
   models: [{ slug: "codex-mini" }, { slug: "ollama/test" }],

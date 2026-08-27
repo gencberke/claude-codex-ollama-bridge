@@ -1,4 +1,4 @@
-import { isRecord } from "./types.js";
+import { isRecord } from "./json.js";
 
 const FERNET_PREFIX = "gAAAAA";
 const OCX1_PREFIX = "ocx1";

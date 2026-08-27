@@ -1,4 +1,4 @@
-export type JsonObject = Record<string, unknown>;
+import type { JsonObject } from "./json.js";
 
 export type CatalogFile = {
   models: JsonObject[];
@@ -8,22 +8,6 @@ export type ReasoningLevel = {
   effort: string;
   description: string;
 };
-
-export type OllamaTag = {
-  name: string;
-  model?: string;
-  details?: {
-    context_length?: number;
-    family?: string;
-    parameter_size?: string;
-  };
-  capabilities?: string[];
-  remote_host?: string;
-};
-
-export function isRecord(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export function asSlug(model: JsonObject): string {
   const slug = model.slug;

@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DEFAULT_PORT } from "./constants.js";
-import { DEFAULT_DEV_PORT, isLiveCodexHome, samePath } from "./install.js";
+import { DEFAULT_DEV_PORT, isLiveCodexHome } from "./install.js";
+import { samePath } from "./install-detection.js";
 
 /**
  * Isolated eval lane gate. Does not spawn Codex, write root config, or

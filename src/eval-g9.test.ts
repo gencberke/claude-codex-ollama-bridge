@@ -8,7 +8,8 @@ import { ollamaCompactHandoffSkeleton } from "./compaction.js";
 import { ollamaWireUnsafeReason } from "./eval-g8r.js";
 import { finalizeG9, initialG9State, reduceG9 } from "./eval-g9.js";
 import { listenGateway } from "./gateway.js";
-import type { CatalogFile, JsonObject } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 const CATALOG: CatalogFile = {
   models: [{ slug: "codex-mini" }, { slug: "ollama/test" }],

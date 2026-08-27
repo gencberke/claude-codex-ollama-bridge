@@ -31,7 +31,7 @@ import {
   startClaudeGatewayDetached,
   stopClaudeGateway,
 } from "./claude-lifecycle.js";
-import { detectInstall, formatInstallLine } from "./install.js";
+import { detectInstall, formatInstallLine } from "./install-detection.js";
 import {
   restoreCob,
   serveForeground,

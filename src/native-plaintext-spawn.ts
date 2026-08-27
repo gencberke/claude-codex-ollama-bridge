@@ -3,8 +3,8 @@ import type { Transform } from "node:stream";
 import { sseRewriteTransform } from "./sse.js";
 import type { NativePlaintextSpawnPolicy } from "./cob-config.js";
 import { isEncryptedFieldName } from "./encrypted.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 /**
  * The isolated Gate 1-3 aliases are intentionally non-reserved, top-level

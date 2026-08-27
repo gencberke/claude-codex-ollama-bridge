@@ -23,7 +23,7 @@ import {
   type OllamaToolDeclaration,
 } from "./ollama-response-boundary.js";
 import { PROMOTED_LEAF_CAP } from "./tool-search.js";
-import type { JsonObject } from "./types.js";
+import type { JsonObject } from "./json.js";
 
 function declarationOf(tools: unknown): OllamaToolDeclaration {
   return declareOllamaWireTools({ tools });

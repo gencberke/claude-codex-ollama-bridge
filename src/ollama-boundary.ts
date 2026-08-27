@@ -4,8 +4,8 @@ import {
 } from "./ollama-dialect.js";
 import { ollamaReasoningLadderForModel, type OllamaReasoningEffort } from "./capabilities.js";
 import type { JsonError } from "./encrypted.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 export type OllamaReject = { status: number; body: JsonError };
 

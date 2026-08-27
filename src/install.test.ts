@@ -3,19 +3,16 @@ import { describe, it } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { packReleaseTarball, parseCliArgs, resolveClaudeCliSession, resolveCliSession } from "./cli-session.js";
+import { packReleaseTarball, parseCliArgs, resolveClaudeCliSession, resolveCliSession, resolveListenPort } from "./cli-session.js";
+import { LIVE_HOME_REFUSAL, assertWorkspaceMayTouchHome, seedIsolatedCodexHome } from "./install.js";
+import { USER_CLAUDE_HOME_REFUSAL } from "./claude-home.js";
 import {
-  LIVE_HOME_REFUSAL,
   PACKAGE_NAME,
-  USER_CLAUDE_HOME_REFUSAL,
-  assertWorkspaceMayTouchHome,
   detectInstall,
   findPackageRoot,
   formatInstallLine,
-  resolveListenPort,
   samePath,
-  seedIsolatedCodexHome,
-} from "./install.js";
+} from "./install-detection.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

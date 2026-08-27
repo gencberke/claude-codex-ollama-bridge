@@ -6,16 +6,19 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS, writeCobToml } from "./cob-config.js";
-import { loadBundledCatalog, loadOllamaTags, mergeCatalog, serializeCatalog } from "./catalog.js";
-import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL } from "./constants.js";
+import { loadBundledCatalog, mergeCatalog, serializeCatalog } from "./catalog.js";
+import { loadOllamaTags } from "./ollama-tags.js";
+import { NATIVE_RESPONSES_URL } from "./constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import { listenGateway } from "./gateway.js";
 import { isForbiddenOllamaHeader } from "./ollama.js";
 import { assertValidOllamaFollowUpInput, ollamaCompactHandoffSkeleton } from "./compaction.js";
 import { writeCobProfile } from "./profile.js";
 import { resolvePaths } from "./paths.js";
 import { ollamaUpstreamModel } from "./route.js";
-import type { CatalogFile, JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { CatalogFile } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 const CATALOG: CatalogFile = {
   models: [

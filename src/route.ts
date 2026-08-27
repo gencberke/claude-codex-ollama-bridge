@@ -1,4 +1,4 @@
-import { OLLAMA_PREFIX } from "./constants.js";
+import { OLLAMA_PREFIX } from "./ollama-constants.js";
 import { decodeOllamaId, encodeOllamaId } from "./slug-codec.js";
 import type { CatalogFile } from "./types.js";
 

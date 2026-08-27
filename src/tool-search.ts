@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { collectOllamaWireToolNames } from "./ollama-response-boundary.js";
 import { jsonUtf8Bytes, sha256Hex8 } from "./request-metrics.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 export const TOOL_SEARCH_NAME = "tool_search";
 export const PROMOTED_LEAF_CAP = 16;

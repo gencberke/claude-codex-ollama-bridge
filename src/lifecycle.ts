@@ -2,17 +2,18 @@ import type { ChildProcess } from "node:child_process";
 import { connect } from "node:net";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { DEFAULT_OLLAMA_URL, DEFAULT_PORT } from "./constants.js";
+import { DEFAULT_PORT } from "./constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import {
   assertConsumersAcceptCatalog,
   CatalogConsumerRejectedError,
   loadBundledCatalog,
-  loadOllamaTags,
   mergeCatalogWithFallback,
   parseCatalogJson,
   serializeCatalog,
   writeCatalogIfChanged,
 } from "./catalog.js";
+import { loadOllamaTags } from "./ollama-tags.js";
 import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
@@ -38,7 +39,8 @@ import {
   type DesktopOverlayAssessment,
 } from "./root-config.js";
 import { resolvePaths, type CobPaths } from "./paths.js";
-import { detectInstall, formatInstallLine, isLiveCodexHome } from "./install.js";
+import { detectInstall, formatInstallLine } from "./install-detection.js";
+import { isLiveCodexHome } from "./install.js";
 import {
   catalogSupportsSearchTool,
   catalogSupportsApplyPatch,
@@ -61,7 +63,7 @@ import {
   processStartKey,
 } from "./process-info.js";
 import type { CatalogFile } from "./types.js";
-import { isRecord } from "./types.js";
+import { isRecord } from "./json.js";
 
 export { isCobProcess } from "./process-info.js";
 export { adoptLock, heldLockToken } from "./lock.js";

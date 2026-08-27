@@ -13,8 +13,8 @@ import {
 import { isOllamaReject, prepareOllamaWire, sanitizeOllamaPayload } from "./ollama.js";
 import { buildOllamaSummarizerPayload } from "./compaction.js";
 import { extractOllamaUsage } from "./request-metrics.js";
-import type { JsonObject } from "./types.js";
-import { isRecord } from "./types.js";
+import type { JsonObject } from "./json.js";
+import { isRecord } from "./json.js";
 
 function wireKeys(payload: JsonObject, supportsReasoning = true): string[] {
   const wire = prepareOllamaWire(payload, { supportsReasoning });

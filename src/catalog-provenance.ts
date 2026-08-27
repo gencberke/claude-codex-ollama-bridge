@@ -9,7 +9,8 @@ import { isSpawnableMatch, listVisibleTopSlugs, parseCatalogJson } from "./catal
 import { isLiveCodexHome } from "./install.js";
 import type { CobPaths } from "./paths.js";
 import type { CatalogFile } from "./types.js";
-import { asSlug, asVisibility, isRecord } from "./types.js";
+import { asSlug, asVisibility } from "./types.js";
+import { isRecord } from "./json.js";
 
 export const CATALOG_PROVENANCE_SCHEMA = 1;
 export const CATALOG_PROVENANCE_FAILURE_SCHEMA = 2;

@@ -1,6 +1,6 @@
 import { CLAUDE_DIALECT_VERSION } from "./claude-dialect.js";
-import { OLLAMA_CATALOG_CONTEXT_CAP } from "./constants.js";
-import type { OllamaTag } from "./types.js";
+import { CLAUDE_OLLAMA_CONTEXT_CAP } from "./claude-constants.js";
+import type { OllamaTag } from "./ollama-tags.js";
 
 export type ClaudeCapabilitySupport = { supported: boolean };
 
@@ -106,7 +106,7 @@ function ollamaModel(tag: OllamaTag): ClaudeModelListEntry {
   const vision = (tag.capabilities ?? []).includes("vision");
   const context = tag.details?.context_length;
   const maxInput =
-    typeof context === "number" && context > 0 ? Math.min(context, OLLAMA_CATALOG_CONTEXT_CAP) : null;
+    typeof context === "number" && context > 0 ? Math.min(context, CLAUDE_OLLAMA_CONTEXT_CAP) : null;
   return {
     type: "model",
     id: tag.name.trim(),

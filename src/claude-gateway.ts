@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { loadOllamaTags } from "./catalog.js";
-import type { OllamaTag } from "./types.js";
+import type { OllamaTag } from "./ollama-tags.js";
+import { loadOllamaTags } from "./ollama-tags.js";
 import {
   ClaudeAnthropicAuthError,
   describeAnthropicAuthKind,
@@ -24,11 +24,8 @@ import {
 import { CLAUDE_SPAWN_ALLOWLIST } from "./claude-agents.js";
 import { buildClaudeModelsResponse } from "./claude-models.js";
 import { applyCobRouteDirective, formatClaudeRouteLog } from "./claude-route.js";
-import {
-  ANTHROPIC_COUNT_TOKENS_URL,
-  ANTHROPIC_MESSAGES_URL,
-  DEFAULT_OLLAMA_URL,
-} from "./constants.js";
+import { ANTHROPIC_COUNT_TOKENS_URL, ANTHROPIC_MESSAGES_URL } from "./claude-constants.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama-constants.js";
 import { assertLoopbackBindHost, assertLoopbackHttpUrl } from "./loopback.js";
 import { attachCancellation, relayPassthrough } from "./relay.js";
 import { fetchWithHeadersTimeout, IdleTimeoutError } from "./timeouts.js";
