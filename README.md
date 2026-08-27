@@ -2,6 +2,8 @@
 
 One CLI. Two surfaces:
 
+<img width="147" height="49" alt="Screenshot 2026-08-27 at 9 00 48 AM" src="https://github.com/user-attachments/assets/c0058e29-7bcb-4994-a733-f1e87c30a82d" />
+
 - **cob Codex** (`cob start`) — live product. [Codex](https://github.com/openai/codex) / ChatGPT Desktop keep native GPT on the ChatGPT subscription path and still list local Ollama models in the same picker. Native GPT can spawn selected Ollama models as V1 subagent children. Ollama parent → GPT child is not supported.
 - **cob Claude** (`cob claude start`) — live Messages loopback on `:18792` / `~/.claude-cob`. Claude Code keeps native Claude models on the Anthropic subscription (OAuth forwarded). Other model ids go to Ollama `/v1/messages`. Native Claude ids are never rewritten to Ollama. `cob claude start --desktop` snapshots then points Claude Desktop 3P at this loopback, pins the 3P picker to Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5, and writes cob-owned `~/.claude/agents/cob-*.md` (restore reverts). Never ChatGPT Desktop gold. `ollama launch claude` is not this surface.
 
