@@ -5,10 +5,10 @@ import { CLAUDE_DESKTOP_NATIVE_MODELS, buildClaudeModelsResponse } from "./claud
 describe("cob claude models catalog", () => {
   it("lists real Claude ids and Ollama tags without remapping Claude onto Ollama", () => {
     const listed = buildClaudeModelsResponse([
-      { name: "deepseek-v4-flash:0731-cloud", capabilities: ["completion", "tools", "thinking"] },
+      { name: "glm-5.3-flash:cloud", capabilities: ["completion", "tools", "thinking", "vision"] },
     ]);
     const opus = listed.data.find((entry) => entry.id === "claude-opus-5");
-    const child = listed.data.find((entry) => entry.id === "deepseek-v4-flash:0731-cloud");
+    const child = listed.data.find((entry) => entry.id === "glm-5.3-flash:cloud");
     assert.equal(opus?.capabilities.thinking.supported, true);
     assert.equal(opus?.capabilities.effort.supported, true);
     assert.equal(child?.capabilities.thinking.supported, true);
@@ -16,7 +16,7 @@ describe("cob claude models catalog", () => {
     assert.equal(child?.capabilities.effort.high.supported, true);
     assert.equal("anthropic_family_tier" in (child ?? {}), false);
     assert.equal(
-      CLAUDE_DESKTOP_NATIVE_MODELS.some((entry) => entry.id === "deepseek-v4-flash:0731-cloud"),
+      CLAUDE_DESKTOP_NATIVE_MODELS.some((entry) => entry.id === "glm-5.3-flash:cloud"),
       false,
     );
     assert.equal(

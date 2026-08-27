@@ -8,8 +8,10 @@ Isolation rule for every live run: a temporary `CODEX_HOME` / `COB_CODEX_HOME`
 gateway at the real `~/.codex` unless the goal is an explicit
 restore/config-byte check, and then snapshot `config.toml` first. The globally
 installed cob on port 18790 is the ChatGPT Desktop path. Cut that install with
-[RELEASE.md](./RELEASE.md). Current live is cob **0.1.14** (scoped fail-closed
-JSON/encrypted-wire). G12/G14/G17 traces stay on the **0.1.13** artifact.
+[RELEASE.md](./RELEASE.md). Current live is cob **0.2.0**; the workspace
+stabilization diff is not installed there. G12/G14/G17 traces remain
+historical **0.1.13** evidence and are not credited to the current live
+artifact.
 
 Official spawn harness (Codex 0.147.0):
 

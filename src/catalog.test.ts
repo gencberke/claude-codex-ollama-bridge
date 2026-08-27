@@ -114,7 +114,9 @@ describe("catalog merge", () => {
   });
 
   it("lists sol, terra, luna, then spawnable 0731 and hides the rest", () => {
-    const merged = mergeCatalog(bundled(), tags);
+    const merged = mergeCatalog(bundled(), tags, {
+      spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:0731-cloud"],
+    });
     const top = listVisibleTopSlugs(merged.models);
     assert.deepEqual(top, [
       "gpt-5.6-sol",
@@ -150,6 +152,35 @@ describe("catalog merge", () => {
     assert.equal(entry.display_name, entry.slug);
     assert.equal(efforts.includes("xhigh"), false);
     assert.equal(efforts.includes("medium"), false);
+  });
+
+  it("uses the GLM-5.3 Flash ladder when the row is explicitly selected", () => {
+    const merged = mergeCatalog(
+      bundled(),
+      [
+        {
+          name: "glm-5.3-flash:cloud",
+          capabilities: ["completion", "tools", "thinking", "vision"],
+          details: { context_length: 1048576, parameter_size: "321B" },
+        },
+        ...tags,
+      ],
+      { spawnableOllamaSlugs: ["ollama/glm-5.3-flash:cloud"] },
+    );
+    const entry = merged.models.find((model) => model.slug === "ollama/glm-5.3-flash:cloud");
+    assert.ok(entry);
+    assert.deepEqual(
+      (entry.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      ["low", "high", "max"],
+    );
+    assert.equal(entry.default_reasoning_level, "max");
+    assert.equal(entry.visibility, "list");
+    assert.deepEqual(listVisibleTopSlugs(merged.models), [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "ollama/glm-5.3-flash:cloud",
+    ]);
   });
 
   it("does not inflate small Ollama context windows to 256k", () => {
@@ -276,8 +307,33 @@ describe("catalog merge", () => {
     );
   });
 
+  it("rejects the unavailable none level on the always-on GLM row", () => {
+    assert.throws(
+      () =>
+        assertOllamaRowsSafe({
+          models: [
+            {
+              slug: "ollama/glm-5.3-flash:cloud",
+              base_instructions: OLLAMA_BASE_INSTRUCTIONS,
+              supported_reasoning_levels: [{ effort: "none", description: "disabled" }],
+              default_reasoning_level: "none",
+              supports_parallel_tool_calls: false,
+              supports_search_tool: false,
+              multi_agent_version: "v1",
+              shell_type: "disabled",
+            },
+          ],
+        }),
+      /model-specific reasoning ladder/,
+    );
+  });
+
   it("does not pad the picker with gpt-5.5 when gpt-5.6 is absent", () => {
-    const priorities = assignFeaturedPriorities(bundled().models, ["deepseek-v4-flash:0731-cloud"]);
+    const priorities = assignFeaturedPriorities(
+      bundled().models,
+      ["deepseek-v4-flash:0731-cloud"],
+      ["ollama/deepseek-v4-flash:0731-cloud"],
+    );
     assert.equal(priorities.get("gpt-5.6-sol"), 0);
     assert.equal(priorities.get("gpt-5.6-terra"), 1);
     assert.equal(priorities.get("gpt-5.6-luna"), 2);
@@ -335,6 +391,33 @@ describe("catalog merge", () => {
     assert.equal(rebuilt.base_instructions, OLLAMA_BASE_INSTRUCTIONS);
     assert.equal(rebuilt.display_name, "ollama/deepseek-v4-flash:cloud");
     assert.equal(rebuilt.context_window, 256000);
+  });
+
+  it("keeps the previously visible spawn row during a default migration fallback", () => {
+    const previous = mergeCatalog(bundled(), tags, {
+      spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:0731-cloud"],
+    });
+    const fallback = mergeCatalogWithFallback(bundled(), [], previous, true, {
+      spawnableOllamaSlugs: ["ollama/glm-5.3-flash:cloud"],
+    });
+    const deepseek = fallback.models.find(
+      (model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud",
+    );
+    const extra = fallback.models.find((model) => model.slug === "ollama/deepseek-v4-flash:cloud");
+    assert.ok(deepseek);
+    assert.equal(deepseek.visibility, "list");
+    assert.equal(deepseek.priority, 3);
+    assert.equal(extra?.visibility, "hide");
+    assert.deepEqual(listVisibleTopSlugs(fallback.models), [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "ollama/deepseek-v4-flash:0731-cloud",
+    ]);
+    assert.equal(
+      fallback.models.some((model) => model.slug === "ollama/glm-5.3-flash:cloud"),
+      false,
+    );
   });
 
   it("advertises supports_search_tool on Ollama rows only when opted in", () => {

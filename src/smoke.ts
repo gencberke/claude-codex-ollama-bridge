@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadBundledCatalog, mergeCatalog, listVisibleTopSlugs, assertCodexAcceptsCatalog } from "./catalog.js";
 import { OLLAMA_BASE_INSTRUCTIONS } from "./constants.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
 import { listenGateway } from "./gateway.js";
 import { restoreCob } from "./lifecycle.js";
 import { resolvePaths } from "./paths.js";
@@ -89,13 +90,13 @@ async function t1BundledParse(): Promise<CatalogFile> {
   if (bundled.models.length === 0) throw new Error("bundled catalog empty");
   const tags: OllamaTag[] = [
     {
-      name: "deepseek-v4-flash:0731-cloud",
+      name: DEFAULT_OLLAMA_SPAWN_MODEL,
       capabilities: ["completion", "tools", "thinking"],
       details: { context_length: 1048576, parameter_size: "304B" },
     },
   ];
   const merged = mergeCatalog(bundled, tags);
-  const ollama = merged.models.find((model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud");
+  const ollama = merged.models.find((model) => model.slug === `ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`);
   if (!ollama) throw new Error("missing ollama overlay");
   if (ollama.base_instructions !== OLLAMA_BASE_INSTRUCTIONS) {
     throw new Error("Ollama row must use cob-owned instructions, not GPT text");
@@ -121,14 +122,14 @@ function t2Roster(): void {
       details: { context_length: 1048576 },
     },
     {
-      name: "deepseek-v4-flash:0731-cloud",
+      name: DEFAULT_OLLAMA_SPAWN_MODEL,
       capabilities: ["completion", "tools", "thinking"],
       details: { context_length: 1048576 },
     },
   ]);
   const top = listVisibleTopSlugs(merged.models);
-  if (top.join(",") !== "gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,ollama/deepseek-v4-flash:0731-cloud") {
-    throw new Error(`featured window should be sol, terra, luna, 0731; got ${top.join(", ")}`);
+  if (top.join(",") !== `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`) {
+    throw new Error(`featured window should be sol, terra, luna, the default Ollama child; got ${top.join(", ")}`);
   }
   if (top.includes("gpt-5.5") || top.includes("ollama/deepseek-v4-flash:cloud")) {
     throw new Error(`picker leaked a hidden slug: ${top.join(", ")}`);
@@ -151,7 +152,7 @@ async function t4EncryptedNeverHitsOllama(): Promise<void> {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model: "ollama/deepseek-v4-flash:0731-cloud",
+        model: `ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`,
         input: [
           {
             type: "agent_message",
@@ -179,7 +180,7 @@ async function t4EncryptedNeverHitsOllama(): Promise<void> {
 
 async function gptToGptGuardrail(): Promise<void> {
   if (routeModel("gpt-5.6-luna", new Set(["gpt-5.6-luna"])) !== "native") throw new Error("luna must stay native");
-  if (routeModel("ollama/deepseek-v4-flash:cloud", new Set()) !== "ollama") {
+  if (routeModel(`ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`, new Set()) !== "ollama") {
     throw new Error("ollama slug must route to ollama");
   }
   let nativeHits = 0;
@@ -269,7 +270,7 @@ async function t3LiveOllama(ollamaUrl: string): Promise<void> {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model: "ollama/deepseek-v4-flash:0731-cloud",
+        model: `ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`,
         input: "Reply with the single word pong.",
         stream: false,
         store: false,

@@ -120,7 +120,8 @@ Ollama model.
 ollama_threads = "summarize"
 # optional dedicated Ollama slug; default = thread model
 # ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
-# optional Stage 3 experiment; omit to keep G8 wire high
+# optional summarizer effort; omit to use the selected model's ladder default
+# omitted effort uses the model ladder default (DeepSeek high, GLM-5.3 Flash max)
 # G17 rejected low; none is isolated opt-in only
 # ollama_effort = "none"
 

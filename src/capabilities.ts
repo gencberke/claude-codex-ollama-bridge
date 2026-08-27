@@ -20,16 +20,52 @@ export type OllamaChildProfile = {
   previousResponseState: "unsupported";
 };
 
-const OLLAMA_THINKING_LEVELS: readonly ReasoningLevel[] = [
+export const OLLAMA_REASONING_EFFORTS = ["none", "low", "high", "max"] as const;
+
+export type OllamaReasoningEffort = (typeof OLLAMA_REASONING_EFFORTS)[number];
+
+export type OllamaReasoningLadder = {
+  id: "deepseek" | "glm-5.3";
+  efforts: readonly OllamaReasoningEffort[];
+  defaultEffort: OllamaReasoningEffort;
+  levels: readonly ReasoningLevel[];
+};
+
+const DEEPSEEK_THINKING_LEVELS: readonly ReasoningLevel[] = [
   { effort: "none", description: "Thinking off. Fastest Ollama replies." },
   { effort: "low", description: "Light thinking for short coding turns." },
   { effort: "high", description: "Default DeepSeek thinking." },
   { effort: "max", description: "Maximum reasoning for architecture and hard analysis." },
 ];
 
-export const OLLAMA_REASONING_EFFORTS = ["none", "low", "high", "max"] as const;
+const GLM53_THINKING_LEVELS: readonly ReasoningLevel[] = [
+  { effort: "low", description: "Light thinking. GLM-5.3 cannot turn thinking off." },
+  { effort: "high", description: "Enhanced thinking for typical coding turns." },
+  { effort: "max", description: "Default GLM-5.3 thinking. Deepest analysis." },
+];
 
-export const DEFAULT_OLLAMA_REASONING_EFFORT = "high" satisfies (typeof OLLAMA_REASONING_EFFORTS)[number];
+export const DEEPSEEK_REASONING_LADDER: OllamaReasoningLadder = {
+  id: "deepseek",
+  efforts: ["none", "low", "high", "max"],
+  defaultEffort: "high",
+  levels: DEEPSEEK_THINKING_LEVELS,
+};
+
+export const GLM53_REASONING_LADDER: OllamaReasoningLadder = {
+  id: "glm-5.3",
+  efforts: ["low", "high", "max"],
+  defaultEffort: "max",
+  levels: GLM53_THINKING_LEVELS,
+};
+
+/** DeepSeek-style default. GLM-5.3 rows use max instead. */
+export const DEFAULT_OLLAMA_REASONING_EFFORT = "high" satisfies OllamaReasoningEffort;
+
+export function ollamaReasoningLadderForModel(model: string | undefined): OllamaReasoningLadder {
+  const id = (model ?? "").toLowerCase().replace(/^ollama\//, "");
+  if (/^glm-5[.-]3-flash(?::|$)/.test(id)) return GLM53_REASONING_LADDER;
+  return DEEPSEEK_REASONING_LADDER;
+}
 
 export function evidenceFromOllamaTag(tag: OllamaTag): OllamaCapabilityEvidence {
   const capabilities = new Set(tag.capabilities ?? []);
@@ -78,9 +114,11 @@ export function ollamaChildCatalogFields(opts: {
   /** Explicit Gate 5 opt-in for this configured Ollama spawn row. */
   applyPatch?: boolean;
   autoCompactTokenLimit?: number;
+  /** Catalog slug or Ollama tag. Selects the advertised thinking ladder. */
+  model?: string;
 }): JsonObject {
   const profile = ollamaChildProfile(opts.evidence, { supportsApplyPatch: opts.applyPatch === true });
-  const levels = reasoningLevelsForEvidence(opts.skeleton, profile.supportsReasoning);
+  const levels = reasoningLevelsForEvidence(opts.skeleton, profile.supportsReasoning, opts.model);
   const maxContextWindow = opts.maxContextWindow ?? opts.contextWindow;
   const fields: JsonObject = {
     supported_in_api: true,
@@ -106,9 +144,9 @@ export function ollamaChildCatalogFields(opts: {
     multi_agent_version: "v1",
   };
   if (levels.length > 0) {
+    const ladder = ollamaReasoningLadderForModel(opts.model);
     fields.default_reasoning_level =
-      levels.find((level) => level.effort === DEFAULT_OLLAMA_REASONING_EFFORT)?.effort ??
-      levels[0]!.effort;
+      levels.find((level) => level.effort === ladder.defaultEffort)?.effort ?? levels[0]!.effort;
   }
   if (
     typeof opts.autoCompactTokenLimit === "number" &&
@@ -119,7 +157,11 @@ export function ollamaChildCatalogFields(opts: {
   return fields;
 }
 
-export function reasoningLevelsForEvidence(_skeleton: JsonObject, thinking: boolean): ReasoningLevel[] {
+export function reasoningLevelsForEvidence(
+  _skeleton: JsonObject,
+  thinking: boolean,
+  model?: string,
+): ReasoningLevel[] {
   if (!thinking) return [];
-  return OLLAMA_THINKING_LEVELS.map((level) => ({ ...level }));
+  return ollamaReasoningLadderForModel(model).levels.map((level) => ({ ...level }));
 }

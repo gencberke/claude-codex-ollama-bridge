@@ -16,6 +16,7 @@ import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./cob-config.js";
 import {
   evidenceFromOllamaTag,
   ollamaChildCatalogFields,
+  ollamaReasoningLadderForModel,
   OLLAMA_REASONING_EFFORTS,
   type OllamaCapabilityEvidence,
 } from "./capabilities.js";
@@ -189,6 +190,7 @@ export function buildOllamaEntry(
   const applyPatch =
     options?.applyPatch === true && spawnable.some((wanted) => isSpawnableMatch(tag.name, wanted));
   const evidence = evidenceFromOllamaTag(tag);
+  const slug = ollamaCatalogSlug(tag.name);
   const windows = ollamaCatalogWindows({
     tagLength: tag.details?.context_length,
     cloud: isVerifiedCloudOllamaTag(tag),
@@ -207,8 +209,8 @@ export function buildOllamaEntry(
     supportsSearchTool: options?.supportsSearchTool === true,
     applyPatch,
     autoCompactTokenLimit: options?.autoCompactTokenLimit,
+    model: slug,
   });
-  const slug = ollamaCatalogSlug(tag.name);
   const entry: JsonObject = {
     slug,
     display_name: slug,
@@ -363,7 +365,8 @@ export function mergeCatalogWithFallback(
   );
   const ids = previousOllama.map((model) => asSlug(model).slice("ollama/".length));
   const spawnable = options?.spawnableOllamaSlugs ?? DEFAULT_SPAWNABLE_OLLAMA_SLUGS;
-  const priorities = assignFeaturedPriorities(nativeOnly, ids, spawnable);
+  const fallbackSpawnable = fallbackSpawnableSlugs(previousOllama, spawnable);
+  const priorities = assignFeaturedPriorities(nativeOnly, ids, fallbackSpawnable);
   for (const model of nativeOnly) {
     model.priority = priorities.get(asSlug(model)) ?? asPriority(model);
   }
@@ -379,13 +382,29 @@ export function mergeCatalogWithFallback(
     if (rebuilt) ollama.push(rebuilt);
   }
   const catalog = { models: [...nativeOnly, ...ollama] };
-  applyPickerVisibility(catalog.models, spawnable);
+  applyPickerVisibility(catalog.models, fallbackSpawnable);
   assertOllamaRowsSafe(catalog, {
     allowSearchTool: options?.supportsSearchTool === true,
     allowApplyPatch: options?.applyPatch === true,
     spawnableOllamaSlugs: options?.spawnableOllamaSlugs,
   });
   return catalog;
+}
+
+function fallbackSpawnableSlugs(
+  previousOllama: readonly JsonObject[],
+  spawnable: readonly string[],
+): readonly string[] {
+  if (
+    spawnable.length === 0 ||
+    previousOllama.some((model) => spawnable.some((wanted) => isSpawnableMatch(asSlug(model), wanted)))
+  ) {
+    return spawnable;
+  }
+  const previousVisible = previousOllama
+    .filter((model) => asVisibility(model) === "list")
+    .map(asSlug);
+  return [...spawnable, ...previousVisible.filter((slug, index) => previousVisible.indexOf(slug) === index)];
 }
 
 function rebuildOllamaRowFromPrevious(
@@ -423,6 +442,7 @@ function rebuildOllamaRowFromPrevious(
         isSpawnableMatch(slug, wanted),
       ),
     autoCompactTokenLimit: options?.autoCompactTokenLimit,
+    model: slug,
   });
   const entry: JsonObject = {
     slug,
@@ -539,6 +559,10 @@ export function assertOllamaRowsSafe(catalog: CatalogFile, options?: CatalogSafe
     const efforts = advertisedReasoningEfforts(model);
     if (efforts.some((effort) => !(OLLAMA_REASONING_EFFORTS as readonly string[]).includes(effort))) {
       throw new Error(`Ollama row ${slug} advertised unsupported reasoning effort`);
+    }
+    const ladder = ollamaReasoningLadderForModel(slug);
+    if (efforts.some((effort) => !(ladder.efforts as readonly string[]).includes(effort))) {
+      throw new Error(`Ollama row ${slug} advertised an effort outside its model-specific reasoning ladder`);
     }
     if (typeof model.default_reasoning_level === "string") {
       if (efforts.length === 0) {

@@ -19,8 +19,8 @@ export type CompactionPolicy = {
   /** Optional dedicated Ollama summarizer slug. Default is the thread model. */
   ollamaModel?: string;
   /**
-   * Opt-in summarizer effort. Omit to keep the current G8 path (wire `high`).
-   * Isolated Stage 3 compares `none` / `low`; do not change the default without G17.
+   * Opt-in summarizer effort. Omit to use the selected model's reviewed ladder
+   * default (DeepSeek `high`, GLM-5.3 Flash `max`).
    */
   ollamaEffort?: OllamaCompactEffort;
 };
@@ -85,7 +85,11 @@ export const DEFAULT_EXPERIMENTAL_POLICY: ExperimentalPolicy = {
   nativePlaintextSpawn: { enabled: false },
 };
 
-export const DEFAULT_SPAWNABLE_OLLAMA_SLUGS = ["ollama/deepseek-v4-flash:0731-cloud"] as const;
+/** Unprefixed model id sent to Ollama for the default V1 child on both surfaces. */
+export const DEFAULT_OLLAMA_SPAWN_MODEL = "deepseek-v4-flash:0731-cloud" as const;
+
+/** Catalog slug(s) that cob exposes as the default spawnable Ollama row. */
+export const DEFAULT_SPAWNABLE_OLLAMA_SLUGS = [`ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`] as const;
 
 export class CobConfigError extends Error {
   constructor(

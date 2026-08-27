@@ -102,13 +102,13 @@ export function resolveCompactPlan(opts: {
 export const OLLAMA_COMPACT_EFFORTS = ["none", "low", "high", "max"] as const;
 export type OllamaCompactEffort = (typeof OLLAMA_COMPACT_EFFORTS)[number];
 
-/** Current G8 summarizer effort after prepareOllamaWire (missing → high). */
+/** Legacy DeepSeek-compatible effort constant; omitted effort is model-specific on the wire. */
 export const DEFAULT_OLLAMA_COMPACT_EFFORT = "high" satisfies OllamaCompactEffort;
 
 export function buildOllamaSummarizerPayload(opts: {
   compactModel: string;
   history: unknown[];
-  /** Opt-in experiment. Omit to keep the current G8 high default on the wire. */
+  /** Optional explicit effort. Omit to use the model ladder default (GLM max, DeepSeek high). */
   effort?: OllamaCompactEffort;
 }): JsonObject {
   const payload: JsonObject = {

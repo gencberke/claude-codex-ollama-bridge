@@ -2,6 +2,7 @@ import {
   OLLAMA_ADVISORY_FIELDS,
   OLLAMA_REQUEST_ALLOWLIST,
 } from "./ollama-dialect.js";
+import { ollamaReasoningLadderForModel, type OllamaReasoningEffort } from "./capabilities.js";
 import type { JsonError } from "./encrypted.js";
 import type { JsonObject } from "./types.js";
 import { isRecord } from "./types.js";
@@ -16,7 +17,6 @@ export {
 
 const ALLOWLIST = new Set<string>(OLLAMA_REQUEST_ALLOWLIST);
 const ADVISORY = new Set<string>(OLLAMA_ADVISORY_FIELDS);
-const WIRE_EFFORTS = new Set(["none", "low", "high", "max"]);
 
 export type OllamaBoundaryResult = {
   payload: JsonObject;
@@ -110,7 +110,8 @@ export function normalizeOllamaReasoning(
     delete payload.reasoning_effort;
     return;
   }
-  const effort = mapOllamaReasoningEffort(incoming) ?? "high";
+  const ladder = ollamaReasoningLadderForModel(typeof payload.model === "string" ? payload.model : undefined);
+  const effort = mapOllamaReasoningEffort(incoming, payload.model) ?? ladder.defaultEffort;
   if (isRecord(payload.reasoning)) {
     payload.reasoning = { ...payload.reasoning, effort };
   } else {
@@ -119,12 +120,24 @@ export function normalizeOllamaReasoning(
   delete payload.reasoning_effort;
 }
 
-export function mapOllamaReasoningEffort(effort: unknown): string | undefined {
+export function mapOllamaReasoningEffort(effort: unknown, model?: unknown): string | undefined {
   if (typeof effort !== "string") return undefined;
-  if (effort === "none" || effort === "low" || effort === "high" || effort === "max") return effort;
-  if (effort === "medium" || effort === "xhigh" || effort === "minimal") return "high";
-  if (WIRE_EFFORTS.has(effort)) return effort;
-  return undefined;
+  const ladder = ollamaReasoningLadderForModel(typeof model === "string" ? model : undefined);
+  const incoming = effort.trim().toLowerCase();
+  let mapped: OllamaReasoningEffort | undefined;
+  if (incoming === "none" || incoming === "off") {
+    mapped = ladder.efforts.includes("none") ? "none" : "low";
+  } else if (incoming === "minimal") {
+    mapped = ladder.id === "glm-5.3" ? "low" : "high";
+  } else if (incoming === "medium") {
+    mapped = "high";
+  } else if (incoming === "xhigh") {
+    mapped = ladder.id === "glm-5.3" ? "max" : "high";
+  } else if (incoming === "low" || incoming === "high" || incoming === "max") {
+    mapped = incoming;
+  }
+  if (!mapped) return undefined;
+  return ladder.efforts.includes(mapped) ? mapped : ladder.defaultEffort;
 }
 
 export function structuredTextFormatError(text: unknown): OllamaReject | undefined {

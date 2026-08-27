@@ -89,6 +89,43 @@ describe("ollama child capability profile", () => {
     assert.equal(fields.default_reasoning_level, "high");
   });
 
+  it("advertises the always-on GLM-5.3 Flash ladder with max as default", () => {
+    const fields = ollamaChildCatalogFields({
+      evidence: { tools: true, thinking: true, vision: true },
+      skeleton: {
+        supported_reasoning_levels: [
+          { effort: "low", description: "low" },
+          { effort: "medium", description: "medium" },
+          { effort: "high", description: "high" },
+          { effort: "xhigh", description: "xhigh" },
+          { effort: "max", description: "max" },
+        ],
+      },
+      contextWindow: 256000,
+      model: "ollama/glm-5.3-flash:cloud",
+    });
+    assert.deepEqual(
+      (fields.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      ["low", "high", "max"],
+    );
+    assert.equal(fields.default_reasoning_level, "max");
+    assert.equal(fields.input_modalities instanceof Array && fields.input_modalities.includes("image"), true);
+  });
+
+  it("does not select the GLM ladder from an unrelated substring", () => {
+    const fields = ollamaChildCatalogFields({
+      evidence: { tools: true, thinking: true, vision: false },
+      skeleton: {},
+      contextWindow: 256000,
+      model: "ollama/not-glm-5.3-flash:cloud",
+    });
+    assert.equal(fields.default_reasoning_level, "high");
+    assert.equal(
+      (fields.supported_reasoning_levels as { effort: string }[])[0]?.effort,
+      "none",
+    );
+  });
+
   it("can advertise search on the catalog row when opted in", () => {
     const fields = ollamaChildCatalogFields({
       evidence: { tools: true, thinking: true, vision: false },

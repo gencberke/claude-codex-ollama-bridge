@@ -779,8 +779,8 @@ describe("gateway durable Ollama state", () => {
       const body = await response.text();
       assert.equal(response.status, 200);
       assert.equal(body.includes("response.incomplete"), true);
-      assert.equal(body.includes('"code":"upstream_stream_error"'), true);
-      assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 1);
+      assert.equal(body.includes('"code":"upstream_stream_error"'), false);
+      assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 0);
       assert.equal(existsSync(join(stateDir, "checkpoints")), false);
     } finally {
       await close(server);
@@ -816,7 +816,7 @@ describe("gateway durable Ollama state", () => {
     }
   });
 
-  it("does not publish malformed streamed responses", async () => {
+  it("does not publish partial streamed responses", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "cob-stream-state-"));
     const port = await freePort();
     const server = await listenGateway({
@@ -824,7 +824,7 @@ describe("gateway durable Ollama state", () => {
       catalog: CATALOG,
       stateDir,
       ollamaFetch: async () =>
-        new Response('data: {"id":"partial","object":"response","output":[]}\n\n', {
+        new Response('data: {"type":"response.output_text.delta","delta":"partial"}\n\n', {
           status: 200,
           headers: { "content-type": "text/event-stream" },
         }),
@@ -836,9 +836,9 @@ describe("gateway durable Ollama state", () => {
         body: JSON.stringify({ model: "ollama/test", input: "hi", stream: true }),
       });
       const text = await response.text();
-      assert.match(text, /upstream_stream_error|complete response/);
-      assert.equal([...text.matchAll(/data: \[DONE\]/g)].length, 1);
-      assert.equal(text.indexOf('"code":"upstream_stream_error"') < text.indexOf("data: [DONE]"), true);
+      assert.match(text, /"delta":"partial"/);
+      assert.equal(text.includes('"code":"upstream_stream_error"'), false);
+      assert.equal([...text.matchAll(/data: \[DONE\]/g)].length, 0);
       const store = new ConversationStateStore(stateDir);
       assert.equal(existsSync(store.checkpointsDir), false);
     } finally {

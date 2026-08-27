@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Readable } from "node:stream";
 import { DEFAULT_OLLAMA_URL, NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
 import { loadCatalogFile } from "./catalog.js";
+import { ollamaReasoningLadderForModel } from "./capabilities.js";
 import { decodeRequestBody, RequestDecodeError } from "./decode.js";
 import { forwardNativeResponses, type HeaderMap, type UpstreamFetch } from "./native.js";
 import {
@@ -18,6 +19,7 @@ import {
 import {
   forwardOllamaResponses,
   isOllamaReject,
+  mapOllamaReasoningEffort,
   normalizeOllamaResponse,
   ollamaSseTransform,
   prepareOllamaPayload,
@@ -664,6 +666,11 @@ async function handleOllamaSummaryCompact(
     `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("ollama", compactModel))} ${formatCompactAttemptLog(compactNote)}`,
   );
   const compactStarted = Date.now();
+  const supportsReasoning = catalogRowSupportsReasoning(resolveCatalog(options), compactModel);
+  const compactEffort = supportsReasoning
+    ? mapOllamaReasoningEffort(options.compaction?.ollamaEffort, compactModel) ??
+      ollamaReasoningLadderForModel(compactModel).defaultEffort
+    : "omitted";
   const forwarded = await forwardOllamaResponses({
     payload: preparedSummarizer,
     ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
@@ -671,7 +678,7 @@ async function handleOllamaSummaryCompact(
     signal: abort.signal,
     headersMs: resolveOllamaHeadersMs(options),
     applyPatch: options.applyPatch,
-    supportsReasoning: catalogRowSupportsReasoning(resolveCatalog(options), compactModel),
+    supportsReasoning,
   });
   if (isOllamaReject(forwarded)) {
     json(res, forwarded.status, forwarded.body);
@@ -726,7 +733,7 @@ async function handleOllamaSummaryCompact(
     latencyMs: Date.now() - compactStarted,
     summaryBytes: Buffer.byteLength(extracted.text, "utf8"),
     sections: compactHandoffSectionFlags(extracted.text),
-    effort: options.compaction?.ollamaEffort ?? "high",
+    effort: compactEffort,
     usage: extractOllamaUsage(summarizerResponse),
     compactNote,
   });
@@ -975,6 +982,23 @@ function stateStore(options: GatewayOptions): ConversationStateStore {
     throw new Error("internal error: gateway state store was not initialized");
   }
   return options.stateStore;
+}
+
+function endOllamaStream(res: ServerResponse): void {
+  // An incomplete SSE must end without [DONE]. This leaves the client with
+  // the already-streamed prefix for diagnostics, but no valid completion
+  // terminal that Codex could accept.
+  if (!res.writableEnded && !res.destroyed) res.end();
+}
+
+function logOllamaStreamIncomplete(
+  status: number,
+  terminal: "empty" | "eof" | "idle" | "error" | "client_abort",
+  capture: StreamCapture,
+): void {
+  console.error(
+    `[cob] ollama stream incomplete terminal=${terminal} status=${status} raw_bytes=${capture.rawBytes} completed=${capture.sawCompletedEvent} done=${capture.sawDone} malformed=${capture.malformed}`,
+  );
 }
 
 function createStreamCapture(): StreamCapture {
@@ -1631,11 +1655,9 @@ async function relayOllama(
     res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
     if (!upstream.body) {
       if (upstream.status >= 200 && upstream.status < 300) {
-        res.write(
-          sseErrorTerminal(
-            "Ollama stream ended without a complete response; resend the full context without previous_response_id",
-          ),
-        );
+        logOllamaStreamIncomplete(upstream.status, "empty", createStreamCapture());
+        endOllamaStream(res);
+        return;
       }
       res.end();
       return;
@@ -1645,18 +1667,54 @@ async function relayOllama(
     const capture = createStreamCapture();
     const guard: OllamaResponseGuardState = {};
     const suppressDone = upstream.status >= 200 && upstream.status < 300;
-    const relayed = await relayTransformed(
-      nodeStream,
-      ollamaSseTransform(catalogModel, captureObserver(capture, suppressDone), bridge, declaration, guard),
-      res,
-      {
-        idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
-        abort,
-        endResponse: false,
-      },
-    );
+    // Gate 5 has its own explicit response.failed terminal contract for
+    // transform/guard rejection. Keep that path on the regular response;
+    // ordinary Ollama streams must not get relayTransformed's generic
+    // error+[DONE] terminal after a partial prefix.
+    const failClosedSse = suppressDone && declaration.applyPatch?.enabled !== true;
+    let relayed: boolean;
+    try {
+      relayed = await relayTransformed(
+        nodeStream,
+        ollamaSseTransform(catalogModel, captureObserver(capture, suppressDone), bridge, declaration, guard),
+        res,
+        {
+          idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
+          abort,
+          endResponse: false,
+          appendErrorTerminal: !failClosedSse,
+        },
+      );
+    } catch (error) {
+      if (failClosedSse) {
+        if (abort.signal.aborted) {
+          logOllamaStreamIncomplete(upstream.status, "client_abort", capture);
+          return;
+        }
+        logOllamaStreamIncomplete(
+          upstream.status,
+          error instanceof IdleTimeoutError ? "idle" : "error",
+          capture,
+        );
+        endOllamaStream(res);
+        return;
+      }
+      throw error;
+    }
+    if (!relayed && failClosedSse) {
+      if (abort.signal.aborted) {
+        logOllamaStreamIncomplete(upstream.status, "client_abort", capture);
+        return;
+      }
+      logOllamaStreamIncomplete(upstream.status, "error", capture);
+      endOllamaStream(res);
+      return;
+    }
     if (!relayed) return;
-    if (abort.signal.aborted) return;
+    if (abort.signal.aborted) {
+      logOllamaStreamIncomplete(upstream.status, "client_abort", capture);
+      return;
+    }
     if (guard.failure) {
       console.error(formatOllamaGuardLog(guard.failure, declaration));
       if (!res.writableEnded && !res.destroyed) res.write(ollamaGuardSseTerminal(guard.failure));
@@ -1674,11 +1732,9 @@ async function relayOllama(
         }
       }
     } else if (!res.writableEnded && !res.destroyed && upstream.status >= 200 && upstream.status < 300) {
-      res.write(
-        sseErrorTerminal(
-          "Ollama stream did not produce a complete response; resend the full context without previous_response_id",
-        ),
-      );
+      logOllamaStreamIncomplete(upstream.status, "eof", capture);
+      endOllamaStream(res);
+      return;
     }
     if (!res.writableEnded && !res.destroyed) res.end();
     return;

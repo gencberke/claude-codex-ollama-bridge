@@ -2,16 +2,21 @@
  * Pinned Ollama Responses dialect. Source/test authority only — not runtime
  * discovery. Normal requests and `cob status` must not call `/api/version`.
  *
- * Reviewed against Ollama 0.32.15 `openai/responses.go`.
+ * Reviewed against Ollama 0.33.1 `openai/responses.go`.
+ *
+ * The tagged 0.33.1 Responses source is unchanged from the reviewed 0.32.15
+ * source, so the request and response invariants below remain intentionally
+ * narrow.
  */
 
 export const OLLAMA_DIALECT_VERSION = 2 as const;
-export const OLLAMA_REVIEWED_VERSION = "0.32.15" as const;
+export const OLLAMA_REVIEWED_VERSION = "0.33.1" as const;
 export const OLLAMA_REVIEWED_SOURCE_PATH = "openai/responses.go" as const;
 export const OLLAMA_RESPONSES_ENDPOINT = "/v1/responses" as const;
 
 /**
- * Top-level JSON keys on Ollama 0.32.15 `ResponsesRequest`.
+ * Top-level JSON keys shared by Ollama 0.32.15 and 0.33.1
+ * `ResponsesRequest`.
  * `tool_choice` is documented as unsupported and is not a struct field.
  * `conversation` is present but not implemented.
  */
@@ -32,7 +37,7 @@ export const OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS = [
   "stream",
 ] as const;
 
-/** Reviewed Ollama 0.32.15 Responses request surface that cob forwards. */
+/** Reviewed Ollama 0.33.1 Responses request surface that cob forwards. */
 export const OLLAMA_REQUEST_ALLOWLIST = [
   "model",
   "input",

@@ -73,8 +73,8 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:18792 claude --model opus
 cob claude agents --dir .
 ```
 
-Ask the parent for `cob-deepseek-0731`, not built-in Haiku. Native Claude
-ids (`opus` / `sonnet` / `haiku` / `fable` / `claude-*`) stay on Anthropic.
+Ask the parent for `cob-deepseek-0731`, not built-in Haiku. Native Claude ids
+(`opus` / `sonnet` / `haiku` / `fable` / `claude-*`) stay on Anthropic.
 Do not set `ANTHROPIC_AUTH_TOKEN=ollama`.
 
 ### cob Claude — Claude Desktop 3P
@@ -145,11 +145,12 @@ deferred-tool promotion and the request allowlist. A client-executed
 not checkpointed. Known aliases are still restored for Codex after the name is
 authorized.
 
-Ollama 0.32.15 cloud may close a successful stream after
-`response.completed` without sending an OpenAI-style upstream `[DONE]`. cob
-treats only the valid completed envelope as success, publishes its checkpoint,
-then emits exactly one client-facing `[DONE]`. Incomplete, failed, malformed,
-or rejected streams still publish no state.
+The reviewed Ollama 0.33.1 Responses source is unchanged from 0.32.15, whose
+cloud path may close a successful stream after `response.completed` without an
+OpenAI-style upstream `[DONE]`. cob treats only the valid completed envelope as
+success, publishes its checkpoint, then emits exactly one client-facing
+`[DONE]`. Incomplete streams end without a synthetic `[DONE]`; incomplete,
+failed, malformed, or rejected streams publish no state.
 
 Standard request/wire logs are content-free: they retain aggregate counts,
 sizes, and SHA fields plus sorted `tool_bytes_top` definition sizes, but never
@@ -181,7 +182,7 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 | `cob claude start` | Live cob Claude Messages loopback (`~/.claude-cob`, port 18792). Global install. Does not write `~/.claude/settings.json`. Not ChatGPT Desktop gold |
 | `cob claude start --desktop` | Same loopback, plus cob-owned Claude Desktop 3P overlay and cob-owned `~/.claude/agents/cob-*.md` (snapshot then write). Restore reverts both. Never `ollama launch` or nativeAlias |
 | `cob claude start --dev` | Isolated cob Claude (`~/.claude-cob-dev`, port 18793). Workspace checkouts. |
-| `cob claude agents --dir .` | Writes cob-owned `cob-deepseek-0731.md` into this project's `.claude/agents`. Refuses `~/.claude`. Ask the parent for that subagent, not built-in haiku |
+| `cob claude agents --dir .` | Writes cob-owned `cob-deepseek-0731.md` into this project's `.claude/agents`; it routes to the default `deepseek-v4-flash:0731-cloud` child. Refuses `~/.claude`. Ask the parent for that subagent, not built-in haiku |
 | `cob claude status` / `stop` / `restore` | cob-owned Claude runtime; restore also reverts Desktop overlay and user-agents snapshots. Never `~/.claude/settings.json` |
 
 Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation, spawn, workspace R/W, compaction, restart, and restore procedures plus gold-standard metrics are in [LIVE-TESTING.md](./LIVE-TESTING.md). The official spawn harness is `COB_LIVE_SUBAGENT=1`; do not pass `--ignore-user-config`, and keep Codex stdin closed.
@@ -197,21 +198,31 @@ A successful live catalog write is not visible in an already-open Desktop
 session — fully quit and reopen ChatGPT Desktop before judging picker
 changes. Native GPT rows are not "repaired" from a different Codex version.
 
-Ollama rows are discovered from `/api/tags` on every start/sync. The picker **lists** `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and the first spawnable Ollama slug from `cob.toml` `[subagents].models` (default `ollama/deepseek-v4-flash:0731-cloud`). Other native and discovered Ollama rows stay in `cob-catalog.json` with `visibility=hide` so routing still works. Ollama `display_name` equals the catalog slug (`ollama/...`). Do not steal GPT ids (`nativeAlias`). Ollama rows get cob-owned `base_instructions` and a child-only capability profile; GPT personality templates and unproven tool capabilities are not copied onto them.
+Ollama rows are discovered from `/api/tags` on every start/sync. The picker
+lists `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, then up to two configured
+Ollama slugs from `cob.toml` `[subagents].models` inside the five-row V1 window
+(default first row `ollama/deepseek-v4-flash:0731-cloud`). Additional configured
+models remain catalogued and directly routable but are reported as V1 roster
+overflow. Other native and discovered Ollama rows stay in `cob-catalog.json`
+with `visibility=hide` so routing still works. Ollama `display_name` equals the
+catalog slug (`ollama/...`). Do not steal GPT ids (`nativeAlias`). Ollama rows
+get cob-owned `base_instructions` and a child-only capability profile; GPT
+personality templates and unproven tool capabilities are not copied onto them.
 
-Thinking Ollama rows advertise `none` / `low` / `high` / `max` (DeepSeek V4 ladder; default `high`). Codex `medium` and `xhigh` map to `high` on the Ollama wire; `xhigh` does not become `max`. The Ollama request is clipped to the reviewed Responses fields. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)` unless
+DeepSeek thinking rows retain `none` / `low` / `high` / `max` (default `high`). GLM-5.3 Flash thinking is always on and advertises only `low` / `high` / `max` (default `max`); Codex `none`/`off`/`minimal` map to `low`, `medium` to `high`, and `xhigh` to `max` on that wire. For the DeepSeek ladder, `medium` / `xhigh` / `minimal` still map to `high`. The Ollama request is clipped to the reviewed Responses fields. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)` unless
 `catalog.active_context_window` opts in to a different active cap.
 `max_context_window` stays equal to that active window unless
 `catalog.advertise_cloud_max_context = true` on a verified cloud tag. Desktop’s used-% bar is that advertised window: a short 0731 first turn meters ~61k here (~26% of 243k) versus ~17–20k on native GPT; that is not cob merging an older thread. Live notes: [STATUS.md](./STATUS.md).
 
-The V1 spawn window is the first five `visibility=list` rows (priority ASC). With the four listed models, all of them sit in that window:
+The V1 spawn window is the first five `visibility=list` rows (priority ASC):
 
 | priority | slug |
 | --- | --- |
 | 0 | `gpt-5.6-sol` |
 | 1 | `gpt-5.6-terra` |
 | 2 | `gpt-5.6-luna` |
-| 3 | first spawnable Ollama slug from `cob.toml` `[subagents].models` |
+| 3 | first configured Ollama slug from `cob.toml` `[subagents].models` |
+| 20+ | second configured Ollama slug; later configured slugs overflow the five-row window |
 
 Encrypted V2 child tasks return HTTP 400 and are never sent to Ollama. v1 is Responses-only: Chat Completions are not translated. For an Ollama `POST /v1/responses`, a top-level `previous_response_id` is resolved from cob's local checkpoint archive, provider-safe history is merged with the new input, and the field is removed before the Ollama request. Missing, corrupt, incompatible, or unsafe state fails closed with a structured 4xx response asking for full context. Native compaction is triggered only by one terminal `compaction_trigger` item; the trigger is transient and never enters Ollama history. Ollama threads summarize that history locally and return a cob-owned compaction envelope to Codex.
 
@@ -253,12 +264,15 @@ Policy lives in cob-owned `~/.codex/cob.toml` (not the Codex profile):
 provider = "native"
 ollama_threads = "summarize"
 # ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
-# Isolated G17 candidate only; shipped default omits this key (wire high).
+# Omit this key to use the thread model; omitted effort uses its model ladder
+# default (DeepSeek high, GLM-5.3 Flash max when explicitly selected).
 # ollama_effort = "none"
 
 [subagents]
 models = [
-  "ollama/deepseek-v4-flash:0731-cloud"
+  "ollama/deepseek-v4-flash:0731-cloud",
+  # Optional migration canary; add as a second row before making it primary:
+  # "ollama/glm-5.3-flash:cloud",
 ]
 
 [catalog]
@@ -280,9 +294,11 @@ native_plaintext_spawn = false
 # native_plaintext_spawn_schema_sha256 = "<64 hex chars from the isolated schema canary>"
 ```
 
-G17's fixed-corpus trace rejected `low` and found `none` faster/cheaper with
-the same two continuation checks. That is not a default change: omit
-`ollama_effort` for the shipped high path. Cloud-max advertisement is also
+G17's fixed-corpus trace was a legacy DeepSeek/0731 experiment: it rejected
+`low` and found `none` faster/cheaper with the same two continuation checks.
+That evidence does not override the model-specific ladder. For the shipped
+DeepSeek 0731 default, omit `ollama_effort` to use `high`; explicitly selected
+GLM-5.3 Flash uses `max` when omitted. Cloud-max advertisement is also
 opt-in, and `auto_compact_token_limit` is emitted only when the native Codex
 skeleton already supports that field. Exact measurements: [LIVE-TESTING.md](./LIVE-TESTING.md).
 

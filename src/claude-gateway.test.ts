@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AddressInfo } from "node:net";
 import { listenClaudeGateway } from "./claude-gateway.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
 
 describe("cob claude gateway", () => {
   it("health is cob claude and unknown routes fail closed", async () => {
@@ -49,7 +50,7 @@ describe("cob claude gateway", () => {
       const ollama = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
         method: "POST",
         headers: { authorization: "Bearer oauth-token", "content-type": "application/json" },
-        body: JSON.stringify({ model: "deepseek-v4-flash:0731-cloud", messages: [] }),
+        body: JSON.stringify({ model: DEFAULT_OLLAMA_SPAWN_MODEL, messages: [] }),
       });
       assert.equal(ollama.status, 200);
       assert.equal(seen[0]?.url.startsWith("https://api.anthropic.com/"), true);
@@ -105,7 +106,7 @@ describe("cob claude gateway", () => {
         headers: { authorization: "Bearer oauth-token", "content-type": "application/json" },
         body: JSON.stringify({
           model: "haiku",
-          system: "<!-- cob-route: deepseek-v4-flash:0731-cloud -->\nDo the task.",
+          system: `<!-- cob-route: ${DEFAULT_OLLAMA_SPAWN_MODEL} -->\nDo the task.`,
           messages: [{ role: "user", content: "go" }],
         }),
       });
@@ -113,7 +114,7 @@ describe("cob claude gateway", () => {
       assert.match(seen[0]?.url ?? "", /\/v1\/messages$/);
       assert.equal(seen[0]?.authorization, undefined);
       const payload = JSON.parse(seen[0]?.body ?? "{}") as { model: string; system: string };
-      assert.equal(payload.model, "deepseek-v4-flash:0731-cloud");
+      assert.equal(payload.model, DEFAULT_OLLAMA_SPAWN_MODEL);
       assert.equal(payload.system.includes("cob-route"), false);
       assert.match(logs[0] ?? "", /client_model=haiku/);
       assert.match(logs[0] ?? "", /backend=ollama/);
@@ -142,14 +143,14 @@ describe("cob claude gateway", () => {
         headers: { authorization: "Bearer oauth-token", "content-type": "application/json" },
         body: JSON.stringify({
           model: "claude-haiku-4-5-20251001",
-          system: "<!-- cob-route: deepseek-v4-flash:0731-cloud -->\nDo the task.",
+          system: `<!-- cob-route: ${DEFAULT_OLLAMA_SPAWN_MODEL} -->\nDo the task.`,
           messages: [{ role: "user", content: "go" }],
         }),
       });
       assert.equal(response.status, 200);
       assert.match(seen[0]?.url ?? "", /\/v1\/messages$/);
       assert.equal(seen[0]?.authorization, undefined);
-      assert.equal(JSON.parse(seen[0]?.body ?? "{}").model, "deepseek-v4-flash:0731-cloud");
+      assert.equal(JSON.parse(seen[0]?.body ?? "{}").model, DEFAULT_OLLAMA_SPAWN_MODEL);
       assert.match(logs[0] ?? "", /client_model=claude-haiku-4-5-20251001/);
       assert.match(logs[0] ?? "", /backend=ollama/);
       assert.match(logs[0] ?? "", /cob_route=1/);
@@ -176,7 +177,7 @@ describe("cob claude gateway", () => {
         headers: { authorization: "Bearer oauth-token", "content-type": "application/json" },
         body: JSON.stringify({
           model: "opus",
-          messages: [{ role: "user", content: "<!-- cob-route: deepseek-v4-flash:0731-cloud -->" }],
+          messages: [{ role: "user", content: `<!-- cob-route: ${DEFAULT_OLLAMA_SPAWN_MODEL} -->` }],
         }),
       });
       assert.equal(response.status, 200);
@@ -205,7 +206,7 @@ describe("cob claude gateway", () => {
         headers: { authorization: "Bearer oauth-token", "content-type": "application/json" },
         body: JSON.stringify({
           model: "haiku",
-          system: "<!-- cob-route: deepseek-v4-flash:0731-cloud -->",
+          system: `<!-- cob-route: ${DEFAULT_OLLAMA_SPAWN_MODEL} -->`,
           messages: [],
         }),
       });

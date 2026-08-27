@@ -24,13 +24,13 @@ function wireKeys(payload: JsonObject, supportsReasoning = true): string[] {
 }
 
 describe("Ollama request boundary", () => {
-  it("partitions the pinned 0.32.15 ResponsesRequest fields without inventing extras", () => {
+  it("partitions the pinned 0.33.1 ResponsesRequest fields without inventing extras", () => {
     const allow = new Set<string>(OLLAMA_REQUEST_ALLOWLIST);
     const advisory = new Set<string>(OLLAMA_ADVISORY_FIELDS);
     const pinned = new Set<string>(OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS);
     assert.equal(pinned.has("tool_choice"), false);
     for (const field of OLLAMA_REQUEST_ALLOWLIST) {
-      assert.equal(pinned.has(field), true, `allowlisted ${field} is not on 0.32.15 ResponsesRequest`);
+      assert.equal(pinned.has(field), true, `allowlisted ${field} is not on 0.33.1 ResponsesRequest`);
     }
     for (const field of OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS) {
       if (field === "conversation") {
@@ -41,7 +41,7 @@ describe("Ollama request boundary", () => {
       assert.equal(
         allow.has(field) || advisory.has(field),
         true,
-        `0.32.15 field ${field} is neither allowlisted nor advisory`,
+        `0.33.1 field ${field} is neither allowlisted nor advisory`,
       );
     }
     const conversation = applyOllamaRequestBoundary({ model: "m", input: "hi", conversation: { id: "c1" } });
@@ -182,9 +182,23 @@ describe("Ollama request boundary", () => {
     assert.equal(mapOllamaReasoningEffort("minimal"), "high");
     assert.equal(mapOllamaReasoningEffort("weird"), undefined);
 
+    const glm = "glm-5.3-flash:cloud";
+    assert.equal(mapOllamaReasoningEffort("low", glm), "low");
+    assert.equal(mapOllamaReasoningEffort("high", glm), "high");
+    assert.equal(mapOllamaReasoningEffort("max", glm), "max");
+    assert.equal(mapOllamaReasoningEffort("none", glm), "low");
+    assert.equal(mapOllamaReasoningEffort("off", glm), "low");
+    assert.equal(mapOllamaReasoningEffort("minimal", glm), "low");
+    assert.equal(mapOllamaReasoningEffort("medium", glm), "high");
+    assert.equal(mapOllamaReasoningEffort("xhigh", glm), "max");
+
     const missing: JsonObject = { model: "m", input: "hi" };
     normalizeOllamaReasoning(missing, true);
     assert.deepEqual(missing.reasoning, { effort: "high" });
+
+    const glmMissing: JsonObject = { model: glm, input: "hi" };
+    normalizeOllamaReasoning(glmMissing, true);
+    assert.deepEqual(glmMissing.reasoning, { effort: "max" });
 
     const inherited: JsonObject = { model: "m", input: "hi", reasoning: { effort: "xhigh" } };
     normalizeOllamaReasoning(inherited, false);
@@ -196,6 +210,21 @@ describe("Ollama request boundary", () => {
       reasoning: { effort: "max" },
     });
     assert.deepEqual(explicitMax.reasoning, { effort: "max" });
+
+    const glmDisabled: JsonObject = {
+      model: "ollama/glm-5.3-flash:cloud",
+      input: "hi",
+      reasoning: { effort: "none" },
+    };
+    normalizeOllamaReasoning(glmDisabled, true);
+    assert.deepEqual(glmDisabled.reasoning, { effort: "low" });
+
+    const glmWire = sanitizeOllamaPayload({
+      model: "ollama/glm-5.3-flash:cloud",
+      input: "hi",
+    });
+    assert.equal(glmWire.model, "glm-5.3-flash:cloud");
+    assert.deepEqual(glmWire.reasoning, { effort: "max" });
 
     const nestedWins = sanitizeOllamaPayload({
       model: "ollama/deepseek-v4-flash:0731-cloud",

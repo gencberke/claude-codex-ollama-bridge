@@ -48,7 +48,7 @@ export async function relayTransformed(
   source: Readable,
   transform: Transform,
   res: ServerResponse,
-  opts: { idleMs: number; abort: AbortController; endResponse?: boolean },
+  opts: { idleMs: number; abort: AbortController; endResponse?: boolean; appendErrorTerminal?: boolean },
 ): Promise<boolean> {
   const idle = watchIdle(source, opts.idleMs, opts.abort);
   const sink = responseSink(res, opts.endResponse !== false, idle);
@@ -56,7 +56,7 @@ export async function relayTransformed(
     await pipeline(source, transform, sink);
   } catch (error) {
     idle.clear();
-    if (!res.headersSent) throw error;
+    if (!res.headersSent || opts.appendErrorTerminal === false) throw error;
     await failRelayedResponse(res, error);
     return false;
   }

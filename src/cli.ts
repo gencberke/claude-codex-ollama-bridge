@@ -17,7 +17,7 @@ import {
   snapshotSha,
   type OverlayApplyResult,
 } from "./claude-desktop-overlay.js";
-import { syncClaudeSpawnAgents, syncProjectClaudeAgents } from "./claude-agents.js";
+import { CLAUDE_SPAWN_AGENTS, syncClaudeSpawnAgents, syncProjectClaudeAgents } from "./claude-agents.js";
 import {
   applyUserClaudeAgentsOverlay,
   restoreUserClaudeAgentsOverlay,
@@ -42,11 +42,12 @@ import {
 } from "./lifecycle.js";
 import { listVisibleTopSlugs, parseCatalogJson } from "./catalog.js";
 import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./catalog-provenance.js";
-import { CobConfigError } from "./cob-config.js";
+import { CobConfigError, DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./cob-config.js";
 import { readFileBufferOrNull } from "./atomic.js";
 import { runSmoke } from "./smoke.js";
 
 type StartCompaction = { provider: "native"; model?: string };
+const DEFAULT_CLAUDE_AGENT = CLAUDE_SPAWN_AGENTS[0]!;
 
 async function main(argv: string[]): Promise<void> {
   const flags = parseCliArgs(argv);
@@ -346,7 +347,7 @@ async function runClaudeCli(flags: CliFlags): Promise<void> {
       const project = flags.dir ?? process.cwd();
       const result = syncProjectClaudeAgents(project);
       console.log(`project agents: ${result.agentsDir} (${result.wrote.length} written)`);
-      console.log("Ask Claude Code for subagent cob-deepseek-0731. Do not spawn built-in haiku for this slot.");
+      console.log(`Ask Claude Code for subagent ${DEFAULT_CLAUDE_AGENT.name}. Do not spawn built-in haiku for this slot.`);
       console.log("cob did not write ~/.claude/agents.");
       return;
     }
@@ -398,7 +399,7 @@ function printClaudeLaunchHint(session: ClaudeCliSession, desktop: boolean): voi
   console.log(`  unset ANTHROPIC_API_KEY`);
   console.log(`  ANTHROPIC_BASE_URL=http://127.0.0.1:${session.port} claude --model opus`);
   console.log("  cob claude agents --dir .    # project .claude/agents (not ~/.claude/agents)");
-  console.log("Ollama child: ask for cob-deepseek-0731, not built-in haiku. Agent tool still sends a haiku placeholder; cob-route rewrites it.");
+  console.log(`Ollama child: ask for ${DEFAULT_CLAUDE_AGENT.name} (${DEFAULT_CLAUDE_AGENT.model}), not built-in haiku. Agent tool still sends a haiku placeholder; cob-route rewrites it.`);
   console.log(`CLAUDE_CONFIG_DIR=${session.paths.codeConfig} isolates agents but also isolates login; prefer project agents with live ~/.claude auth.`);
   if (desktop) {
     console.log("Claude Desktop 3P overlay plus cob-owned ~/.claude/agents/cob-*.md (snapshot + restore). Not settings.json.");
@@ -457,6 +458,7 @@ cob claude.
 }
 
 function printHelp(): void {
+  const defaultSpawnable = DEFAULT_SPAWNABLE_OLLAMA_SLUGS[0]!;
   console.log(`cob — Codex and Claude Ollama bridges
 
 Surfaces:
@@ -505,7 +507,7 @@ native. Policy is written to cob.toml, not the Codex profile.
 Spawnable Ollama children are listed in cob.toml:
 
   [subagents]
-  models = ["ollama/deepseek-v4-flash:0731-cloud"]
+  models = ["${defaultSpawnable}"]
 
   [catalog]
   supports_search_tool = true

@@ -11,13 +11,15 @@ Native GPT parent → Ollama V1 child is the product. Native Multi-Agent V2
 mailbox (two in-flight `send_message`, cob queue, Ollama V2 catalog) is not
 productized; see [UPSTREAM-U1.md](./UPSTREAM-U1.md).
 
-Live global **CLI** is cob **0.1.16**. Codex `:18790` pid **54105** is still
-the **0.1.14** process (fail-closed JSON/encrypted-wire; `apply_patch` and
-`native_plaintext_spawn` off). cob Claude live is `:18792` pid **81560**.
-Isolated Gate 5 / plaintext-spawn JS is in the tarball but dark on `~/.codex`.
-G12/G14/G17 remain **0.1.13** evidence. Catalog bytes stayed `9748309e…`.
-Root `config.toml` is user/Desktop-owned (cob did not write it). Host-network
-Codex health remains `ok`.
+Live global CLI and Codex `:18790` gateway are cob **0.2.0** (pid **57072** at
+the latest user-reported status). `apply_patch` and `native_plaintext_spawn`
+remain off. Ollama is **0.33.1**. Root `config.toml` is user/Desktop-owned and
+its post-roster SHA stayed
+`2dd43932be65859c1aa8c1433d9f042a7ff15867c6619eff5a6d8cbcfc725185`.
+Host-network Codex status is `ok`; catalog producer is Desktop-bundled
+`codex-cli 0.150.0-alpha.8`. Historical G12/G14/G17 evidence still belongs to
+the recorded 0.1.x/DeepSeek runs; the workspace stabilization diff below is
+not a new packed live release.
 
 **This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
 `codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
@@ -30,14 +32,14 @@ or steal native slugs to “survive” an update.
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | global **CLI 0.1.16**, Codex listener still **0.1.14** pid **54105**, `127.0.0.1:18790`. cob Claude live pid **81560**, `127.0.0.1:18792`. Dev isolate `:18791` / `:18793` down. |
-| Packed live | **0.1.16** tarball SHA-256 `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560` (57 files; no tests/`gate6h`/`eval-*`). Global `cob` replaced 2026-08-27; Codex `:18790` process not restarted. |
-| Prior live | **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; Codex listener pid **54105** still this artifact. |
-| Source | `master` cob **0.2.0** (public-source cut). Live global CLI remains **0.1.16** until an authorized pack. Pack excludes tests, `gate6h`, and `eval-*`. 0.1.12 JS checkpoint remains `e932eb1`. |
+| cob gateway | global **CLI/gateway 0.2.0**, pid **57072**, `127.0.0.1:18790` at the latest user-reported status. cob Claude live remains a separate `:18792` surface and was not changed by this roster operation. |
+| Packed live | global **0.2.0** was already installed before this stabilization task. No tarball was packed or installed in this task; the workspace stream/fallback fixes are not live yet. |
+| Prior live | Historical **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; pid **54105** is no longer the live listener. |
+| Source | `master` cob **0.2.0** plus an uncommitted stabilization diff: DeepSeek 0731 default, GLM opt-in ladder, catalog fallback, incomplete-SSE fail-closed terminal, and Ollama 0.33.1 review pin. Pack excludes tests, `gate6h`, and `eval-*`. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
-| ChatGPT Desktop | **26.818.41509**, bundled `codex-cli 0.149.0-alpha.4.3` (catalog producer). Earlier gold hop: 26.818.22352 / alpha.21 |
-| Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). |
-| Spawn slot | `cob.toml` `[subagents].models` → `ollama/deepseek-v4-flash:0731-cloud` and `ollama/kimi-k3:cloud`. Live `apply_patch = false`, `native_plaintext_spawn = false`. |
+| ChatGPT Desktop | bundled `codex-cli` **0.150.0-alpha.8** is the current catalog producer. Earlier gold hops remain historical evidence. |
+| Ollama | **0.33.1** client and daemon; tags include `deepseek-v4-flash:0731-cloud`, `deepseek-v4-flash:cloud`, `glm-5.3-flash:cloud`, and `kimi-k3:cloud`. |
+| Spawn slot | `cob.toml` keeps DeepSeek 0731 first, GLM-5.3 Flash second, and Kimi K3 third. The five-row V1 window exposes DeepSeek + GLM; Kimi remains catalogued/routable but is the expected V1 overflow. Live `apply_patch = false`, `native_plaintext_spawn = false`. |
 | cob Claude | **live Messages** (not ChatGPT Desktop gold). `:18792` pid **81560**. Desktop spawn: Opus parent Anthropic; child 0731 `cob_route=1`. Picker pinned Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6). `autoModeEnabled=true`. Overlay `7429a97e…`. |
 
 Live 0.1.9 contains the exact native-only `POST /v1/alpha/search`
@@ -53,10 +55,10 @@ activation is CLI/TUI only. There is no `CODEX_CONFIG_PROFILE` (see
 revert a user-owned Desktop trial.
 
 Current live root-config baseline is SHA-256
-`989c27f93c99574a1c4607766f0c5d731767735fe2991db27ce0a7f1a8d4c41b`
-(Desktop/user rewrite; cob did not write it). The 0.1.14 install preserved
-this SHA and catalog `9748309e…`. cob.toml gained explicit `apply_patch =
-false` and `[experimental] native_plaintext_spawn = false` (cob-owned file).
+`2dd43932be65859c1aa8c1433d9f042a7ff15867c6619eff5a6d8cbcfc725185`
+(Desktop/user-owned; the roster edit and `cob sync` did not change it).
+`cob.toml` keeps explicit `apply_patch = false` and
+`[experimental] native_plaintext_spawn = false`.
 
 ## Locked disposition (Gate 6)
 

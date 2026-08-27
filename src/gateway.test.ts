@@ -2912,7 +2912,7 @@ describe("gateway", () => {
     }
   });
 
-  it("idles between SSE chunks and still emits one error terminal plus [DONE]", { timeout: 3_000 }, async () => {
+  it("ends an idle Ollama SSE without a synthetic error terminal or [DONE]", { timeout: 3_000 }, async () => {
     const port = await freePort();
     const server = await listenGateway({
       port,
@@ -2936,9 +2936,9 @@ describe("gateway", () => {
       });
       const text = await response.text();
       assert.ok(Date.now() - started < 1500);
-      assert.match(text, /idle_timeout|Upstream idle timeout/);
-      assert.match(text, /data: \[DONE\]/);
-      assert.ok(text.indexOf("idle_timeout") < text.indexOf("data: [DONE]") || text.includes("data: [DONE]"));
+      assert.match(text, /"delta":"one"/);
+      assert.equal(text.includes("idle_timeout"), false);
+      assert.equal(text.includes("data: [DONE]"), false, text);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

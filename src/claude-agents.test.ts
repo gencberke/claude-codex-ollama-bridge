@@ -15,6 +15,7 @@ import {
 } from "./claude-agents.js";
 import { applyCobRouteDirective } from "./claude-route.js";
 import { resolveClaudePaths } from "./claude-paths.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
 import { USER_CLAUDE_HOME_REFUSAL } from "./install.js";
 
 function tempDir(prefix: string): string {
@@ -30,8 +31,8 @@ describe("cob claude spawn agents", () => {
       const body = readFileSync(join(paths.agents, "cob-deepseek-0731.md"), "utf8");
       assert.equal(result.wrote.length, 1);
       assert.equal(body.includes(CLAUDE_AGENT_MARKER), true);
-      assert.equal(body.includes("<!-- cob-route: deepseek-v4-flash:0731-cloud -->"), true);
-      assert.equal(CLAUDE_SPAWN_ALLOWLIST.includes("deepseek-v4-flash:0731-cloud"), true);
+      assert.equal(body.includes(`<!-- cob-route: ${DEFAULT_OLLAMA_SPAWN_MODEL} -->`), true);
+      assert.equal(CLAUDE_SPAWN_ALLOWLIST.includes(DEFAULT_OLLAMA_SPAWN_MODEL), true);
       assert.equal(claudeAgentsDir(home), paths.agents);
       assert.equal(body.includes("claude-opus-5"), false);
       const routed = applyCobRouteDirective(
@@ -39,7 +40,7 @@ describe("cob claude spawn agents", () => {
         CLAUDE_SPAWN_ALLOWLIST,
       );
       assert.equal(routed.applied, true);
-      assert.equal(routed.payload.model, "deepseek-v4-flash:0731-cloud");
+      assert.equal(routed.payload.model, DEFAULT_OLLAMA_SPAWN_MODEL);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -101,7 +102,7 @@ describe("cob claude spawn agents", () => {
       assert.equal(result.agentsDir, projectClaudeAgentsDir(project));
       assert.equal(body.includes("cob-deepseek-0731"), true);
       assert.equal(body.includes("built-in haiku"), true);
-      assert.equal(body.includes("<!-- cob-route: deepseek-v4-flash:0731-cloud -->"), true);
+      assert.equal(body.includes(`<!-- cob-route: ${DEFAULT_OLLAMA_SPAWN_MODEL} -->`), true);
     } finally {
       rmSync(project, { recursive: true, force: true });
     }

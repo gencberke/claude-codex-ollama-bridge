@@ -27,8 +27,9 @@ describe("Ollama dialect authority", () => {
     assert.equal(OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS, OLLAMA_DIALECT.request.upstreamResponsesRequestFields);
   });
 
-  it("pins the reviewed 0.32.15 Responses surface and stateless provider contract", () => {
+  it("pins the reviewed 0.33.1 Responses surface and stateless provider contract", () => {
     assert.equal(OLLAMA_DIALECT_VERSION, 2);
+    assert.equal(OLLAMA_REVIEWED_VERSION, "0.33.1");
     assert.equal(OLLAMA_DIALECT.upstream.version, OLLAMA_REVIEWED_VERSION);
     assert.equal(OLLAMA_DIALECT.upstream.sourcePath, OLLAMA_REVIEWED_SOURCE_PATH);
     assert.equal(OLLAMA_DIALECT.upstream.endpoint, OLLAMA_RESPONSES_ENDPOINT);

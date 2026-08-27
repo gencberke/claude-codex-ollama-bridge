@@ -1,9 +1,8 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
-import { stripOllamaPrefix } from "./claude-dialect.js";
 import type { ClaudePaths } from "./claude-paths.js";
-import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./cob-config.js";
+import { DEFAULT_OLLAMA_SPAWN_MODEL } from "./cob-config.js";
 import {
   USER_CLAUDE_HOME_REFUSAL,
   assertNotUserClaudeHome,
@@ -21,13 +20,12 @@ export type ClaudeSpawnAgent = {
   description: string;
 };
 
-/** Same spawn slot as cob Codex default, without the ollama/ prefix. */
+/** Stable Claude agent name; its default route follows cob Codex's V1 model. */
 export const CLAUDE_SPAWN_AGENTS: readonly ClaudeSpawnAgent[] = [
   {
     name: "cob-deepseek-0731",
-    model: stripOllamaPrefix(DEFAULT_SPAWNABLE_OLLAMA_SLUGS[0] ?? "deepseek-v4-flash:0731-cloud"),
-    description:
-      "Delegate work to cob's Ollama child deepseek-v4-flash:0731-cloud. Invoke this custom agent as cob-deepseek-0731. Do not spawn the built-in haiku subagent for this slot; cob routes from the agent body.",
+    model: DEFAULT_OLLAMA_SPAWN_MODEL,
+    description: `Delegate work to cob's Ollama child ${DEFAULT_OLLAMA_SPAWN_MODEL}. Invoke this custom agent as cob-deepseek-0731. Do not spawn the built-in haiku subagent for this slot; cob routes from the agent body.`,
   },
 ];
 

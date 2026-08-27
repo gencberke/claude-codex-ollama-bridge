@@ -14,6 +14,19 @@ Workspace-only: pack-excluded Gate 6-H, G2–G9 eval fixtures, and
 [UPSTREAM-U1.md](./UPSTREAM-U1.md). They are not live gold and are not in
 the tarball.
 
+- Keep DeepSeek V4 Flash 0731 as the default Codex and cob Claude V1 spawn
+  slot. GLM-5.3 Flash remains available when explicitly selected in
+  `cob.toml`; its catalog rows advertise `low` / `high` / `max` with `max` as
+  the default, while DeepSeek keeps its `high` default. Existing explicit
+  `cob.toml` model lists stay user-owned and are not silently rewritten.
+- Preserve the previously visible Ollama spawn row when tag discovery fails
+  during a model migration, without inventing the newly configured model.
+- Pin the reviewed Ollama Responses contract to 0.33.1. Its tagged
+  `openai/responses.go` is unchanged from 0.32.15, so cob keeps the same narrow
+  allowlist. Incomplete Ollama SSE no longer receives a synthetic success
+  `[DONE]`; content-free terminal telemetry distinguishes EOF, idle/error, and
+  client abort, while valid `response.completed` streams remain streaming.
+
 ## 0.2.0 — 2026-08-27
 
 Public-source cut: one CLI, two surfaces. Same product as 0.1.16 (cob Codex
