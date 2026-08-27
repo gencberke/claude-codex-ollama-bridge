@@ -14,8 +14,8 @@ import {
   type DesktopOverlayInput,
 } from "./root-config.js";
 
-const catalog = "/Users/gencberke/.codex/cob-catalog.json";
-const home = "/Users/gencberke/.codex";
+const catalog = "/Users/example/.codex/cob-catalog.json";
+const home = "/Users/example/.codex";
 
 function assess(partial: Partial<DesktopOverlayInput> & Pick<DesktopOverlayInput, "keys">) {
   return assessDesktopOverlay({
@@ -37,7 +37,7 @@ model_reasoning_effort = "medium"
 # cob desktop trial
 model_provider = "openai"
 openai_base_url = "http://127.0.0.1:18790/v1"
-model_catalog_json = "/Users/gencberke/.codex/cob-catalog.json"
+model_catalog_json = "/Users/example/.codex/cob-catalog.json"
 
 [features]
 remote_compaction_v2 = true
@@ -56,7 +56,7 @@ model_catalog_json = "/tmp/not-cob.json"
 [features]
 model_provider = "openai"
 openai_base_url = "http://127.0.0.1:18790/v1"
-model_catalog_json = "/Users/gencberke/.codex/cob-catalog.json"
+model_catalog_json = "/Users/example/.codex/cob-catalog.json"
 `);
     assert.deepEqual(keys, {});
   });

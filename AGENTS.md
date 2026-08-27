@@ -168,7 +168,8 @@ Current root SHA baseline is `989c27f9…` (Desktop/user; cob did not write it).
 G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
 G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
 change. Do not credit the 0.1.14 install with those gates. Do not repack
-0.1.11–0.1.15. Do not restart the Codex `:18790` listener to pick up 0.1.16
+0.1.11–0.1.16. Source on `master` is cob **0.2.0** (public GitHub cut, not
+an npm publish). Do not restart the Codex `:18790` listener to pick up 0.2.0
 unless the user authorizes a Codex gateway replace. Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;

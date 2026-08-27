@@ -7,6 +7,104 @@ One CLI. Two surfaces:
 
 OpenCodex is a proof of concept, not the product. This repo reimplements the loopback idea. See [NOTICE](./NOTICE).
 
+## Install
+
+Node.js 22+, a local [Ollama](https://ollama.com) with `/v1/responses`
+(0.13.3+), and the client you actually use:
+
+- cob Codex: [Codex CLI](https://github.com/openai/codex) 0.149+ (`codex login`). ChatGPT Desktop is optional.
+- cob Claude: Claude Code logged in on this machine. Claude Desktop is optional (`--desktop`).
+
+cob does not ship ChatGPT or Anthropic API keys. It forwards the client’s
+own login. Do not put secrets in this repo.
+
+There is no npm registry package while `"private": true`. Install from a
+clone:
+
+```bash
+git clone https://github.com/gencberke/claude-codex-ollama-bridge.git
+cd claude-codex-ollama-bridge
+npm install
+npm run pack
+npm install -g ./codex-ollama-bridge-0.2.0.tgz
+cob version    # cob 0.2.0 (global)
+```
+
+Pull Ollama models you want listed (example):
+
+```bash
+ollama pull deepseek-v4-flash:0731-cloud
+```
+
+### cob Codex — CLI
+
+```bash
+cob start
+cob status
+codex --profile cob
+```
+
+`cob start` writes cob-owned files under `~/.codex` (`cob.config.toml`,
+catalog, `cob.toml`). It never writes `~/.codex/config.toml`. After reboot
+or a dead listener, run `cob start` again (no launchd).
+
+### cob Codex — ChatGPT Desktop
+
+Desktop’s bundled `codex app-server` ignores `--profile`. Point it at cob
+yourself. Snapshot `~/.codex/config.toml` first. Then set these **root**
+keys (not inside a `[table]`):
+
+```toml
+model_provider = "openai"
+openai_base_url = "http://127.0.0.1:18790/v1"
+model_catalog_json = "~/.codex/cob-catalog.json"
+```
+
+Keep `model_provider = "openai"`. Do not add a custom Ollama
+`[model_providers]` table. Fully quit and reopen ChatGPT Desktop after a
+catalog write. `cob restore` will not revert this overlay.
+
+### cob Claude — CLI
+
+```bash
+cob claude start
+unset ANTHROPIC_API_KEY
+ANTHROPIC_BASE_URL=http://127.0.0.1:18792 claude --model opus
+cob claude agents --dir .
+```
+
+Ask the parent for `cob-deepseek-0731`, not built-in Haiku. Native Claude
+ids (`opus` / `sonnet` / `haiku` / `fable` / `claude-*`) stay on Anthropic.
+Do not set `ANTHROPIC_AUTH_TOKEN=ollama`.
+
+### cob Claude — Claude Desktop 3P
+
+```bash
+cob claude start --desktop
+```
+
+Fully quit and reopen Claude Desktop. This snapshots, then writes cob’s
+3P profile (picker: Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5) and cob-owned
+`~/.claude/agents/cob-*.md`. `cob claude restore` reverts those snapshots.
+cob never writes `~/.claude/settings.json` and never runs `ollama launch`.
+
+### Isolated checkout (does not touch live Desktop)
+
+Use this while hacking on the git tree. Live ChatGPT Desktop must keep
+using the **global** `cob` on `:18790`.
+
+```bash
+npm install
+npm run build
+node dist/cli.js start --dev
+CODEX_HOME="$HOME/.codex-cob-dev" codex --profile cob
+
+node dist/cli.js claude start --dev
+```
+
+A workspace `cob start` against live `~/.codex` is refused unless you pass
+`--live-home`.
+
 ## What it does
 
 ```
@@ -67,70 +165,7 @@ Current live proof: [STATUS.md](./STATUS.md). Working rules for agents:
 [COMPACTION.md](./COMPACTION.md). Versions: [CHANGELOG.md](./CHANGELOG.md).
 How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 
-## Requirements
-
-- Node.js 22+
-- Codex CLI 0.149.0; this machine’s Desktop bundles
-  `codex-cli 0.149.0-alpha.4.3`
-- Ollama with `/v1/responses` (0.13.3+)
-
-## Live vs develop
-
-ChatGPT Desktop and daily `codex --profile cob` use the **globally installed**
-`cob` on `127.0.0.1:18790` and the live `~/.codex` overlays. cob still does
-not write `~/.codex/config.toml`; Desktop overlay keys on this machine stay
-user-owned.
-
-```bash
-npm run pack
-npm install -g ./codex-ollama-bridge-0.1.14.tgz
-cob start
-cob status
-codex --profile cob
-```
-
-Bump `package.json` `version`, edit [CHANGELOG.md](./CHANGELOG.md), pack, and
-`npm install -g` the new tarball when a release should replace that live
-gateway. Full steps: [RELEASE.md](./RELEASE.md). Do not point Desktop at a git
-`dist/cli.js`.
-
-Checkout work uses an **isolated Codex home** so overlays, lock, and port
-`18791` cannot steal the live Desktop cob:
-
-```bash
-npm install
-npm run build
-node dist/cli.js start --dev
-CODEX_HOME="$HOME/.codex-cob-dev" codex --profile cob
-```
-
-A workspace `cob start` against live `~/.codex` is refused unless you pass
-`--live-home`. `cob pack` emits a tarball without test files.
-
-## Usage
-
-```bash
-cob start
-codex --profile cob
-```
-
-cob Claude (live global `:18792`; workspace `--dev` is `:18793`):
-
-```bash
-cob claude start
-unset ANTHROPIC_API_KEY
-ANTHROPIC_BASE_URL=http://127.0.0.1:18792 claude --model opus
-cob claude agents --dir .   # project .claude/agents/cob-deepseek-0731.md; ask for that name, not haiku
-
-# Claude Desktop 3P overlay + cob-owned ~/.claude/agents/cob-*.md (snapshots first; restore reverts)
-cob claude start --desktop
-# Fully quit and reopen Claude Desktop, then cob claude restore when done
-
-# Isolated workspace trial
-cob claude start --dev
-```
-
-Commands:
+## Commands
 
 | Command | Effect |
 | --- | --- |

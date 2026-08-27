@@ -11,7 +11,7 @@ describe("cob profile", () => {
   it("pins openai provider, keeps V1 child spawn, and enables native remote compaction v2", () => {
     const text = renderCobProfile({
       port: 18790,
-      catalogPath: "/Users/gencberke/.codex/cob-catalog.json",
+      catalogPath: "/Users/example/.codex/cob-catalog.json",
     });
     assert.match(text, /^model_provider = "openai"$/m);
     assert.match(text, /^openai_base_url = "http:\/\/127\.0\.0\.1:18790\/v1"$/m);

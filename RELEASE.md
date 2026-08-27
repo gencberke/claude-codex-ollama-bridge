@@ -4,13 +4,15 @@ Live ChatGPT Desktop and daily `codex --profile cob` run the **globally
 installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
-Current state (2026-08-27): live global **CLI** is **0.1.16** (tarball
-SHA-256 `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`,
-57 files). Live Codex gateway process remains **0.1.14** pid **54105** on
-`:18790` (tarball SHA-256
+Current state (2026-08-27): source on `master` is **0.2.0**. Live global
+**CLI** on this lab is still **0.1.16** (tarball SHA-256
+`3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`,
+57 files) until an authorized 0.2.0 pack. Live Codex gateway process remains
+**0.1.14** pid **54105** on `:18790` (tarball SHA-256
 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`).
-cob Claude live is pid **81560** on `:18792` / `~/.claude-cob`. Do not repack 0.1.11–0.1.15.
-Do not restart `:18790` unless replacing the Codex gateway.
+cob Claude live is pid **81560** on `:18792` / `~/.claude-cob`. Do not
+repack 0.1.11–0.1.16. Do not restart `:18790` unless replacing the Codex
+gateway. `package.json` stays `"private": true`; do not `npm publish`.
 
 0.1.14 is a scoped fail-closed cut (Ollama JSON raw-relay closed, encrypted
 prefixes rejected, live experimental lock). It does not re-prove G12/G14/G17
@@ -48,8 +50,9 @@ not copy `config.toml`.
    `tsc -p tsconfig.build.json` then `npm pack`. Tests and harnesses stay out
    of the tarball (`files` in `package.json`).
 5. Confirm `cob version` in the tarball name matches `package.json`.
-6. Replace the live gateway (see below). Do not `npm publish` while
-   `"private": true`.
+6. Replace the live gateway (see below) only when authorized. Do not
+   `npm publish` while `"private": true`. GitHub public source is clone +
+   `npm run pack` + `npm install -g` the tarball.
 7. Git tag only if the user asked (`v0.1.0` matching the version).
 
 Do not pack from a global install. Do not point Desktop at `dist/cli.js`.

@@ -1,9 +1,10 @@
 # Status — 2026-08-27
 
-Living checkpoint. Product contract stays in [README.md](./README.md). Live
-gold standards stay in [LIVE-TESTING.md](./LIVE-TESTING.md). Agents start at
-[AGENTS.md](./AGENTS.md). Release cut: [RELEASE.md](./RELEASE.md). History:
-[CHANGELOG.md](./CHANGELOG.md).
+Maintainer live checkpoint for one lab machine (pids, tarball SHAs, overlay
+bytes). New installs follow [README.md](./README.md), not these process ids.
+Product contract: [README.md](./README.md). Live gold:
+[LIVE-TESTING.md](./LIVE-TESTING.md). Agents: [AGENTS.md](./AGENTS.md).
+Release cut: [RELEASE.md](./RELEASE.md). History: [CHANGELOG.md](./CHANGELOG.md).
 
 Priority: **stability and throughput** of the working Desktop+cob **V1** path.
 Native GPT parent → Ollama V1 child is the product. Native Multi-Agent V2
@@ -32,7 +33,7 @@ or steal native slugs to “survive” an update.
 | cob gateway | global **CLI 0.1.16**, Codex listener still **0.1.14** pid **54105**, `127.0.0.1:18790`. cob Claude live pid **81560**, `127.0.0.1:18792`. Dev isolate `:18791` / `:18793` down. |
 | Packed live | **0.1.16** tarball SHA-256 `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560` (57 files; no tests/`gate6h`/`eval-*`). Global `cob` replaced 2026-08-27; Codex `:18790` process not restarted. |
 | Prior live | **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; Codex listener pid **54105** still this artifact. |
-| Source | `master` cob **0.1.16** (this cut). Pack excludes tests, `gate6h`, and `eval-*`. 0.1.12 JS checkpoint remains `e932eb1`. |
+| Source | `master` cob **0.2.0** (public-source cut). Live global CLI remains **0.1.16** until an authorized pack. Pack excludes tests, `gate6h`, and `eval-*`. 0.1.12 JS checkpoint remains `e932eb1`. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | **26.818.41509**, bundled `codex-cli 0.149.0-alpha.4.3` (catalog producer). Earlier gold hop: 26.818.22352 / alpha.21 |
 | Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). |
@@ -191,7 +192,7 @@ a collaboration driver.
   (`/root/gate7_worktree`). The child issued two native `apply_patch` calls
   plus matching outputs; fixtures `.cob-gate7-a.txt` / `.cob-gate7-b.txt`
   received the AFTER bytes at stable inodes. cwd stayed the parent repo
-  (`/Users/gencberke/Documents/github/codex-ollama-bridge`); Codex 0.149
+  (parent git checkout); Codex 0.149
   did not give the child a distinct git worktree. Sol ended `GATE7_FAIL
   worktree_not_distinct`. Two child-native patches in the **shared** repo
   are a weaker observation, not Gate 7 gold. Fixtures were deleted after

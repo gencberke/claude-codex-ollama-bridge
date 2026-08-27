@@ -5,3 +5,5 @@ dist/
 .DS_Store
 .env
 .env.*
+*.pem
+auth.json

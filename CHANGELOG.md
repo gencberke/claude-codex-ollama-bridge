@@ -14,6 +14,20 @@ Workspace-only: pack-excluded Gate 6-H, G2–G9 eval fixtures, and
 [UPSTREAM-U1.md](./UPSTREAM-U1.md). They are not live gold and are not in
 the tarball.
 
+## 0.2.0 — 2026-08-27
+
+Public-source cut: one CLI, two surfaces. Same product as 0.1.16 (cob Codex
+loopback plus live cob Claude Messages and Desktop picker pin). The version
+jump marks that split for GitHub; it is not a Codex `:18790` gateway replace
+and does not `npm publish`.
+
+- README install-from-source for a new machine (`npm run pack` then
+  `npm install -g` the tarball). `"private": true` stays on.
+- No live listener restart. This lab’s global CLI remains 0.1.16 until an
+  authorized pack of 0.2.0.
+
+Do not repack 0.1.11–0.1.16.
+
 ## 0.1.16 — 2026-08-27
 
 Claude Desktop 3P picker pin on live cob Claude. Codex `:18790` is not
