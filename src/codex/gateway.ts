@@ -39,7 +39,7 @@ import {
 } from "./ollama-response-boundary.js";
 import { assertLoopbackBindHost } from "../core/loopback.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "./route.js";
-import type { CompactionPolicy, NativePlaintextSpawnPolicy } from "./cob-config.js";
+import type { CompactionPolicy, NativePlaintextSpawnPolicy } from "./config/schema.js";
 import {
   classifyCompactionTrigger,
   compactionHeader,

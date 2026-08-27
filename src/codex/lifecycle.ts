@@ -42,15 +42,17 @@ import { resolvePaths, type CobPaths } from "./paths.js";
 import { detectInstall, formatInstallLine } from "../core/install-detection.js";
 import { isLiveCodexHome } from "./home.js";
 import {
-  catalogSupportsSearchTool,
-  catalogSupportsApplyPatch,
   DEFAULT_CATALOG_POLICY,
-  resolveCobConfig,
-  resolveSpawnableOllamaSlugs,
-  writeCobToml,
   type CobFileConfig,
   type CompactionPolicy,
-} from "./cob-config.js";
+} from "./config/schema.js";
+import { writeCobToml } from "./config/toml.js";
+import {
+  catalogSupportsApplyPatch,
+  catalogSupportsSearchTool,
+  resolveCobConfig,
+  resolveSpawnableOllamaSlugs,
+} from "./config/resolve.js";
 import { readFileBufferOrNull, writeFileAtomic } from "../core/atomic.js";
 import {
   acquireLock,

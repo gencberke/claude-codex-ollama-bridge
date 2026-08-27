@@ -18,7 +18,7 @@ import {
   seedIsolatedCodexHome,
 } from "./codex/home.js";
 import { detectInstall, type CobInstall } from "./core/install-detection.js";
-import { parseCompactionProvider } from "./codex/cob-config.js";
+import { parseCompactionProvider } from "./codex/config/schema.js";
 import { assertLoopbackHttpUrl } from "./core/loopback.js";
 import { resolveCodexHome, resolvePaths, type CobPaths } from "./codex/paths.js";
 import { resolveClaudeHome, resolveClaudePaths, type ClaudePaths } from "./claude/paths.js";

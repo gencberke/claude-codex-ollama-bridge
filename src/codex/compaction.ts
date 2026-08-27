@@ -1,6 +1,6 @@
 import { PREFERRED_NATIVE_COMPACT_SLUGS } from "./constants.js";
 import { OLLAMA_PREFIX } from "../core/ollama/constants.js";
-import type { CompactionPolicy } from "./cob-config.js";
+import type { CompactionPolicy } from "./config/schema.js";
 import { MAX_COB_COMPACT_SUMMARY_BYTES } from "./compact-envelope.js";
 import { isEncryptedFieldName } from "./encrypted.js";
 import type { JsonObject } from "../core/json.js";

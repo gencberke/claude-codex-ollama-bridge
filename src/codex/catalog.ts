@@ -12,7 +12,7 @@ import {
 } from "./constants.js";
 import { writeFileAtomic } from "../core/atomic.js";
 import { CODEX_CATALOG_TIMEOUT_MS } from "./limits.js";
-import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./cob-config.js";
+import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./config/schema.js";
 import {
   evidenceFromOllamaTag,
   ollamaChildCatalogFields,

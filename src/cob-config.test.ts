@@ -5,17 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CobConfigError,
-  parseCobToml,
   parseCompactionProvider,
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
   parseOllamaThreadCompaction,
-  renderCobToml,
-  resolveCobConfig,
-  resolveCompactionPolicy,
-  resolveSpawnableOllamaSlugs,
-  writeCobToml,
-} from "./codex/cob-config.js";
+} from "./codex/config/schema.js";
+import { parseCobToml, renderCobToml, writeCobToml } from "./codex/config/toml.js";
+import { resolveCobConfig, resolveCompactionPolicy, resolveSpawnableOllamaSlugs } from "./codex/config/resolve.js";
 
 describe("cob.toml compaction policy", () => {
   it("rejects legacy ollama and disabled providers", () => {

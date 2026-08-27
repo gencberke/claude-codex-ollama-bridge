@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Transform } from "node:stream";
 import { sseRewriteTransform } from "../sse.js";
-import type { NativePlaintextSpawnPolicy } from "../cob-config.js";
+import type { NativePlaintextSpawnPolicy } from "../config/schema.js";
 import { isEncryptedFieldName } from "../encrypted.js";
 import type { JsonObject } from "../../core/json.js";
 import { isRecord } from "../../core/json.js";

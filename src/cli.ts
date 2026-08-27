@@ -42,7 +42,7 @@ import {
 } from "./codex/lifecycle.js";
 import { listVisibleTopSlugs, parseCatalogJson } from "./codex/catalog.js";
 import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./codex/catalog-provenance.js";
-import { CobConfigError, DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./codex/cob-config.js";
+import { CobConfigError, DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./codex/config/schema.js";
 import { readFileBufferOrNull } from "./core/atomic.js";
 import { runSmoke } from "./codex/smoke.js";
 
