@@ -8,11 +8,11 @@
     "cob": "./dist/cli.js"
   },
   "files": [
-    "dist/*.js",
-    "!dist/*.test.js",
-    "!dist/*.harness.js",
-    "!dist/gate6h.js",
-    "!dist/eval-*.js",
+    "dist/**/*.js",
+    "!dist/**/*.test.js",
+    "!dist/**/*.harness.js",
+    "!dist/**/gate6h.js",
+    "!dist/**/eval-*.js",
     "README.md",
     "CHANGELOG.md",
     "RELEASE.md",
@@ -20,10 +20,11 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "test": "tsc && node --test dist/*.test.js",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "test": "npm run clean && tsc && node --test \"dist/**/*.test.js\"",
     "cob": "node dist/cli.js",
-    "gate6h": "tsc && node dist/gate6h.harness.js",
+    "gate6h": "npm run clean && tsc && node dist/gate6h.harness.js",
     "pack": "npm run build && npm pack"
   },
   "engines": {

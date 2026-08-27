@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { packReleaseTarball, parseCliArgs, resolveClaudeCliSession, resolveCliSession } from "./cli-session.js";
@@ -244,11 +244,15 @@ describe("npm pack manifest", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
       files: string[];
     };
-    assert.equal(pkg.files.includes("dist/*.js"), true);
-    assert.equal(pkg.files.includes("!dist/*.test.js"), true);
-    assert.equal(pkg.files.includes("!dist/*.harness.js"), true);
-    assert.equal(pkg.files.includes("!dist/gate6h.js"), true);
-    assert.equal(pkg.files.includes("!dist/eval-*.js"), true);
+    assert.equal(pkg.files.includes("dist/**/*.js"), true);
+    assert.equal(pkg.files.includes("!dist/**/*.test.js"), true);
+    assert.equal(pkg.files.includes("!dist/**/*.harness.js"), true);
+    assert.equal(pkg.files.includes("!dist/**/gate6h.js"), true);
+    assert.equal(pkg.files.includes("!dist/**/eval-*.js"), true);
     assert.equal(pkg.files.includes("src"), false);
+  });
+
+  it("emits the executable entrypoint next to compiled tests", () => {
+    assert.equal(existsSync(new URL("./cli.js", import.meta.url)), true);
   });
 });
