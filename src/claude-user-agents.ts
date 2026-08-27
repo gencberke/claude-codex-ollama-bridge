@@ -8,6 +8,7 @@ import {
   renderClaudeAgentFile,
 } from "./claude-agents.js";
 import { defaultUserClaudeHome } from "./claude-home.js";
+import { samePath } from "./install-detection.js";
 
 export const USER_AGENTS_OVERLAY_SCHEMA = 1 as const;
 
@@ -80,6 +81,11 @@ export function restoreUserClaudeAgentsOverlay(opts: {
   const manifest = readUserAgentsManifest(opts.overlayDir);
   if (!manifest) return false;
   const agentsDir = userClaudeAgentsDir(opts.userClaudeHome ?? defaultUserClaudeHome());
+  if (!samePath(manifest.agentsDir, agentsDir)) {
+    throw new Error(
+      `cob claude user-agents overlay manifest targets ${manifest.agentsDir}; refusing to restore into ${agentsDir}`,
+    );
+  }
   for (const file of manifest.files) {
     const dest = join(agentsDir, file.name);
     const copy = join(userAgentsOverlayDir(opts.overlayDir), file.name);

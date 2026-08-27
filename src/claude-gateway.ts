@@ -218,7 +218,7 @@ async function handleClaudeRequest(
       return;
     }
     if (isPlaceholderGatewayCredential(incomingAuth)) {
-      process.stderr.write(`[cob claude] anthropic auth ${describeAnthropicAuthKind(headers)}\n`);
+      options.logLine(`[cob claude] anthropic auth ${describeAnthropicAuthKind(headers)}\n`);
     }
     if (!hasAnthropicAuth(headers)) {
       anthropicError(

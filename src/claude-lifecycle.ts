@@ -116,30 +116,38 @@ export async function stopClaudeGateway(
   paths: ClaudePaths,
   opts: { locked?: boolean } = {},
 ): Promise<boolean> {
-  const runtime = readClaudeRuntime(paths);
-  if (!runtime) return false;
-  if (isPidAlive(runtime.pid)) {
-    try {
-      process.kill(runtime.pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline && isPidAlive(runtime.pid)) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+  const stopLocked = async (): Promise<boolean> => {
+    const runtime = readClaudeRuntime(paths);
+    if (!runtime) return false;
     if (isPidAlive(runtime.pid)) {
       try {
-        process.kill(runtime.pid, "SIGKILL");
+        process.kill(runtime.pid, "SIGTERM");
       } catch {
-        // ignore
+        // already gone
+      }
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline && isPidAlive(runtime.pid)) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (isPidAlive(runtime.pid)) {
+        try {
+          process.kill(runtime.pid, "SIGKILL");
+        } catch {
+          // ignore
+        }
       }
     }
+    unlinkIfExists(paths.pid);
+    unlinkIfExists(paths.runtime);
+    return true;
+  };
+  if (opts.locked) return stopLocked();
+  await acquireLock(paths.lock);
+  try {
+    return await stopLocked();
+  } finally {
+    releaseLock(paths.lock);
   }
-  unlinkIfExists(paths.pid);
-  unlinkIfExists(paths.runtime);
-  void opts.locked;
-  return true;
 }
 
 export function restoreClaudeSurface(paths: ClaudePaths): void {
@@ -147,7 +155,6 @@ export function restoreClaudeSurface(paths: ClaudePaths): void {
   unlinkIfExists(paths.runtime);
   unlinkIfExists(paths.log);
   unlinkIfExists(paths.lock);
-  unlinkIfExists(paths.startLease);
   removeOwnedClaudeAgents(paths);
 }
 

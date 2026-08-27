@@ -58,4 +58,22 @@ describe("cob claude user agents overlay", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("refuses to restore a manifest into a different home", () => {
+    const root = tempDir("cob-user-agents-home-");
+    try {
+      const overlayDir = join(root, "overlay");
+      const userClaudeHome = join(root, ".claude");
+      const otherHome = join(root, ".claude-other");
+      applyUserClaudeAgentsOverlay({ overlayDir, userClaudeHome });
+      assert.throws(
+        () => restoreUserClaudeAgentsOverlay({ overlayDir, userClaudeHome: otherHome }),
+        /refusing to restore/,
+      );
+      assert.equal(existsSync(join(userClaudeAgentsDir(otherHome), "cob-deepseek-0731.md")), false);
+      assert.equal(userAgentsOverlayStatus(overlayDir, userClaudeHome).kind, "applied");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
