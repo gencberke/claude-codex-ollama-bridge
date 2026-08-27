@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 
 const PS_TIMEOUT_MS = 500;
 
@@ -94,4 +95,31 @@ function readProcessArgs(pid: number): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Terminates a spawned child before the launcher exits: SIGTERM, then SIGKILL. */
+export async function reapChild(child: ChildProcess): Promise<void> {
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // already gone
+  }
+  if (await waitForChildExit(child, 2_000)) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // already gone
+  }
+  await waitForChildExit(child, 2_000);
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
 }

@@ -709,3 +709,30 @@ function openExclusive(path: string, nonblock: boolean): number {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Detached-start handoff gate: the launcher waits until the spawned child has
+ * adopted the lock (record rewritten to the child pid with a rotated token)
+ * before releasing its own hold. Removes the release/acquire gap in which a
+ * concurrent stop or second start could observe an unlocked, mid-start home.
+ */
+export async function waitForLockAdopted(
+  lockPath: string,
+  parentToken: string,
+  childPid: number,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const rec = peekLockRecord(lockPath);
+    if (!rec) {
+      if (isPidAlive(childPid)) return;
+      throw new Error("lock handoff failed: lock disappeared and child is dead");
+    }
+    if (rec.pid === childPid && rec.token && rec.token !== parentToken) return;
+    if (!isPidAlive(childPid)) {
+      throw new Error("lock handoff failed: child exited before adopting the lock");
+    }
+    await sleep(20);
+  }
+  throw new Error("lock handoff was not adopted by the child process");
+}

@@ -8,8 +8,8 @@ import { userAgentsOverlayStatus } from "./user-agents.js";
 import { removeOwnedClaudeAgents } from "./agents.js";
 import { resolveClaudePaths, type ClaudePaths } from "./paths.js";
 import { detectInstall } from "../core/install-detection.js";
-import { acquireLock, adoptLock, heldLockToken, releaseLock } from "../core/lock.js";
-import { isPidAlive } from "../core/process-info.js";
+import { acquireLock, adoptLock, heldLockToken, releaseLock, waitForLockAdopted } from "../core/lock.js";
+import { isPidAlive, reapChild } from "../core/process-info.js";
 
 export type ClaudeRuntime = {
   pid: number;
@@ -88,6 +88,7 @@ export async function startClaudeGatewayDetached(opts: {
 }): Promise<{ alreadyRunning: boolean; runtime: ClaudeRuntime }> {
   mkdirSync(opts.paths.claudeHome, { recursive: true });
   await acquireLock(opts.paths.lock);
+  let child: ChildProcess | undefined;
   try {
     const existing = readClaudeRuntime(opts.paths);
     if (existing && isPidAlive(existing.pid) && (await isClaudeHealthy(existing.port))) {
@@ -100,14 +101,23 @@ export async function startClaudeGatewayDetached(opts: {
     if (!token) {
       throw new Error("internal error: missing cob claude lock token");
     }
-    const child = opts.spawnServe({ token });
+    child = opts.spawnServe({ token });
     if (child.pid === undefined) {
       throw new Error("failed to spawn cob claude serve");
     }
-    child.unref();
+    await waitForLockAdopted(opts.paths.lock, token, child.pid);
+  } catch (error) {
+    if (child) {
+      await reapChild(child);
+    }
+    throw error;
   } finally {
     releaseLock(opts.paths.lock);
   }
+  if (!child) {
+    throw new Error("internal error: detached claude start lost the child process");
+  }
+  child.unref();
   const runtime = await waitForClaudeRuntime(opts.paths, opts.port);
   return { alreadyRunning: false, runtime };
 }

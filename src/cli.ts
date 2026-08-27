@@ -266,7 +266,7 @@ async function runClaudeCli(flags: CliFlags): Promise<void> {
         paths,
         port,
         ollamaUrl: flags.ollamaUrl,
-        spawnServe: ({ token: _token }) => {
+        spawnServe: ({ token }) => {
           const args = [
             process.argv[1] ?? "",
             "claude",
@@ -285,6 +285,7 @@ async function runClaudeCli(flags: CliFlags): Promise<void> {
             stdio: ["ignore", logFd, logFd],
             env: {
               ...process.env,
+              COB_LOCK_TOKEN: token,
               COB_CLAUDE_HOME: paths.claudeHome,
               ANTHROPIC_API_KEY: "",
               ANTHROPIC_AUTH_TOKEN: "",

@@ -52,7 +52,15 @@ import {
   type CompactionPolicy,
 } from "./cob-config.js";
 import { readFileBufferOrNull, writeFileAtomic } from "../core/atomic.js";
-import { acquireLock, adoptLock, heldLockToken, peekLockRecord, releaseLock, withExclusiveLock } from "../core/lock.js";
+import {
+  acquireLock,
+  adoptLock,
+  heldLockToken,
+  peekLockRecord,
+  releaseLock,
+  waitForLockAdopted,
+  withExclusiveLock,
+} from "../core/lock.js";
 import { clearConversationState } from "./conversation-state.js";
 import {
   cobProcessIdentity,
@@ -61,6 +69,7 @@ import {
   isSameProcess,
   ownStartKey,
   processStartKey,
+  reapChild,
 } from "../core/process-info.js";
 import type { CatalogFile } from "./types.js";
 import { isRecord } from "../core/json.js";
@@ -1098,47 +1107,9 @@ async function rollbackDetachedStart(
   });
 }
 
-export async function reapChild(child: ChildProcess): Promise<void> {
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    // already gone
-  }
-  if (await waitForChildExit(child, 2_000)) return;
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    // already gone
-  }
-  await waitForChildExit(child, 2_000);
-}
 
-function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), timeoutMs);
-    child.once("close", () => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
-}
-
-async function waitForLockAdopted(lockPath: string, parentToken: string, childPid: number): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const rec = peekLockRecord(lockPath);
-    if (!rec) {
-      if (isPidAlive(childPid)) return;
-      throw new Error("lock handoff failed: lock disappeared and child is dead");
-    }
-    if (rec.pid === childPid && rec.token && rec.token !== parentToken) return;
-    if (!isPidAlive(childPid)) {
-      throw new Error("lock handoff failed: child exited before adopting the lock");
-    }
-    await sleep(20);
-  }
-  throw new Error("lock handoff was not adopted by the child process");
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function unlinkIfExists(path: string): void {
@@ -1147,8 +1118,4 @@ function unlinkIfExists(path: string): void {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
