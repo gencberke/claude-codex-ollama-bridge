@@ -212,23 +212,37 @@ export function resolveCliSession(
   };
 }
 
-export function packReleaseTarball(install: CobInstall): { filename: string; stdout: string } {
+export type PackCommandRunner = (
+  args: string[],
+  cwd: string,
+) => { status: number | null; stdout: string; stderr: string; error?: Error };
+
+function runNpm(args: string[], cwd: string): { status: number | null; stdout: string; stderr: string; error?: Error } {
+  const result = spawnSync("npm", args, { cwd, encoding: "utf8" });
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", error: result.error };
+}
+
+export function packReleaseTarball(
+  install: CobInstall,
+  run: PackCommandRunner = runNpm,
+): { filename: string; stdout: string } {
   if (install.kind !== "workspace" || !install.packageRoot) {
     throw new Error("cob pack must run from a git checkout (workspace), not a global install");
   }
-  const result = spawnSync("npm", ["pack"], {
-    cwd: install.packageRoot,
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || result.stdout.trim() || "npm pack failed");
+  const build = run(["run", "build"], install.packageRoot);
+  if (build.status !== 0) {
+    throw new Error(build.stderr.trim() || build.error?.message || "npm run build failed");
   }
-  const lines = result.stdout.trim().split(/\r?\n/);
+  const packed = run(["pack"], install.packageRoot);
+  if (packed.status !== 0) {
+    throw new Error(packed.stderr.trim() || packed.error?.message || packed.stdout.trim() || "npm pack failed");
+  }
+  const lines = packed.stdout.trim().split(/\r?\n/);
   const filename = lines.at(-1)?.trim() ?? "";
   if (!filename.endsWith(".tgz")) {
-    throw new Error(`npm pack did not print a tarball name: ${result.stdout}`);
+    throw new Error(`npm pack did not print a tarball name: ${packed.stdout}`);
   }
-  return { filename, stdout: result.stdout };
+  return { filename, stdout: packed.stdout };
 }
 
 export function resolveClaudeCliSession(

@@ -229,10 +229,54 @@ describe("cli session", () => {
   });
 
   it("does not pack from a global install", () => {
+    const ran: string[] = [];
     assert.throws(
-      () => packReleaseTarball({ kind: "global", version: "0.1.0", cliPath: "/usr/bin/cob" }),
+      () =>
+        packReleaseTarball({ kind: "global", version: "0.1.0", cliPath: "/usr/bin/cob" }, (args) => {
+          ran.push(args.join(" "));
+          return { status: 0, stdout: "", stderr: "" };
+        }),
       /workspace/,
     );
+    assert.deepEqual(ran, []);
+  });
+
+  it("runs the production build before npm pack", () => {
+    const calls: { args: string[]; cwd: string }[] = [];
+    const packed = packReleaseTarball(
+      { kind: "workspace", version: "0.2.0", cliPath: "/pkg/dist/cli.js", packageRoot: "/pkg" },
+      (args, cwd) => {
+        calls.push({ args, cwd });
+        if (args[0] === "pack") {
+          return { status: 0, stdout: "\ncob-0.2.0.tgz\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+    assert.deepEqual(
+      calls.map((call) => call.args.join(" ")),
+      ["run build", "pack"],
+    );
+    for (const call of calls) {
+      assert.equal(call.cwd, "/pkg");
+    }
+    assert.equal(packed.filename, "cob-0.2.0.tgz");
+  });
+
+  it("refuses to pack when the production build fails", () => {
+    const ran: string[] = [];
+    assert.throws(
+      () =>
+        packReleaseTarball(
+          { kind: "workspace", version: "0.2.0", cliPath: "/pkg/dist/cli.js", packageRoot: "/pkg" },
+          (args) => {
+            ran.push(args.join(" "));
+            return { status: args.includes("build") ? 2 : 0, stdout: "", stderr: "tsc failed" };
+          },
+        ),
+      /tsc failed/,
+    );
+    assert.deepEqual(ran, ["run build"]);
   });
 });
 
