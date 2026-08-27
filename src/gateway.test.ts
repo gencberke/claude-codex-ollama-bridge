@@ -7,6 +7,7 @@ import { request as httpRequest } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { zstdCompressSync } from "node:zlib";
 import { listenGateway } from "./gateway.js";
+import { resetCompactAttemptLog } from "./compact-attempt-log.js";
 import { pickForwardHeaders } from "./native.js";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
 import { MAX_RAW_BODY_BYTES } from "./limits.js";
@@ -547,6 +548,10 @@ describe("gateway", () => {
       assert.match(joined, /tool_bytes_top=\d+/);
       assert.equal(joined.includes("exec_command"), false);
       assert.match(joined, /\[cob\] ollama usage in=12 out=3/);
+      assert.match(joined, /\[cob\] ollama wire [^\n]*b_instr=\d+/);
+      assert.match(joined, /\[cob\] ollama wire [^\n]*b_input=\d+/);
+      assert.match(joined, /\[cob\] ollama wire [^\n]*input_n=\d+/);
+      assert.match(joined, /\[cob\] ollama wire [^\n]*input_by=message:user:1/);
       assert.equal(joined.includes("schema-secret"), false);
       assert.equal(joined.includes("secret-output"), false);
     } finally {
@@ -647,6 +652,8 @@ describe("gateway", () => {
       assert.match(joined, /\[cob\] POST [^\n]*tools_n=1/);
       assert.match(joined, /\[cob\] ollama wire [^\n]*tools_n=2/);
       assert.match(joined, /\[cob\] ollama wire [^\n]*promoted_n=1/);
+      assert.match(joined, /\[cob\] ollama wire [^\n]*b_input=\d+/);
+      assert.match(joined, /\[cob\] ollama wire [^\n]*input_n=\d+/);
       assert.match(joined, /tool_bytes_top=\d+(?:,\d+)*/);
       assert.equal(joined.includes("multi_agent_v1__spawn_agent"), false);
       assert.equal(joined.includes("Spawn a sub-agent"), false);
@@ -1204,7 +1211,11 @@ describe("gateway", () => {
       assert.match(JSON.stringify(summarizerInput), /compact item function_call/);
       assert.match(JSON.stringify(summarizerInput), /compact item function_call_output/);
       const failLine = logs.find((line) => line.includes("ollama compact failed"));
-      assert.equal(failLine, "[cob] ollama compact failed code=compaction_summary_invalid");
+      assert.match(
+        failLine ?? "",
+        /^\[cob\] ollama compact failed code=compaction_summary_invalid compact_group=[0-9a-f]{8} compact_attempt=\d+$/,
+      );
+      assert.equal((failLine ?? "").includes("exec_command"), false);
       assert.equal(existsSync(join(stateDir, "checkpoints")), false);
       assert.equal(existsSync(join(stateDir, "compact-archive")), false);
     } finally {
@@ -1259,7 +1270,70 @@ describe("gateway", () => {
       assert.equal(body.error?.code, "compaction_summary_incomplete");
       assert.equal(body.error?.requires_full_context, true);
       assert.equal(ollamaHits, 1);
-      assert.match(logs.join("\n"), /ollama compact failed code=compaction_summary_incomplete/);
+      assert.match(logs.join("\n"), /ollama compact failed code=compaction_summary_incomplete compact_group=[0-9a-f]{8} compact_attempt=/);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("groups Codex compact re-POSTs in logs without cob retrying", async () => {
+    resetCompactAttemptLog();
+    let ollamaHits = 0;
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      nativeFetch: async () => new Response("nope", { status: 500 }),
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response(
+          JSON.stringify({
+            id: `incomplete-sum-${ollamaHits}`,
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "plain recap" }] }],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    const compactBody = JSON.stringify({
+      model: "ollama/deepseek-v4-flash:cloud",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "same-thread compact" }] },
+        { type: "compaction_trigger" },
+      ],
+    });
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: compactBody,
+      });
+      const second = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: compactBody,
+      });
+      assert.equal(first.status, 400);
+      assert.equal(second.status, 400);
+      assert.equal(ollamaHits, 2);
+      const failLines = logs.filter((line) => line.includes("ollama compact failed"));
+      assert.equal(failLines.length, 2);
+      assert.match(failLines[0] ?? "", /compact_attempt=1/);
+      assert.match(failLines[1] ?? "", /compact_attempt=2/);
+      const groupA = /compact_group=([0-9a-f]{8})/.exec(failLines[0] ?? "")?.[1];
+      const groupB = /compact_group=([0-9a-f]{8})/.exec(failLines[1] ?? "")?.[1];
+      assert.equal(groupA, groupB);
+      assert.equal(failLines.join("\n").includes("same-thread compact"), false);
     } finally {
       console.error = originalError;
       await new Promise<void>((resolve, reject) => {

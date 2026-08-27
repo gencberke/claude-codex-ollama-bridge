@@ -92,6 +92,11 @@ import {
   formatRequestMetrics,
   summarizeRequest,
 } from "./request-metrics.js";
+import {
+  formatCompactAttemptLog,
+  noteCompactAttempt,
+  type CompactAttemptNote,
+} from "./compact-attempt-log.js";
 import type { ToolSearchBridge } from "./tool-search.js";
 import {
   ConversationStateError,
@@ -572,8 +577,13 @@ async function handleOllamaCompactionTrigger(
     ...continuation.payload,
     input: [...nativeHistory, { type: "compaction_trigger" }],
   };
+  const compactNote = noteCompactAttempt({
+    parentResponseId: continuation.parentResponseId,
+    threadModel,
+    replayHistory: continuation.replayHistory,
+  });
   console.error(
-    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("native", plan.compactModel))}`,
+    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("native", plan.compactModel))} ${formatCompactAttemptLog(compactNote)}`,
   );
   const rewritten = nativeCompactRequest(compactPayload, plan.compactModel);
   const body = Buffer.from(JSON.stringify(rewritten), "utf8");
@@ -645,8 +655,13 @@ async function handleOllamaSummaryCompact(
     json(res, preparedSummarizer.status, preparedSummarizer.body);
     return;
   }
+  const compactNote = noteCompactAttempt({
+    parentResponseId: continuation.parentResponseId,
+    threadModel,
+    replayHistory: continuation.replayHistory,
+  });
   console.error(
-    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("ollama", compactModel))}`,
+    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("ollama", compactModel))} ${formatCompactAttemptLog(compactNote)}`,
   );
   const compactStarted = Date.now();
   const forwarded = await forwardOllamaResponses({
@@ -672,7 +687,7 @@ async function handleOllamaSummaryCompact(
   });
   if (abort.signal.aborted) return;
   if (upstream.status < 200 || upstream.status >= 300) {
-    console.error(formatOllamaSummarizerHttpError(upstream.status, raw, Date.now() - compactStarted));
+    console.error(formatOllamaSummarizerHttpError(upstream.status, raw, Date.now() - compactStarted, compactNote));
     jsonError(
       res,
       502,
@@ -697,13 +712,13 @@ async function handleOllamaSummaryCompact(
   }
   const extracted = extractOllamaCompactSummary(summarizerResponse);
   if (extracted.kind === "error") {
-    console.error(`[cob] ollama compact failed code=${extracted.code}`);
+    console.error(`[cob] ollama compact failed code=${extracted.code} ${formatCompactAttemptLog(compactNote)}`);
     jsonError(res, 400, extracted.code, extracted.message, { requires_full_context: true });
     return;
   }
   const incomplete = incompleteOllamaCompactHandoffError(extracted.text);
   if (incomplete) {
-    console.error(`[cob] ollama compact failed code=${incomplete.code}`);
+    console.error(`[cob] ollama compact failed code=${incomplete.code} ${formatCompactAttemptLog(compactNote)}`);
     jsonError(res, 400, incomplete.code, incomplete.message, { requires_full_context: true });
     return;
   }
@@ -713,6 +728,7 @@ async function handleOllamaSummaryCompact(
     sections: compactHandoffSectionFlags(extracted.text),
     effort: options.compaction?.ollamaEffort ?? "high",
     usage: extractOllamaUsage(summarizerResponse),
+    compactNote,
   });
   let envelope: string;
   try {
@@ -785,14 +801,20 @@ function logOllamaCompactOk(opts: {
   sections: ReturnType<typeof compactHandoffSectionFlags>;
   effort: string;
   usage: ReturnType<typeof extractOllamaUsage>;
+  compactNote: CompactAttemptNote;
 }): void {
   const usage = opts.usage ? formatOllamaUsage(opts.usage) : "tokens=omitted";
   console.error(
-    `[cob] ollama compact ok latency_ms=${opts.latencyMs} summary_bytes=${opts.summaryBytes} effort=${opts.effort} sections=${formatCompactSectionFlags(opts.sections)} ${usage}`,
+    `[cob] ollama compact ok latency_ms=${opts.latencyMs} summary_bytes=${opts.summaryBytes} effort=${opts.effort} sections=${formatCompactSectionFlags(opts.sections)} ${usage} ${formatCompactAttemptLog(opts.compactNote)}`,
   );
 }
 
-function formatOllamaSummarizerHttpError(status: number, raw: Buffer, latencyMs: number): string {
+function formatOllamaSummarizerHttpError(
+  status: number,
+  raw: Buffer,
+  latencyMs: number,
+  compactNote: CompactAttemptNote,
+): string {
   return [
     "[cob] ollama compact failed",
     "code=ollama_compaction_failed",
@@ -800,6 +822,7 @@ function formatOllamaSummarizerHttpError(status: number, raw: Buffer, latencyMs:
     `body_bytes=${raw.length}`,
     `body_sha=${createHash("sha256").update(raw).digest("hex").slice(0, 8)}`,
     `latency_ms=${latencyMs}`,
+    formatCompactAttemptLog(compactNote),
   ].join(" ");
 }
 

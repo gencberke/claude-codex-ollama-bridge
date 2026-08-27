@@ -1,4 +1,4 @@
-# Status — 2026-08-25
+# Status — 2026-08-27
 
 Living checkpoint. Product contract stays in [README.md](./README.md). Live
 gold standards stay in [LIVE-TESTING.md](./LIVE-TESTING.md). Agents start at
@@ -10,15 +10,13 @@ Native GPT parent → Ollama V1 child is the product. Native Multi-Agent V2
 mailbox (two in-flight `send_message`, cob queue, Ollama V2 catalog) is not
 productized; see [UPSTREAM-U1.md](./UPSTREAM-U1.md).
 
-Live global is cob **0.1.14** after an authorized scoped cut: fail-closed
-Ollama JSON (no raw 2xx relay), tighter encrypted-field rejection, redacted
-summarizer HTTP logs, and live-home lock that forces `apply_patch` and
-`native_plaintext_spawn` off. Isolated Gate 5 / plaintext-spawn JS is in the
-tarball but dark on `~/.codex`. G12/G14/G17 remain **0.1.13** evidence; this
-install does not re-claim them. Catalog bytes stayed `9748309e…`. Root
-`config.toml` stayed `989c27f9…` (Desktop/user; cob did not write it).
-Host-network `cob status` is `ok` with fresh Desktop `0.149.0-alpha.4.3`
-provenance.
+Live global **CLI** is cob **0.1.16**. Codex `:18790` pid **54105** is still
+the **0.1.14** process (fail-closed JSON/encrypted-wire; `apply_patch` and
+`native_plaintext_spawn` off). cob Claude live is `:18792` pid **81560**.
+Isolated Gate 5 / plaintext-spawn JS is in the tarball but dark on `~/.codex`.
+G12/G14/G17 remain **0.1.13** evidence. Catalog bytes stayed `9748309e…`.
+Root `config.toml` is user/Desktop-owned (cob did not write it). Host-network
+Codex health remains `ok`.
 
 **This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
 `codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
@@ -31,14 +29,15 @@ or steal native slugs to “survive” an update.
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | global **0.1.14**, pid **54105**, `127.0.0.1:18790`, host-network health `ok`, overlay `ok`, catalog provenance `fresh`. Dev isolate `:18791` is down. |
-| Packed live | **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; globally installed 2026-08-25. Scoped fail-closed cut; experiments live-forced off. |
-| Prior live | **0.1.13**, 43-file tarball SHA-256 `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`; G12 rollback, G14, G17 on that artifact. Do not repack. |
-| Source | `master` cob **0.1.14** (this cut). Pack excludes tests, `gate6h`, and `eval-*`. 0.1.12 JS checkpoint remains `e932eb1`. |
+| cob gateway | global **CLI 0.1.16**, Codex listener still **0.1.14** pid **54105**, `127.0.0.1:18790`. cob Claude live pid **81560**, `127.0.0.1:18792`. Dev isolate `:18791` / `:18793` down. |
+| Packed live | **0.1.16** tarball SHA-256 `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560` (57 files; no tests/`gate6h`/`eval-*`). Global `cob` replaced 2026-08-27; Codex `:18790` process not restarted. |
+| Prior live | **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; Codex listener pid **54105** still this artifact. |
+| Source | `master` cob **0.1.16** (this cut). Pack excludes tests, `gate6h`, and `eval-*`. 0.1.12 JS checkpoint remains `e932eb1`. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | **26.818.41509**, bundled `codex-cli 0.149.0-alpha.4.3` (catalog producer). Earlier gold hop: 26.818.22352 / alpha.21 |
 | Ollama | **0.32.15** (`/v1/responses`; tags `deepseek-v4-flash:0731-cloud` + `:cloud`). |
 | Spawn slot | `cob.toml` `[subagents].models` → `ollama/deepseek-v4-flash:0731-cloud` and `ollama/kimi-k3:cloud`. Live `apply_patch = false`, `native_plaintext_spawn = false`. |
+| cob Claude | **live Messages** (not ChatGPT Desktop gold). `:18792` pid **81560**. Desktop spawn: Opus parent Anthropic; child 0731 `cob_route=1`. Picker pinned Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6). `autoModeEnabled=true`. Overlay `7429a97e…`. |
 
 Live 0.1.9 contains the exact native-only `POST /v1/alpha/search`
 compatibility route required by Codex `web.run` when `openai_base_url` points
@@ -91,6 +90,43 @@ not live-dispatch a child. `codex exec-server` is a remote environment, not
 a collaboration driver.
 
 ## Proven
+
+- **Live cob Claude 0.1.16 (2026-08-27):** picker pin cut. `inferenceModels`
+  Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6); `autoModeEnabled=true`.
+  1P model-Auto is not a 3P row. Tarball SHA-256
+  `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`
+  (57 files). `cob version` is `cob 0.1.16 (global)`. cob Claude pid
+  **81560** on `127.0.0.1:18792` health `ok`. Desktop overlay applied
+  sha256 `7429a97e…` gateway `:18792`; user agents overlay `n=1`. Live
+  profile: `autoModeEnabled=true`, `inferenceModels` Opus 5 / Sonnet 5 /
+  Haiku 4.5 / Fable 5 (no 4.6). Codex `:18790` pid **54105** unchanged
+  (still 0.1.14 JS). Isolated `:18793` restored then stopped. Merge gate:
+  449 tests, 443 passed, 6 skips. Live Claude Desktop spawn (0.1.15
+  trace, still gold): parent Opus `cob_route=0`; child
+  `client_model=deepseek-v4-flash:0731-cloud backend=ollama cob_route=1`.
+  Unmarked Haiku stayed Anthropic. Not ChatGPT Desktop gold and not a
+  Codex gateway replace. `~/.claude/settings.json` SHA-256 stayed
+  `450ff8a8582ae540068cd9c5f4f5fd5e2f69bc1c6f50bd3b9c42ef7e58419f2a`.
+
+- **Live cob Claude 0.1.15 (2026-08-27):** tarball SHA-256
+  `6ca55eee23a53fd753d5a3565c4867b9be3979b223443230b75c417aeaa1be6d`
+  (57 files). `cob version` was `cob 0.1.15 (global)`. cob Claude pid
+  **75390** then **78078** on `127.0.0.1:18792`. Desktop overlay
+  sha256 `7429a97e…` gateway `:18792`; user agents overlay `n=1`.
+  Codex `:18790` pid **54105** unchanged. Not ChatGPT Desktop gold.
+
+- **Isolated cob Claude CLI spawn (workspace, 2026-08-27):** Claude Code
+  2.1.220, `ANTHROPIC_BASE_URL=http://127.0.0.1:18793`, project-local
+  `.claude/agents/cob-deepseek-0731.md` (not `~/.claude/agents`). Parent
+  `claude-opus-5` hit cob `backend=anthropic cob_route=0`. Child
+  `claude-haiku-4-5-20251001` (Agent placeholder) hit cob-route
+  `backend=ollama upstream=deepseek-v4-flash:0731-cloud cob_route=1`. Parent
+  printed `PARENT_OK` and nonce `COB_CLAUDE_G1_20260827`. Live Codex `:18790`
+  pid **54105** unchanged. `CLAUDE_CONFIG_DIR=~/.claude-cob-dev/code` failed
+  first (`Not logged in`). Follow-up on `:18793` pid **69495**: cob-route
+  `count_tokens` is local (`200 input_tokens=21`, Ollama has no that path);
+  `<!-- cob-route: claude-opus-5 -->` stays Anthropic
+  (`cob_route_ignored=native_id`). This is not Desktop spawn gold.
 
 - **Live 0.1.14 scoped install (2026-08-25):** tarball SHA-256
   `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`

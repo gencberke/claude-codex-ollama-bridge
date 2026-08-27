@@ -4,14 +4,13 @@ Live ChatGPT Desktop and daily `codex --profile cob` run the **globally
 installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
-Current state (2026-08-25): live global is **0.1.14** on `:18790` (pid **54105**)
-after an authorized install of the exact tarball SHA-256
-`0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
-(45 files). Host-network `cob status` is `ok` (overlay `ok`, provenance
-`fresh`, Desktop producer `0.149.0-alpha.4.3`). Install preserved root
-`config.toml` SHA-256 `989c27f9…` and catalog `9748309e…`. cob.toml now
-explicitly records `apply_patch = false` and
-`native_plaintext_spawn = false`. Do not repack 0.1.11–0.1.14.
+Current state (2026-08-27): live global **CLI** is **0.1.16** (tarball
+SHA-256 `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`,
+57 files). Live Codex gateway process remains **0.1.14** pid **54105** on
+`:18790` (tarball SHA-256
+`0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`).
+cob Claude live is pid **81560** on `:18792` / `~/.claude-cob`. Do not repack 0.1.11–0.1.15.
+Do not restart `:18790` unless replacing the Codex gateway.
 
 0.1.14 is a scoped fail-closed cut (Ollama JSON raw-relay closed, encrypted
 prefixes rejected, live experimental lock). It does not re-prove G12/G14/G17
@@ -24,14 +23,13 @@ Source checkpoint `e932eb19c551fbda96dc83fe7fe34840afff2371` still reproduces
 
 ## Two homes
 
-| | Live | Develop |
-| --- | --- | --- |
-| Install | `npm install -g ./codex-ollama-bridge-<version>.tgz` | git checkout + `npm run build` |
-| Command | `cob start` | `node dist/cli.js start --dev` |
-| Codex home | `~/.codex` | `~/.codex-cob-dev` |
-| Port | `18790` | `18791` |
-| Desktop | Yes (root `openai_base_url` → `:18790`) | No. Desktop ignores `--profile` and only reads `~/.codex/config.toml` |
-| CLI test | `codex --profile cob` | `CODEX_HOME=~/.codex-cob-dev codex --profile cob` |
+| | Live Codex | Live cob Claude | Develop |
+| --- | --- | --- | --- |
+| Install | `npm install -g ./codex-ollama-bridge-<version>.tgz` | same global `cob` | git checkout + `npm run build` |
+| Command | `cob start` | `cob claude start` | `node dist/cli.js start --dev` / `claude start --dev` |
+| Home | `~/.codex` | `~/.claude-cob` | `~/.codex-cob-dev` / `~/.claude-cob-dev` |
+| Port | `18790` | `18792` | `18791` / `18793` |
+| Desktop | ChatGPT Desktop (root `openai_base_url` → `:18790`) | Claude Desktop 3P `--desktop` → `:18792` | No ChatGPT Desktop. Claude `--dev --desktop` is isolated trial |
 
 `cob version` prints `cob <version> (global|workspace)`. `cob status` repeats
 that plus `cli:` path. A workspace mutating command against live `~/.codex`

@@ -1,10 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { DEFAULT_OLLAMA_URL } from "./constants.js";
 import {
+  assertNotUserClaudeHome,
+  assertWorkspaceMayTouchClaudeHome,
   assertWorkspaceMayTouchHome,
+  defaultDevClaudeHome,
   defaultDevHome,
+  defaultLiveClaudeHome,
   defaultLiveHome,
   detectInstall,
+  isLiveClaudeHome,
   isLiveCodexHome,
   resolveListenPort,
   seedIsolatedCodexHome,
@@ -13,8 +18,11 @@ import {
 import { parseCompactionProvider } from "./cob-config.js";
 import { assertLoopbackHttpUrl } from "./loopback.js";
 import { resolveCodexHome, resolvePaths, type CobPaths } from "./paths.js";
+import { resolveClaudeHome, resolveClaudePaths, type ClaudePaths } from "./claude-paths.js";
+import { DEFAULT_SURFACE, isCobSurface, type CobSurface } from "./surface.js";
 
 export type CliFlags = {
+  surface: CobSurface;
   command: string;
   port?: number;
   portExplicit: boolean;
@@ -23,7 +31,9 @@ export type CliFlags = {
   live: boolean;
   dev: boolean;
   liveHome: boolean;
+  desktop: boolean;
   home?: string;
+  dir?: string;
   compactionProvider?: string;
   compactionModel?: string;
 };
@@ -36,21 +46,51 @@ export type CliSession = {
   isolated: boolean;
 };
 
+export type ClaudeCliSession = {
+  flags: CliFlags;
+  paths: ClaudePaths;
+  port: number;
+  install: CobInstall;
+  isolated: boolean;
+};
+
+const FLAG_WITH_VALUE = new Set([
+  "--home",
+  "--dir",
+  "--port",
+  "--ollama-url",
+  "--compaction-provider",
+  "--compaction-model",
+]);
+
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliFlags {
   const args = argv.slice(2);
   if (args.includes("--version") || args.includes("-V")) {
     return baseFlags("version", env);
   }
-  const command = args.find((arg) => !arg.startsWith("-")) ?? "help";
-  const flags = baseFlags(command, env);
+  const positionals = positionalArgs(args);
+  let surface: CobSurface = DEFAULT_SURFACE;
+  let command = "help";
+  if (positionals[0] && isCobSurface(positionals[0])) {
+    surface = positionals[0];
+    command = positionals[1] ?? "help";
+  } else if (positionals[0]) {
+    command = positionals[0];
+  }
+  const flags = baseFlags(command, env, surface);
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--foreground" || arg === "-f") flags.foreground = true;
     if (arg === "--live") flags.live = true;
     if (arg === "--dev") flags.dev = true;
     if (arg === "--live-home") flags.liveHome = true;
+    if (arg === "--desktop") flags.desktop = true;
     if (arg === "--home" && args[i + 1]) {
       flags.home = args[i + 1];
+      i += 1;
+    }
+    if (arg === "--dir" && args[i + 1]) {
+      flags.dir = args[i + 1];
       i += 1;
     }
     if (arg === "--port" && args[i + 1]) {
@@ -71,7 +111,11 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       i += 1;
     }
     if (arg === "--native-url") {
-      throw new Error("native ChatGPT URL is pinned; --native-url is not accepted");
+      throw new Error(
+        surface === "claude"
+          ? "native Anthropic URL is pinned; --native-url is not accepted"
+          : "native ChatGPT URL is pinned; --native-url is not accepted",
+      );
     }
   }
   if (flags.portExplicit && (flags.port === undefined || !Number.isInteger(flags.port) || flags.port <= 0)) {
@@ -84,8 +128,23 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   return flags;
 }
 
-function baseFlags(command: string, env: NodeJS.ProcessEnv): CliFlags {
+function positionalArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === undefined) continue;
+    if (arg.startsWith("-")) {
+      if (FLAG_WITH_VALUE.has(arg)) i += 1;
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
+function baseFlags(command: string, env: NodeJS.ProcessEnv, surface: CobSurface = DEFAULT_SURFACE): CliFlags {
   return {
+    surface,
     command,
     portExplicit: false,
     ollamaUrl: env.COB_OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
@@ -93,6 +152,7 @@ function baseFlags(command: string, env: NodeJS.ProcessEnv): CliFlags {
     live: false,
     dev: false,
     liveHome: env.COB_ALLOW_LIVE_HOME === "1",
+    desktop: false,
   };
 }
 
@@ -109,6 +169,7 @@ export function resolveCliSession(
     portExplicit: flags.portExplicit,
     port: flags.port,
     envPort: env.COB_PORT,
+    surface: "codex",
   });
   assertWorkspaceMayTouchHome({
     command: flags.command,
@@ -146,4 +207,36 @@ export function packReleaseTarball(install: CobInstall): { filename: string; std
     throw new Error(`npm pack did not print a tarball name: ${result.stdout}`);
   }
   return { filename, stdout: result.stdout };
+}
+
+export function resolveClaudeCliSession(
+  flags: CliFlags,
+  env: NodeJS.ProcessEnv = process.env,
+): ClaudeCliSession {
+  const install = detectInstall();
+  const liveHome = defaultLiveClaudeHome();
+  const home = flags.home ?? (flags.dev ? defaultDevClaudeHome() : resolveClaudeHome(env.COB_CLAUDE_HOME));
+  assertNotUserClaudeHome(home);
+  const isolated = flags.dev || !isLiveClaudeHome(home, liveHome);
+  const port = resolveListenPort({
+    isolated: flags.dev,
+    portExplicit: flags.portExplicit,
+    port: flags.port,
+    envPort: env.COB_CLAUDE_PORT,
+    surface: "claude",
+  });
+  assertWorkspaceMayTouchClaudeHome({
+    command: flags.command,
+    install,
+    claudeHome: home,
+    allowLiveHome: flags.liveHome || env.COB_ALLOW_LIVE_HOME === "1",
+    liveHome,
+  });
+  return {
+    flags,
+    paths: resolveClaudePaths(home),
+    port,
+    install,
+    isolated,
+  };
 }

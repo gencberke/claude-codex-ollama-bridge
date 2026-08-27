@@ -12,7 +12,55 @@ not this file.
 
 Workspace-only: pack-excluded Gate 6-H, G2–G9 eval fixtures, and
 [UPSTREAM-U1.md](./UPSTREAM-U1.md). They are not live gold and are not in
-the 0.1.14 tarball.
+the tarball.
+
+## 0.1.16 — 2026-08-27
+
+Claude Desktop 3P picker pin on live cob Claude. Codex `:18790` is not
+restarted.
+
+- Pin `inferenceModels` to Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5. Drop
+  4.6 ids that discovery listed from cob's `/v1/models`.
+- Set `autoModeEnabled` for the permission Auto selector. The 1P
+  model-Auto router is not a 3P gateway row; cob does not invent an
+  `auto` model id.
+- Authorized global CLI install 2026-08-27: tarball SHA-256
+  `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`
+  (57 files). cob Claude pid **81560** on `:18792`. Codex pid **54105**
+  on `:18790` not restarted. Overlay sha256 `7429a97e…` (snapshot);
+  live profile pinned Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 with
+  `autoModeEnabled=true`. No tag, push, or npm publish.
+
+Do not repack 0.1.11–0.1.15. Codex `:18790` is not restarted.
+
+## 0.1.15 — 2026-08-27
+
+cob Claude goes live as a **second surface**, not as ChatGPT Desktop gold.
+`cob start` / `:18790` Codex listener is not restarted by this cut.
+
+- `cob claude start` (global) binds `127.0.0.1:18792` and cob-owned
+  `~/.claude-cob`. Native Claude ids pass through to `api.anthropic.com`
+  with OAuth forwarded; other model ids go to Ollama `/v1/messages`.
+  Claude ids are never rewritten to Ollama.
+- Spawn: cob-owned agents + system `cob-route` (not haiku/fable slot
+  steal). Ask for `cob-deepseek-0731`. Agent tool still sends a Haiku
+  placeholder; cob rewrites allowlisted Ollama tags.
+- `cob claude start --desktop` snapshots then writes a cob-owned Claude
+  Desktop 3P overlay **and** cob-owned `~/.claude/agents/cob-*.md`.
+  Restore reverts both. Never `~/.claude/settings.json`, never
+  `ollama launch`, never `ANTHROPIC_AUTH_TOKEN=ollama`.
+- Isolated `cob claude start --dev` remains `~/.claude-cob-dev` / `:18793`.
+- Ollama `count_tokens` is cob-local (`input_tokens`); Ollama has no that
+  path.
+- Also ships log-only Codex token-efficiency lines (`b_instr` / compact
+  group). Those do not apply until a later authorized `cob start`.
+- Authorized global CLI install 2026-08-27: tarball SHA-256
+  `6ca55eee23a53fd753d5a3565c4867b9be3979b223443230b75c417aeaa1be6d`
+  (57 files). cob Claude pid **75390** on `:18792`. Codex pid **54105**
+  on `:18790` not restarted. Overlay sha256 `7429a97e…`. No tag, push,
+  or npm publish.
+
+Do not repack 0.1.11–0.1.14.
 
 ## 0.1.14 — 2026-08-25
 

@@ -156,6 +156,10 @@ describe("request-metrics", () => {
   it("formats Ollama wire metrics without schemas or response ids", () => {
     const line = formatOllamaWireMetrics({
       wireBytes: 2048,
+      instructionsBytes: 120,
+      inputBytes: 400,
+      inputCount: 3,
+      inputByType: { "message:user": 2, function_call_output: 1 },
       toolsCount: 18,
       toolsBytes: 18000,
       toolsSha: "abcd1234",
@@ -173,6 +177,10 @@ describe("request-metrics", () => {
       usedAliasMissing: 0,
     });
     assert.match(line, /wire_bytes=2048/);
+    assert.match(line, /b_instr=120/);
+    assert.match(line, /b_input=400/);
+    assert.match(line, /input_n=3/);
+    assert.match(line, /input_by=function_call_output:1,message:user:2/);
     assert.match(line, /tools_n=18/);
     assert.match(line, /promoted_n=1/);
     assert.match(line, /promoted_bytes=6800/);

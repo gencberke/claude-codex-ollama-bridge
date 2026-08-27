@@ -98,6 +98,10 @@ export function formatRequestMetrics(metrics: RequestMetrics): string {
 
 export type OllamaWireMetrics = {
   wireBytes: number;
+  instructionsBytes: number;
+  inputBytes: number;
+  inputCount: number;
+  inputByType: Record<string, number>;
   toolsCount: number;
   toolsBytes: number;
   toolsSha: string;
@@ -118,8 +122,12 @@ export type OllamaWireMetrics = {
 export function formatOllamaWireMetrics(metrics: OllamaWireMetrics): string {
   return [
     `wire_bytes=${metrics.wireBytes}`,
-    `tools_n=${metrics.toolsCount}`,
+    `b_instr=${metrics.instructionsBytes}`,
     `b_tools=${metrics.toolsBytes}`,
+    `b_input=${metrics.inputBytes}`,
+    `tools_n=${metrics.toolsCount}`,
+    `input_n=${metrics.inputCount}`,
+    `input_by=${formatCounts(metrics.inputByType)}`,
     `tools_sha=${metrics.toolsSha}`,
     `tool_bytes_top=${formatByteSizes(metrics.toolBytesByName)}`,
     `promoted_n=${metrics.promotedN}`,

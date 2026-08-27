@@ -2,14 +2,24 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, chmodSync, realpathS
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_PORT } from "./constants.js";
+import { CLAUDE_DEFAULT_DEV_PORT, CLAUDE_DEFAULT_PORT, DEFAULT_PORT } from "./constants.js";
+import type { CobSurface } from "./surface.js";
 
 export const PACKAGE_NAME = "codex-ollama-bridge";
 export const DEFAULT_DEV_PORT = 18791;
 export const DEV_HOME_DIRNAME = ".codex-cob-dev";
+export const CLAUDE_LIVE_HOME_DIRNAME = ".claude-cob";
+export const CLAUDE_DEV_HOME_DIRNAME = ".claude-cob-dev";
+export const USER_CLAUDE_HOME_DIRNAME = ".claude";
 
 export const LIVE_HOME_REFUSAL =
   "workspace cob refuses to mutate the live ~/.codex home. Use cob start --dev for an isolated Codex profile, or install a release (npm pack && npm install -g) and run cob start. Pass --live-home only to debug a checkout against Desktop.";
+
+export const LIVE_CLAUDE_HOME_REFUSAL =
+  "workspace cob claude refuses to mutate the live ~/.claude-cob home. Use cob claude start --dev for an isolated cob-owned home, or pass --live-home only to debug a checkout against that live Claude surface.";
+
+export const USER_CLAUDE_HOME_REFUSAL =
+  "cob claude never mutates ~/.claude (settings.json or Claude Code home). Use cob-owned ~/.claude-cob or cob claude start --dev (~/.claude-cob-dev). Claude Desktop 3P overlay is a separate --desktop opt-in.";
 
 export type InstallKind = "global" | "workspace" | "unknown";
 
@@ -26,6 +36,32 @@ export function defaultLiveHome(home = homedir()): string {
 
 export function defaultDevHome(home = homedir()): string {
   return join(home, DEV_HOME_DIRNAME);
+}
+
+export function defaultLiveClaudeHome(home = homedir()): string {
+  return join(home, CLAUDE_LIVE_HOME_DIRNAME);
+}
+
+export function defaultDevClaudeHome(home = homedir()): string {
+  return join(home, CLAUDE_DEV_HOME_DIRNAME);
+}
+
+export function defaultUserClaudeHome(home = homedir()): string {
+  return join(home, USER_CLAUDE_HOME_DIRNAME);
+}
+
+export function isLiveClaudeHome(claudeHome: string, liveHome = defaultLiveClaudeHome()): boolean {
+  return samePath(claudeHome, liveHome);
+}
+
+export function isUserClaudeHome(claudeHome: string, userHome = defaultUserClaudeHome()): boolean {
+  return samePath(claudeHome, userHome);
+}
+
+export function assertNotUserClaudeHome(claudeHome: string, userHome = defaultUserClaudeHome()): void {
+  if (isUserClaudeHome(claudeHome, userHome)) {
+    throw new Error(USER_CLAUDE_HOME_REFUSAL);
+  }
 }
 
 export function isLiveCodexHome(codexHome: string, liveHome = defaultLiveHome()): boolean {
@@ -132,6 +168,20 @@ export function assertWorkspaceMayTouchHome(opts: {
   throw new Error(LIVE_HOME_REFUSAL);
 }
 
+export function assertWorkspaceMayTouchClaudeHome(opts: {
+  command: string;
+  install: CobInstall;
+  claudeHome: string;
+  allowLiveHome: boolean;
+  liveHome?: string;
+}): void {
+  if (!MUTATING_COMMANDS.has(opts.command)) return;
+  if (opts.allowLiveHome) return;
+  if (opts.install.kind !== "workspace") return;
+  if (!isLiveClaudeHome(opts.claudeHome, opts.liveHome ?? defaultLiveClaudeHome())) return;
+  throw new Error(LIVE_CLAUDE_HOME_REFUSAL);
+}
+
 export function seedIsolatedCodexHome(devHome: string, liveHome = defaultLiveHome()): { copiedAuth: boolean } {
   mkdirSync(devHome, { recursive: true });
   const src = join(liveHome, "auth.json");
@@ -151,11 +201,15 @@ export function resolveListenPort(opts: {
   portExplicit: boolean;
   port?: number;
   envPort?: string;
+  surface?: CobSurface;
 }): number {
   if (opts.portExplicit && opts.port !== undefined) return opts.port;
   if (opts.envPort !== undefined && opts.envPort.length > 0) {
     const parsed = Number(opts.envPort);
     if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  if (opts.surface === "claude") {
+    return opts.isolated ? CLAUDE_DEFAULT_DEV_PORT : CLAUDE_DEFAULT_PORT;
   }
   if (opts.isolated) return DEFAULT_DEV_PORT;
   return DEFAULT_PORT;

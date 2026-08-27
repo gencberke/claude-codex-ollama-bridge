@@ -4,6 +4,12 @@ Read [STATUS.md](./STATUS.md) before changing behavior. Product contract:
 [README.md](./README.md). Live gold: [LIVE-TESTING.md](./LIVE-TESTING.md).
 Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG.md).
 
+cob is one product with two surfaces. **cob Codex** (`cob start`) is the live
+ChatGPT Desktop / `codex --profile cob` gateway. **cob Claude** (`cob claude`)
+is a live Messages loopback for Claude Code / Claude Desktop 3P. Do not mix
+protocols, homes, or ports. `cob start` remains Codex; do not steal that
+default.
+
 ## Do not
 
 - Write `~/.codex/config.toml` from cob (`start` / `sync` / `restore` / tests).
@@ -53,6 +59,21 @@ Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG
   other than `v1` on Ollama rows, or call `followup_task` / encrypted
   collaboration payloads outside the isolated Gate 1-3 exception below.
   Ollama stays V1. Fernet never goes to Ollama.
+- Write `~/.claude/settings.json` or run `ollama launch claude` /
+  `ollama launch claude-desktop` from cob. cob claude live owns `~/.claude-cob`
+  (port 18792). Isolated trials use `cob claude start --dev`
+  (`~/.claude-cob-dev`, 18793). `--desktop` snapshots then writes cob's
+  Claude Desktop 3P profile (not Ollama's UUID, not nativeAlias) and may
+  snapshot then write cob-owned `~/.claude/agents/cob-*.md` only. `cob claude
+  restore` reverts those snapshots. Never settings.json. Do not quit or
+  restart Claude.app from cob; print fully quit and reopen. Snapshot SHA
+  before any real-home Desktop experiment. CLI project agents remain
+  `cob claude agents --dir .`.
+- Rewrite Claude model ids (`opus` / `sonnet` / `haiku` / `fable` / `claude-*`)
+  to Ollama. That is `nativeAlias` for this surface. Anthropic routes must
+  forward Claude Code OAuth untouched; do not set `ANTHROPIC_AUTH_TOKEN=ollama`.
+- Treat cob claude as ChatGPT Desktop gold, pack it as the Codex gateway, or
+  point ChatGPT Desktop at :18792. Live Codex proof stays cob Codex on :18790.
 
 ## Orchestration
 
@@ -132,10 +153,14 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Live global is cob **0.1.14** after an authorized scoped
-install of tarball SHA-256
+child on cob 0.1.6). Live global Codex is cob **0.1.14** after an authorized
+scoped install of tarball SHA-256
 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
-(pid **54105**). Fail-closed JSON/encrypted-wire is live; `apply_patch` and
+(pid **54105**). cob Claude live is a later **0.1.16** global
+`cob claude start` on `:18792` (tarball SHA-256
+`3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`)
+and does not restart that Codex listener.
+Fail-closed JSON/encrypted-wire is live; `apply_patch` and
 `native_plaintext_spawn` stay off on `~/.codex`. Pack excludes `gate6h` and
 `eval-*`. PATH Codex 0.149.0 and Desktop 0.149.0-alpha.4.3 validate catalog
 `9748309e…` (bytes unchanged at install). Host-network `cob status` is `ok`.
@@ -143,7 +168,8 @@ Current root SHA baseline is `989c27f9…` (Desktop/user; cob did not write it).
 G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
 G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
 change. Do not credit the 0.1.14 install with those gates. Do not repack
-0.1.11–0.1.14. Future app updates can still drop overlay or hide
+0.1.11–0.1.15. Do not restart the Codex `:18790` listener to pick up 0.1.16
+unless the user authorizes a Codex gateway replace. Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;
 `cob start` brings the gateway back.

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { packReleaseTarball, parseCliArgs, resolveCliSession } from "./cli-session.js";
+import { packReleaseTarball, parseCliArgs, resolveClaudeCliSession, resolveCliSession } from "./cli-session.js";
 import {
   LIVE_HOME_REFUSAL,
   PACKAGE_NAME,
+  USER_CLAUDE_HOME_REFUSAL,
   assertWorkspaceMayTouchHome,
   detectInstall,
   findPackageRoot,
@@ -170,6 +171,51 @@ describe("cli session", () => {
     assert.equal(flags.command, "start");
     assert.equal(flags.dev, true);
     assert.equal(flags.home, "/tmp/cob-dev-x");
+    assert.equal(flags.surface, "codex");
+  });
+
+  it("parses cob claude start as the Claude surface", () => {
+    const flags = parseCliArgs(["node", "cob", "claude", "start", "--dev"]);
+    assert.equal(flags.surface, "claude");
+    assert.equal(flags.command, "start");
+    assert.equal(flags.dev, true);
+    assert.equal(flags.desktop, false);
+  });
+
+  it("parses cob claude start --desktop", () => {
+    const flags = parseCliArgs(["node", "cob", "claude", "start", "--dev", "--desktop"]);
+    assert.equal(flags.surface, "claude");
+    assert.equal(flags.desktop, true);
+    assert.equal(flags.dev, true);
+  });
+
+  it("parses cob claude agents --dir", () => {
+    const flags = parseCliArgs(["node", "cob", "claude", "agents", "--dir", "/tmp/cob-proj"]);
+    assert.equal(flags.surface, "claude");
+    assert.equal(flags.command, "agents");
+    assert.equal(flags.dir, "/tmp/cob-proj");
+  });
+
+  it("refuses ~/.claude as a cob claude home", () => {
+    const flags = parseCliArgs(["node", "cob", "claude", "status", "--home", join(homedir(), ".claude")]);
+    assert.throws(() => resolveClaudeCliSession(flags), (error: unknown) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal((error as Error).message, USER_CLAUDE_HOME_REFUSAL);
+      return true;
+    });
+  });
+
+  it("points cob claude --dev at port 18793", () => {
+    const home = tempDir("cob-claude-dev-");
+    try {
+      const flags = parseCliArgs(["node", "cob", "claude", "status", "--dev", "--home", home]);
+      const session = resolveClaudeCliSession(flags, { ...process.env, COB_CLAUDE_HOME: "", COB_CLAUDE_PORT: "" });
+      assert.equal(session.paths.claudeHome, home);
+      assert.equal(session.port, 18793);
+      assert.equal(session.isolated, true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("points --dev --home at the isolated tree and port 18791", () => {

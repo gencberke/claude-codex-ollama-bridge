@@ -1,6 +1,9 @@
-# cob — Codex Ollama bridge
+# cob — Codex and Claude Ollama bridges
 
-Narrow loopback gateway so [Codex](https://github.com/openai/codex) can keep native GPT models on the ChatGPT subscription path and still list local Ollama models in the same picker. Native GPT can spawn selected Ollama models as V1 subagent children. Ollama parent → GPT child is not supported.
+One CLI. Two surfaces:
+
+- **cob Codex** (`cob start`) — live product. [Codex](https://github.com/openai/codex) / ChatGPT Desktop keep native GPT on the ChatGPT subscription path and still list local Ollama models in the same picker. Native GPT can spawn selected Ollama models as V1 subagent children. Ollama parent → GPT child is not supported.
+- **cob Claude** (`cob claude start`) — live Messages loopback on `:18792` / `~/.claude-cob`. Claude Code keeps native Claude models on the Anthropic subscription (OAuth forwarded). Other model ids go to Ollama `/v1/messages`. Native Claude ids are never rewritten to Ollama. `cob claude start --desktop` snapshots then points Claude Desktop 3P at this loopback, pins the 3P picker to Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5, and writes cob-owned `~/.claude/agents/cob-*.md` (restore reverts). Never ChatGPT Desktop gold. `ollama launch claude` is not this surface.
 
 OpenCodex is a proof of concept, not the product. This repo reimplements the loopback idea. See [NOTICE](./NOTICE).
 
@@ -111,6 +114,22 @@ cob start
 codex --profile cob
 ```
 
+cob Claude (live global `:18792`; workspace `--dev` is `:18793`):
+
+```bash
+cob claude start
+unset ANTHROPIC_API_KEY
+ANTHROPIC_BASE_URL=http://127.0.0.1:18792 claude --model opus
+cob claude agents --dir .   # project .claude/agents/cob-deepseek-0731.md; ask for that name, not haiku
+
+# Claude Desktop 3P overlay + cob-owned ~/.claude/agents/cob-*.md (snapshots first; restore reverts)
+cob claude start --desktop
+# Fully quit and reopen Claude Desktop, then cob claude restore when done
+
+# Isolated workspace trial
+cob claude start --dev
+```
+
 Commands:
 
 | Command | Effect |
@@ -124,6 +143,11 @@ Commands:
 | `cob smoke` | Catalog, roster, encrypted-content, restore, and native passthrough checks. `cob smoke --live` also pings Ollama through the gateway |
 | `cob pack` | Workspace only: production `tsc` + `npm pack` (no `*.test.js` in the tarball) |
 | `cob version` | Print `cob <version> (global\|workspace)` |
+| `cob claude start` | Live cob Claude Messages loopback (`~/.claude-cob`, port 18792). Global install. Does not write `~/.claude/settings.json`. Not ChatGPT Desktop gold |
+| `cob claude start --desktop` | Same loopback, plus cob-owned Claude Desktop 3P overlay and cob-owned `~/.claude/agents/cob-*.md` (snapshot then write). Restore reverts both. Never `ollama launch` or nativeAlias |
+| `cob claude start --dev` | Isolated cob Claude (`~/.claude-cob-dev`, port 18793). Workspace checkouts. |
+| `cob claude agents --dir .` | Writes cob-owned `cob-deepseek-0731.md` into this project's `.claude/agents`. Refuses `~/.claude`. Ask the parent for that subagent, not built-in haiku |
+| `cob claude status` / `stop` / `restore` | cob-owned Claude runtime; restore also reverts Desktop overlay and user-agents snapshots. Never `~/.claude/settings.json` |
 
 Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation, spawn, workspace R/W, compaction, restart, and restore procedures plus gold-standard metrics are in [LIVE-TESTING.md](./LIVE-TESTING.md). The official spawn harness is `COB_LIVE_SUBAGENT=1`; do not pass `--ignore-user-config`, and keep Codex stdin closed.
 

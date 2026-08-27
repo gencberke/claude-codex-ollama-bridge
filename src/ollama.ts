@@ -400,6 +400,10 @@ export async function forwardOllamaResponses(opts: {
   console.error(
     `[cob] ollama wire ${formatOllamaWireMetrics({
       wireBytes: body.length,
+      instructionsBytes: tools.instructionsBytes,
+      inputBytes: tools.inputBytes,
+      inputCount: tools.inputCount,
+      inputByType: tools.inputByType,
       toolsCount: tools.toolsCount,
       toolsBytes: tools.toolsBytes,
       toolsSha: tools.toolsSha,
