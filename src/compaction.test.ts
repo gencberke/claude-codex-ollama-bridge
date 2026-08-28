@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  assertValidOllamaFollowUpInput,
   buildOllamaSummarizerPayload,
   classifyCompactionTrigger,
   COB_OLLAMA_COMPACT_INSTRUCTIONS,
@@ -15,15 +14,18 @@ import {
   findCompactionInputItem,
   nativeCompactRequest,
   nativeCompactionResponseError,
-  ollamaFollowUpInputError,
   ollamaSummaryHandoffItem,
   projectNativeCompactInput,
-  projectOllamaInputValue,
   projectOllamaSummarizerHistory,
   resolveCompactPlan,
   resolveNativeCompactModel,
   unsupportedOllamaCompactMediaError,
 } from "./codex/compaction.js";
+import {
+  assertValidOllamaFollowUpInput,
+  ollamaFollowUpInputError,
+  projectOllamaInputValue,
+} from "./codex/ollama/history.js";
 import type { JsonObject } from "./core/json.js";
 
 const native = new Set(["codex-mini", "o3"]);

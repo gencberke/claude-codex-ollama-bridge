@@ -16,7 +16,7 @@ import { uniqueTempPath } from "../core/atomic.js";
 import { findEncryptedContent } from "./encrypted.js";
 import { MAX_UPSTREAM_BODY_BYTES } from "../core/http/body.js";
 import { withExclusiveLock } from "../core/lock.js";
-import { projectOllamaInputValue, ollamaFollowUpInputError } from "./compaction.js";
+import { projectOllamaInputValue, ollamaFollowUpInputError } from "./ollama/history.js";
 import type { JsonObject } from "../core/json.js";
 import { isRecord } from "../core/json.js";
 

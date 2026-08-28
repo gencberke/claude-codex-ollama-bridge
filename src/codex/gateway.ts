@@ -47,7 +47,6 @@ import {
   nativeCompactRequest,
   nativeCompactionResponseError,
   projectNativeCompactInput,
-  projectOllamaInputValue,
   resolveCompactPlan,
   isResponseEnvelope,
   buildOllamaSummarizerPayload,
@@ -57,9 +56,9 @@ import {
   formatCompactSectionFlags,
   unsupportedOllamaCompactMediaError,
   ollamaSummaryHandoffItem,
-  ollamaFollowUpInputError,
   projectOllamaSummarizerHistory,
 } from "./compaction.js";
+import { ollamaFollowUpInputError, projectOllamaInputValue } from "./ollama/history.js";
 import {
   CobCompactEnvelopeError,
   encodeCobCompactEnvelope,
