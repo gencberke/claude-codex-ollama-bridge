@@ -8,17 +8,19 @@ import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
   assessV1Roster,
-  discoverCodexBins,
-  fileIdentityFromFs,
   parseCatalogMetadata,
   parseCatalogProvenance,
-  resolveCatalogSources,
-  sameFileIdentity,
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
   writeCatalogValidationFailure,
-} from "./codex/catalog-provenance.js";
-import { serializeCatalog } from "./codex/catalog.js";
+} from "./codex/catalog/provenance.js";
+import {
+  discoverCodexBins,
+  fileIdentityFromFs,
+  resolveCatalogSources,
+  sameFileIdentity,
+} from "./codex/catalog/source.js";
+import { serializeCatalog } from "./codex/catalog/catalog.js";
 import type { CatalogFile } from "./codex/types.js";
 
 function tempDir(prefix: string): string {

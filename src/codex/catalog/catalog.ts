@@ -1,31 +1,26 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { CodexBinaryRecord } from "./catalog-provenance.js";
+import { readFileSync, statSync } from "node:fs";
 import {
   FEATURED_NATIVE_SLUGS,
   GPT_IDENTITY_FIELDS,
   OLLAMA_BASE_INSTRUCTIONS,
   OLLAMA_CATALOG_CONTEXT_CAP,
   OLLAMA_CATALOG_FIELDS,
-} from "./constants.js";
-import { writeFileAtomic } from "../core/atomic.js";
-import { CODEX_CATALOG_TIMEOUT_MS } from "./limits.js";
-import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./config/schema.js";
+} from "../constants.js";
+import { writeFileAtomic } from "../../core/atomic.js";
+import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "../config/schema.js";
 import {
   evidenceFromOllamaTag,
   ollamaChildCatalogFields,
   ollamaReasoningLadderForModel,
   OLLAMA_REASONING_EFFORTS,
   type OllamaCapabilityEvidence,
-} from "./capabilities.js";
-import { ollamaCatalogSlug } from "./route.js";
-import type { OllamaTag } from "../core/ollama/tags.js";
-import type { CatalogFile } from "./types.js";
-import type { JsonObject } from "../core/json.js";
-import { asPriority, asSlug, asVisibility } from "./types.js";
-import { isRecord } from "../core/json.js";
+} from "../capabilities.js";
+import { ollamaCatalogSlug } from "../route.js";
+import type { OllamaTag } from "../../core/ollama/tags.js";
+import type { CatalogFile } from "../types.js";
+import type { JsonObject } from "../../core/json.js";
+import { asPriority, asSlug, asVisibility } from "../types.js";
+import { isRecord } from "../../core/json.js";
 
 const IDENTITY_DROP = new Set<string>(
   GPT_IDENTITY_FIELDS.filter((field) => field !== "base_instructions"),
@@ -94,28 +89,6 @@ export function loadCatalogFile(path: string): CatalogFile {
   const catalog = parseCatalogJson(readFileSync(path, "utf8"));
   catalogFileCache = { path, identity, catalog };
   return catalog;
-}
-
-export function loadBundledCatalog(codexBin = process.env.COB_CODEX_BIN ?? "codex"): CatalogFile {
-  const result = spawnSync(codexBin, ["debug", "models", "--bundled"], {
-    encoding: "utf8",
-    maxBuffer: 20 * 1024 * 1024,
-    timeout: CODEX_CATALOG_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-  });
-    if (result.error) {
-      const code = (result.error as NodeJS.ErrnoException).code;
-      if (code === "ETIMEDOUT") {
-        throw new Error(`codex debug models --bundled timed out after ${CODEX_CATALOG_TIMEOUT_MS}ms`);
-      }
-      throw result.error;
-    }
-  if (result.status !== 0) {
-    throw new Error(
-      `codex debug models --bundled failed (${result.status}): ${result.stderr || result.stdout}`,
-    );
-  }
-  return parseCatalogJson(result.stdout);
 }
 
 export function listVisibleTopSlugs(models: JsonObject[], limit = 5): string[] {
@@ -593,64 +566,4 @@ export function writeCatalogIfChanged(
   }
   writeFileAtomic(path, next, 0o600);
   return true;
-}
-
-export class CatalogConsumerRejectedError extends Error {
-  readonly code = "catalog_consumer_rejected";
-  constructor(message: string) {
-    super(message);
-    this.name = "CatalogConsumerRejectedError";
-  }
-}
-
-export function assertConsumersAcceptCatalog(
-  catalog: CatalogFile,
-  consumers: readonly CodexBinaryRecord[],
-): void {
-  for (const consumer of consumers) {
-    try {
-      assertCodexAcceptsCatalog(catalog, consumer.path);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new CatalogConsumerRejectedError(
-        `Codex rejected cob catalog (${consumer.kind} ${consumer.path} ${consumer.version}): ${detail}`,
-      );
-    }
-  }
-}
-
-export function assertCodexAcceptsCatalog(
-  catalog: CatalogFile,
-  codexBin = process.env.COB_CODEX_BIN ?? "codex",
-): void {
-  const dir = mkdtempSync(join(tmpdir(), "cob-catalog-check-"));
-  const home = join(dir, "codex-home");
-  try {
-    mkdirSync(home, { recursive: true });
-    const path = join(dir, "catalog.json");
-    writeFileSync(path, serializeCatalog(catalog), { encoding: "utf8" });
-    const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: home };
-    delete env.COB_CODEX_HOME;
-    const result = spawnSync(codexBin, ["debug", "models", "-c", `model_catalog_json=${JSON.stringify(path)}`], {
-      encoding: "utf8",
-      env,
-      cwd: home,
-      maxBuffer: 20 * 1024 * 1024,
-      timeout: CODEX_CATALOG_TIMEOUT_MS,
-      killSignal: "SIGKILL",
-    });
-    if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
-      throw new Error(`codex catalog check timed out after ${CODEX_CATALOG_TIMEOUT_MS}ms`);
-    }
-    if (result.error) {
-      throw result.error;
-    }
-    if (result.status !== 0) {
-      throw new Error(
-        `Codex rejected cob catalog: ${(result.stderr || result.stdout || "").trim() || `exit ${result.status}`}`,
-      );
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 }

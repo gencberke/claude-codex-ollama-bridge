@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type AddressInfo } from "node:net";
-import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./codex/catalog.js";
+import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./codex/catalog/catalog.js";
 import { listenGateway } from "./codex/gateway.js";
 import { renderCobProfile } from "./codex/profile.js";
 import { resolvePaths } from "./codex/paths.js";

@@ -8,7 +8,7 @@ import {
   catalogFileIdentityKey,
   loadCatalogFile,
   resetCatalogFileCache,
-} from "./codex/catalog.js";
+} from "./codex/catalog/catalog.js";
 
 function writeCatalog(path: string, slugs: string[]): void {
   writeFileSync(path, `${JSON.stringify({ models: slugs.map((slug) => ({ slug })) })}\n`);

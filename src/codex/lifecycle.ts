@@ -5,28 +5,30 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { DEFAULT_PORT } from "./constants.js";
 import { DEFAULT_OLLAMA_URL } from "../core/ollama/constants.js";
 import {
-  assertConsumersAcceptCatalog,
-  CatalogConsumerRejectedError,
-  loadBundledCatalog,
   mergeCatalogWithFallback,
   parseCatalogJson,
   serializeCatalog,
   writeCatalogIfChanged,
-} from "./catalog.js";
+} from "./catalog/catalog.js";
+import { loadBundledCatalog } from "./catalog/source.js";
+import { syncCatalogControlPlane } from "./catalog/sync.js";
+import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "./catalog/validator.js";
 import { loadOllamaTags } from "../core/ollama/tags.js";
 import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
-  discoverCodexBins,
   parseCatalogMetadata,
-  resolveCatalogSources,
-  sha256Hex,
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
   writeCatalogValidationFailure,
+} from "./catalog/provenance.js";
+import {
+  discoverCodexBins,
+  resolveCatalogSources,
+  sha256Hex,
   type CatalogDiscovery,
   type InspectCodexIo,
-} from "./catalog-provenance.js";
+} from "./catalog/source.js";
 import { listenGateway } from "./gateway.js";
 import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "./limits.js";
 import { assertLoopbackHttpUrl } from "../core/loopback.js";
@@ -270,7 +272,11 @@ export async function syncCatalog(opts: {
   discovery?: CatalogDiscovery;
   inspect?: InspectCodexIo;
 }): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
-  const run = () => syncCatalogUnlocked(opts);
+  const run = () =>
+    syncCatalogControlPlane({
+      ...opts,
+      resolveRuntimePort: () => readRuntime(opts.paths)?.port,
+    });
   if (opts.locked) return run();
   return withCobLock(opts.paths, async () => {
     const lease = readStartLease(opts.paths);
@@ -279,101 +285,6 @@ export async function syncCatalog(opts: {
     }
     return run();
   });
-}
-
-async function syncCatalogUnlocked(opts: {
-  paths: CobPaths;
-  ollamaUrl: string;
-  spawnableOllamaSlugs?: readonly string[];
-  supportsSearchTool?: boolean;
-  applyPatch?: boolean;
-  cob?: CobFileConfig;
-  discovery?: CatalogDiscovery;
-  inspect?: InspectCodexIo;
-  keepLastGoodOnReject?: boolean;
-}): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
-  assertLoopbackHttpUrl(opts.ollamaUrl, "Ollama URL");
-  const cob = opts.cob ?? resolveCobConfig({ paths: opts.paths });
-  const spawnable =
-    opts.spawnableOllamaSlugs ?? resolveSpawnableOllamaSlugs(cob);
-  const supportsSearchTool = opts.supportsSearchTool ?? catalogSupportsSearchTool(cob);
-  // Gate 5 is an isolated development capability. A live ~/.codex home must
-  // never receive the advertised alias even if a stale opt-in is present.
-  const applyPatch =
-    !isLiveCodexHome(opts.paths.codexHome) &&
-    (opts.applyPatch ?? catalogSupportsApplyPatch(cob));
-  const discovery =
-    opts.discovery ??
-    discoverCodexBins({
-      paths: opts.paths,
-      liveHome: isLiveCodexHome(opts.paths.codexHome),
-    });
-  const sources = resolveCatalogSources(discovery, opts.inspect);
-  const bundled = loadBundledCatalog(sources.producer.path);
-  let tags: Awaited<ReturnType<typeof loadOllamaTags>> = [];
-  let ollamaError: string | undefined;
-  try {
-    tags = await loadOllamaTags(opts.ollamaUrl);
-  } catch (error) {
-    ollamaError = error instanceof Error ? error.message : String(error);
-  }
-  const retainedCatalogBytes = readFileBufferOrNull(opts.paths.catalog);
-  const retainedMetadataBytes = readFileBufferOrNull(opts.paths.catalogMeta);
-  let previous: CatalogFile | null = null;
-  try {
-    previous = retainedCatalogBytes
-      ? parseCatalogJson(retainedCatalogBytes.toString("utf8"))
-      : null;
-  } catch {
-    previous = null;
-  }
-  const catalog = mergeCatalogWithFallback(bundled, tags, previous, Boolean(ollamaError), {
-    spawnableOllamaSlugs: spawnable,
-    supportsSearchTool,
-    applyPatch,
-    advertiseCloudMaxContext: cob.catalog?.advertiseCloudMaxContext === true,
-    activeContextWindow: cob.catalog?.activeContextWindow,
-    autoCompactTokenLimit: cob.catalog?.autoCompactTokenLimit,
-  });
-  if (process.env.COB_SKIP_CATALOG_CHECK !== "1") {
-    try {
-      assertConsumersAcceptCatalog(catalog, sources.validators);
-    } catch (error) {
-      if (error instanceof CatalogConsumerRejectedError) {
-        writeCatalogValidationFailure({
-          metaPath: opts.paths.catalogMeta,
-          candidateBytes: serializeCatalog(catalog),
-          retainedCatalogBytes,
-          retainedMetadataBytes,
-          sources,
-          error,
-        });
-      }
-      if (error instanceof CatalogConsumerRejectedError && opts.keepLastGoodOnReject && previous) {
-        console.error(`[cob] ${error.message}`);
-        console.error("[cob] keeping last known-good catalog; run cob sync after consumers agree");
-        const runtime = readRuntime(opts.paths);
-        writeCobProfile(opts.paths, runtime?.port ?? DEFAULT_PORT);
-        const ollamaCount = previous.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
-        return { catalog: previous, wrote: false, ollamaCount, ollamaError: error.message };
-      }
-      throw error;
-    }
-  }
-  const wrote = writeCatalogIfChanged(opts.paths.catalog, catalog, {
-    allowSearchTool: supportsSearchTool,
-    allowApplyPatch: applyPatch,
-    spawnableOllamaSlugs: spawnable,
-  });
-  writeCatalogProvenance({
-    metaPath: opts.paths.catalogMeta,
-    catalogBytes: readFileSync(opts.paths.catalog),
-    sources,
-  });
-  const runtime = readRuntime(opts.paths);
-  writeCobProfile(opts.paths, runtime?.port ?? DEFAULT_PORT);
-  const ollamaCount = catalog.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
-  return { catalog, wrote, ollamaCount, ollamaError };
 }
 
 export async function prepareProfileAndCatalog(opts: StartOptions = {}): Promise<{
@@ -418,7 +329,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
   const cob = restrictExperimentalToIsolatedHome(resolvedCob, isLiveCodexHome(paths.codexHome));
   const spawnable = resolveSpawnableOllamaSlugs(cob);
   const before = readRootConfig(paths);
-  const synced = await syncCatalogUnlocked({
+  const synced = await syncCatalogControlPlane({
     paths,
     ollamaUrl,
     spawnableOllamaSlugs: spawnable,
@@ -428,6 +339,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     discovery: opts.discovery,
     inspect: opts.inspect,
     keepLastGoodOnReject: true,
+    resolveRuntimePort: () => readRuntime(paths)?.port,
   });
   writeCobProfile(paths, port);
   writeCobToml(paths.cobConfig, {

@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  assertConsumersAcceptCatalog,
   assertOllamaRowsSafe,
   assignFeaturedPriorities,
   buildOllamaEntry,
   isVerifiedCloudOllamaTag,
   listVisibleTopSlugs,
-  loadBundledCatalog,
   ollamaCatalogWindows,
   mergeCatalog,
   mergeCatalogWithFallback,
-} from "./codex/catalog.js";
+} from "./codex/catalog/catalog.js";
+import { assertConsumersAcceptCatalog } from "./codex/catalog/validator.js";
+import { loadBundledCatalog } from "./codex/catalog/source.js";
 import { loadOllamaTags } from "./core/ollama/tags.js";
 import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./codex/constants.js";
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -20,7 +20,7 @@ import { join } from "node:path";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
 import type { OllamaTag } from "./core/ollama/tags.js";
-import type { CodexBinaryRecord } from "./codex/catalog-provenance.js";
+import type { CodexBinaryRecord } from "./codex/catalog/source.js";
 
 function native(partial: JsonObject): JsonObject {
   return {

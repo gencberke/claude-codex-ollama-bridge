@@ -21,7 +21,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { uniqueTempPath } from "./core/atomic.js";
 import { acquireLock, LockTimeoutError, releaseLock, STALE_CORRUPT_MS, withExclusiveLock } from "./core/lock.js";
-import { assertCodexAcceptsCatalog } from "./codex/catalog.js";
+import { assertCodexAcceptsCatalog } from "./codex/catalog/validator.js";
 import {
   isHealthyRuntime,
   isStartLeaseActive,
@@ -642,11 +642,10 @@ describe("overlay rollback and start lease", () => {
     const bin = join(dir, "codex");
     writeFileSync(bin, "#!/bin/sh\nexit 0\n");
     chmodSync(bin, 0o755);
-    const {
-      parseCatalogMetadata,
-      resolveCatalogSources,
-      writeCatalogValidationFailure,
-    } = await import("./codex/catalog-provenance.js");
+    const { parseCatalogMetadata, writeCatalogValidationFailure } = await import(
+      "./codex/catalog/provenance.js"
+    );
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
     const sources = resolveCatalogSources(
       { liveHome: false, platform: "darwin", pathBin: bin },
       { readVersion: () => "codex-cli test" },
@@ -724,7 +723,7 @@ describe("overlay rollback and start lease", () => {
       assert.equal(existsSync(paths.profile), false);
       assert.equal(existsSync(paths.cobConfig), false);
       assert.equal(existsSync(paths.runtime), false);
-      const { parseCatalogMetadata } = await import("./codex/catalog-provenance.js");
+      const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
       const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
       assert.equal(metadata.schema_version, 2);
       assert.equal(metadata.schema_version === 2 ? metadata.catalog_sha256 : "unexpected", null);
@@ -754,7 +753,8 @@ describe("overlay rollback and start lease", () => {
       desktopBins: [accept],
       pathBin: reject,
     };
-    const { resolveCatalogSources, writeCatalogProvenance } = await import("./codex/catalog-provenance.js");
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
+    const { writeCatalogProvenance } = await import("./codex/catalog/provenance.js");
     writeCatalogProvenance({
       metaPath: paths.catalogMeta,
       catalogBytes: catalog,
@@ -965,11 +965,10 @@ describe("overlay rollback and start lease", () => {
     const previousBin = process.env.COB_CODEX_BIN;
     process.env.COB_SKIP_CATALOG_CHECK = "1";
     process.env.COB_CODEX_BIN = bin;
-    const {
-      parseCatalogMetadata,
-      resolveCatalogSources,
-      writeCatalogValidationFailure,
-    } = await import("./codex/catalog-provenance.js");
+    const { parseCatalogMetadata, writeCatalogValidationFailure } = await import(
+      "./codex/catalog/provenance.js"
+    );
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
     const sources = resolveCatalogSources(
       { liveHome: false, platform: "darwin", pathBin: bin },
       { readVersion: () => "codex-cli test" },
@@ -1108,7 +1107,8 @@ describe("overlay rollback and start lease", () => {
     writeFileSync(bin, "#!/bin/sh\nexit 0\n");
     chmodSync(bin, 0o755);
     const failurePath = join(dir, "failure-meta.json");
-    const { resolveCatalogSources, writeCatalogValidationFailure } = await import("./codex/catalog-provenance.js");
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
+    const { writeCatalogValidationFailure } = await import("./codex/catalog/provenance.js");
     writeCatalogValidationFailure({
       metaPath: failurePath,
       candidateBytes: '{"models":[]}',
@@ -1447,7 +1447,8 @@ describe("cob status desktop overlay", () => {
     };
     const catalogText = `${JSON.stringify(catalog, null, 2)}\n`;
     writeFileSync(paths.catalog, catalogText);
-    const { resolveCatalogSources, writeCatalogProvenance } = await import("./codex/catalog-provenance.js");
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
+    const { writeCatalogProvenance } = await import("./codex/catalog/provenance.js");
     const discovery = { liveHome: true, platform: "darwin" as const, desktopBins: [], pathBin: bin };
     writeCatalogProvenance({
       metaPath: paths.catalogMeta,
@@ -1508,7 +1509,8 @@ describe("cob status desktop overlay", () => {
     };
     const catalogText = `${JSON.stringify(catalog, null, 2)}\n`;
     writeFileSync(paths.catalog, catalogText);
-    const { resolveCatalogSources, writeCatalogProvenance } = await import("./codex/catalog-provenance.js");
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
+    const { writeCatalogProvenance } = await import("./codex/catalog/provenance.js");
     const discovery = { liveHome: false, platform: "darwin" as const, desktopBins: [], pathBin: bin };
     writeCatalogProvenance({
       metaPath: paths.catalogMeta,
@@ -1565,11 +1567,10 @@ describe("cob status desktop overlay", () => {
       desktopBins: [accept],
       pathBin: reject,
     };
-    const {
-      parseCatalogMetadata,
-      resolveCatalogSources,
-      writeCatalogProvenance,
-    } = await import("./codex/catalog-provenance.js");
+    const { parseCatalogMetadata, writeCatalogProvenance } = await import(
+      "./codex/catalog/provenance.js"
+    );
+    const { resolveCatalogSources } = await import("./codex/catalog/source.js");
     writeCatalogProvenance({
       metaPath: paths.catalogMeta,
       catalogBytes: previous,
@@ -1658,7 +1659,7 @@ describe("cob status desktop overlay", () => {
       });
       assert.equal(prepared.wrote, false);
       assert.equal(readFileSync(paths.catalog, "utf8"), previous);
-      const { parseCatalogMetadata } = await import("./codex/catalog-provenance.js");
+      const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
       const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
       assert.equal(metadata.schema_version, 2);
       assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
@@ -1714,7 +1715,7 @@ describe("cob status desktop overlay", () => {
       assert.equal(existsSync(paths.catalogMeta), true);
       const diagnostic = readFileSync(paths.catalogMeta, "utf8");
       assert.doesNotMatch(diagnostic, /DO-NOT-PERSIST/);
-      const { parseCatalogMetadata } = await import("./codex/catalog-provenance.js");
+      const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
       const metadata = parseCatalogMetadata(diagnostic);
       assert.equal(metadata.schema_version, 2);
       assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
