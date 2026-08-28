@@ -21,6 +21,7 @@ import {
   sameFileIdentity,
 } from "./codex/catalog/source.js";
 import { serializeCatalog } from "./codex/catalog/catalog.js";
+import { CatalogConsumerRejectedError } from "./codex/catalog/validator.js";
 import type { CatalogFile } from "./codex/types.js";
 
 function tempDir(prefix: string): string {
@@ -324,8 +325,10 @@ describe("catalog provenance sidecar", () => {
       pathBin: validator,
     };
     const sources = resolveCatalogSources(discovery, ioFor());
-    const error = new Error(
+    const rejected = sources.validators.find((record) => record.path === realpathSync(validator))!;
+    const error = new CatalogConsumerRejectedError(
       `Codex rejected cob catalog (path ${realpathSync(validator)} codex-cli test): supports_parallel_tool_calls token=TOP-SECRET-VALUE`,
+      rejected,
     );
     writeCatalogValidationFailure({
       metaPath,
