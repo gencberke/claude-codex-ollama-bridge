@@ -575,3 +575,137 @@ function readOptionalBuffer(path: string): Buffer | undefined {
 function relativeStatePath(stateDir: string, path: string): string {
   return path.slice(stateDir.length + 1);
 }
+
+/**
+ * State-owned checkpoint publishers. One function per replacement semantic;
+ * identity fields (catalog model, upstream model, handoff item) are resolved
+ * by the caller so this layer depends on no wire or route module.
+ */
+
+export type CheckpointPublishContext = {
+  state: ConversationStateStore;
+  requestInput: unknown;
+  requestInputProjection: unknown;
+  baseHistory: StateHistoryItem[];
+  parentResponseId?: string;
+};
+
+export async function publishOllamaCheckpoint(
+  context: CheckpointPublishContext,
+  response: JsonObject,
+  identity: { model: string; upstreamModel: string },
+): Promise<void> {
+  const responseId = typeof response.id === "string" ? response.id : "";
+  if (responseId.length === 0 || !Array.isArray(response.output)) return;
+  const providerInput = createStateHistoryItems(
+    context.requestInputProjection,
+    responseId,
+    "request",
+  );
+  const providerOutput = createStateHistoryItems(response.output, responseId, "response");
+  const history = mergeStateHistory(
+    mergeStateHistory(context.baseHistory, providerInput),
+    providerOutput,
+  );
+  await context.state.publish({
+    responseId,
+    parentResponseId: context.parentResponseId,
+    requestInput: context.requestInput,
+    output: response.output,
+    providerInput,
+    providerOutput,
+    history,
+    responseBody: response,
+    model: identity.model,
+    provenance: {
+      source: "ollama-response",
+      gateway: "cob",
+      upstreamModel: identity.upstreamModel,
+    },
+    isCompactionReplacement: false,
+  });
+}
+
+export async function publishCompactCheckpoint(
+  context: CheckpointPublishContext,
+  response: JsonObject,
+  rawBody: Buffer,
+  identity: { model: string; compactModel: string },
+): Promise<void> {
+  const responseId = typeof response.id === "string" ? response.id : "";
+  if (responseId.length === 0 || !Array.isArray(response.output)) {
+    throw new ConversationStateError(
+      "state_checkpoint_incompatible",
+      "native compaction response cannot be checkpointed; resend the full context",
+    );
+  }
+  const providerInput = createStateHistoryItems(
+    context.requestInputProjection,
+    responseId,
+    "request",
+  );
+  const preCompactionHistory = mergeStateHistory(context.baseHistory, providerInput);
+  // Native encrypted state remains in responseBody/output inside private cob
+  // state, while Ollama receives only this provider-safe replay history.
+  const replacementHistory = preCompactionHistory;
+  await context.state.publish({
+    responseId,
+    parentResponseId: context.parentResponseId,
+    requestInput: context.requestInput,
+    output: response.output,
+    providerInput,
+    providerOutput: [],
+    replacementHistory,
+    history: replacementHistory,
+    responseBody: response,
+    model: identity.model,
+    provenance: {
+      source: "native-compact",
+      gateway: "cob",
+      compactModel: identity.compactModel,
+    },
+    isCompactionReplacement: true,
+    rawCompactBody: rawBody,
+  });
+}
+
+export async function publishOllamaSummaryCheckpoint(
+  context: CheckpointPublishContext,
+  response: JsonObject,
+  rawBody: Buffer,
+  identity: { model: string; compactModel: string; upstreamModel: string },
+  summaryHandoffItem: JsonObject,
+): Promise<void> {
+  const responseId = typeof response.id === "string" ? response.id : "";
+  if (responseId.length === 0 || !Array.isArray(response.output)) {
+    throw new ConversationStateError(
+      "state_checkpoint_incompatible",
+      "Ollama compact response cannot be checkpointed; resend the full context",
+    );
+  }
+  const replacementHistory = createStateHistoryItems(
+    summaryHandoffItem,
+    responseId,
+    "replacement",
+  );
+  await context.state.publish({
+    responseId,
+    parentResponseId: context.parentResponseId,
+    requestInput: context.requestInput,
+    output: response.output,
+    providerInput: [],
+    providerOutput: [],
+    replacementHistory,
+    history: replacementHistory,
+    responseBody: response,
+    model: identity.model,
+    provenance: {
+      source: "ollama-summary",
+      gateway: "cob",
+      compactModel: identity.compactModel,
+      upstreamModel: identity.upstreamModel,
+    },
+    isCompactionReplacement: true,
+    rawCompactBody: rawBody,
+  });
+}
