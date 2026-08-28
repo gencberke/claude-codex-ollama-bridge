@@ -153,10 +153,12 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Live global Codex is cob **0.1.14** after an authorized
-scoped install of tarball SHA-256
-`0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
-(pid **54105**). cob Claude live is a later **0.1.16** global
+child on cob 0.1.6). Live global Codex is cob **0.2.0** (pid **57072** at the
+latest user-reported status). The earlier **0.1.14** scoped install (tarball
+SHA-256
+`0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`,
+pid **54105**) is historical and is no longer the live listener. cob Claude
+live is a later **0.1.16** global
 `cob claude start` on `:18792` (tarball SHA-256
 `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`)
 and does not restart that Codex listener.

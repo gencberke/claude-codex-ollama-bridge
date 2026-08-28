@@ -5,10 +5,11 @@ installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
 Current state (2026-08-27): source on `master` is **0.2.0** and the live global
-CLI/gateway on `:18790` is also **0.2.0**. The current workspace contains an
-uncommitted stabilization diff that has not been packed or installed. Its
-tests and isolated Ollama canaries are not proof that the live global artifact
-contains those fixes. cob Claude remains a separate `:18792` surface. Do not
+CLI/gateway on `:18790` is also **0.2.0**. The stabilization and
+architecture-refactor series is committed on `master` but stays workspace-only:
+no tarball has been packed or installed since the existing 0.2.0 cut, and its
+tests and isolated checks are not proof that the live global artifact contains
+those changes. cob Claude remains a separate `:18792` surface. Do not
 repack 0.1.11–0.1.16 or overwrite the existing 0.2.0 version with different
 bytes; cut a new version before any future authorized install. `package.json`
 stays `"private": true`; do not `npm publish`.
