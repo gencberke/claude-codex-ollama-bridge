@@ -117,4 +117,3 @@ export async function syncCatalogControlPlane(opts: {
   const ollamaCount = catalog.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
   return { catalog, wrote, ollamaCount, ollamaError };
 }
-

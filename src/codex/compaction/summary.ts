@@ -333,4 +333,3 @@ export function extractOllamaCompactSummary(value: unknown): OllamaSummaryExtrac
   }
   return { kind: "ok", text };
 }
-

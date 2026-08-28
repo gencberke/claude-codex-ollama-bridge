@@ -742,4 +742,3 @@ function formatBinary(record: CodexBinaryRecord): string {
 function defaultReadFile(path: string): string {
   return readFileSync(path, "utf8");
 }
-

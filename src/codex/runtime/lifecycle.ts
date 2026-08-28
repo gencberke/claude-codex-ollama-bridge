@@ -1,35 +1,14 @@
 import type { ChildProcess } from "node:child_process";
-import { connect } from "node:net";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { DEFAULT_PORT } from "../constants.js";
 import { DEFAULT_OLLAMA_URL } from "../../core/ollama/constants.js";
-import {
-  mergeCatalogWithFallback,
-  parseCatalogJson,
-  serializeCatalog,
-} from "../catalog/catalog.js";
-import { loadBundledCatalog } from "../catalog/source.js";
-import { writeCatalogIfChanged } from "../catalog/file.js";
 import { syncCatalogControlPlane } from "../catalog/sync.js";
-import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "../catalog/validator.js";
-import { loadOllamaTags } from "../../core/ollama/tags.js";
-import {
-  LIVE_DESKTOP_RESTART_HINT,
-  assessCatalogProvenance,
-  parseCatalogMetadata,
-  shouldPrintDesktopRestartHint,
-  writeCatalogProvenance,
-  writeCatalogValidationFailure,
-} from "../catalog/provenance.js";
-import {
-  discoverCodexBins,
-  resolveCatalogSources,
-  sha256Hex,
-  type CatalogDiscovery,
-  type InspectCodexIo,
-} from "../catalog/source.js";
+import { CatalogConsumerRejectedError } from "../catalog/validator.js";
+import { LIVE_DESKTOP_RESTART_HINT, parseCatalogMetadata, shouldPrintDesktopRestartHint } from "../catalog/provenance.js";
+import { sha256Hex, type CatalogDiscovery, type InspectCodexIo } from "../catalog/source.js";
 import { listenGateway } from "../gateway.js";
+import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "../limits.js";
 import {
   isHealthyRuntime,
   isOurGatewayPid,
@@ -39,21 +18,10 @@ import {
   waitForPidExit,
   waitForPortClosed,
   writeRuntime,
-  type HealthWait,
   type RuntimeState,
 } from "./runtime.js";
-import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "../limits.js";
-import { assertLoopbackHttpUrl } from "../../core/loopback.js";
-import { writeCobProfile } from "../profile.js";
-import {
-  assessDesktopOverlay,
-  loadRootTomlKeys,
-  openaiPortFromToml,
-  summarizeCobStatus,
-  type DesktopOverlayAssessment,
-} from "../root-config.js";
 import { resolvePaths, type CobPaths } from "../paths.js";
-import { detectInstall, formatInstallLine } from "../../core/install-detection.js";
+import { detectInstall } from "../../core/install-detection.js";
 import { isLiveCodexHome } from "../home.js";
 import {
   DEFAULT_CATALOG_POLICY,
@@ -68,25 +36,9 @@ import {
   resolveSpawnableOllamaSlugs,
 } from "../config/resolve.js";
 import { readFileBufferOrNull, writeFileAtomic } from "../../core/atomic.js";
-import {
-  acquireLock,
-  adoptLock,
-  heldLockToken,
-  peekLockRecord,
-  releaseLock,
-  waitForLockAdopted,
-  withExclusiveLock,
-} from "../../core/lock.js";
+import { acquireLock, adoptLock, heldLockToken, releaseLock, waitForLockAdopted, withExclusiveLock } from "../../core/lock.js";
 import { clearConversationState } from "../state/store.js";
-import {
-  cobProcessIdentity,
-  isCobGatewayProcess,
-  isPidAlive,
-  isSameProcess,
-  ownStartKey,
-  processStartKey,
-  reapChild,
-} from "../../core/process-info.js";
+import { isPidAlive, ownStartKey, processStartKey, reapChild } from "../../core/process-info.js";
 import type { CatalogFile } from "../types.js";
 import { isRecord } from "../../core/json.js";
 
@@ -700,10 +652,6 @@ async function rollbackDetachedStart(
   });
 }
 
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function unlinkIfExists(path: string): void {
   try {
