@@ -18,8 +18,8 @@ its post-roster SHA stayed
 `2dd43932be65859c1aa8c1433d9f042a7ff15867c6619eff5a6d8cbcfc725185`.
 Host-network Codex status is `ok`; catalog producer is Desktop-bundled
 `codex-cli 0.150.0-alpha.8`. Historical G12/G14/G17 evidence still belongs to
-the recorded 0.1.x/DeepSeek runs; the workspace stabilization diff below is
-not a new packed live release.
+the recorded 0.1.x/DeepSeek runs; the workspace refactor commits below are
+not a new packed live release and carry no new live claims.
 
 **This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
 `codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
@@ -33,9 +33,9 @@ or steal native slugs to “survive” an update.
 | Surface | Version / note |
 | --- | --- |
 | cob gateway | global **CLI/gateway 0.2.0**, pid **57072**, `127.0.0.1:18790` at the latest user-reported status. cob Claude live remains a separate `:18792` surface and was not changed by this roster operation. |
-| Packed live | global **0.2.0** was already installed before this stabilization task. No tarball was packed or installed in this task; the workspace stream/fallback fixes are not live yet. |
+| Packed live | global **0.2.0** was already installed before the stabilization and architecture work. No tarball has been packed or installed since; none of the workspace refactor is live yet. |
 | Prior live | Historical **0.1.14**, 45-file tarball SHA-256 `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`; pid **54105** is no longer the live listener. |
-| Source | `master` cob **0.2.0** plus an uncommitted stabilization diff: DeepSeek 0731 default, GLM opt-in ladder, catalog fallback, incomplete-SSE fail-closed terminal, and Ollama 0.33.1 review pin. Pack excludes tests, `gate6h`, and `eval-*`. |
+| Source | `master` cob **0.2.0** plus committed workspace-only work: the 0731/GLM spawn stabilization (already in the source cut) and the core/codex/claude architecture refactor (build, packaging, config/CLI/session splits, catalog/state/compaction/runtime decomposition, fail-closed gateway stateDir, dead-contract cleanup). Gates run in the workspace; the live gateway still runs the previously installed global 0.2.0 and none of this is live evidence. Pack excludes tests, `gate6h`, and `eval-*`. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
 | ChatGPT Desktop | bundled `codex-cli` **0.150.0-alpha.8** is the current catalog producer. Earlier gold hops remain historical evidence. |
 | Ollama | **0.33.1** client and daemon; tags include `deepseek-v4-flash:0731-cloud`, `deepseek-v4-flash:cloud`, `glm-5.3-flash:cloud`, and `kimi-k3:cloud`. |

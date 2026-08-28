@@ -83,20 +83,42 @@ function collectViolations(baseDir: string, label: string, violations: string[])
   }
 }
 
+/** Trees to audit: dist output plus the TypeScript sources next to it. */
+function scanBases(): string[] {
+  const bases: string[] = [];
+  if (existsSync(join(rootDir, "core"))) {
+    bases.push(rootDir);
+    const srcDir = join(rootDir, "..", "src");
+    if (existsSync(join(srcDir, "core"))) bases.push(srcDir);
+  } else {
+    bases.push(rootDir);
+  }
+  return bases;
+}
+
 describe("architecture dependency direction", () => {
   it("keeps core self-contained and the two surfaces isolated", () => {
     const violations: string[] = [];
-    const distCore = join(rootDir, "core");
-    if (existsSync(distCore)) {
-      collectViolations(rootDir, "dist", violations);
-      // The compiled tree alone cannot see type-only imports (erased at emit),
-      // so audit the TypeScript sources too when they sit next to dist.
-      const srcDir = join(rootDir, "..", "src");
-      if (existsSync(join(srcDir, "core"))) {
-        collectViolations(srcDir, "src", violations);
+    for (const base of scanBases()) {
+      collectViolations(base, base === rootDir ? "tree" : "src", violations);
+    }
+    assert.deepEqual(violations, []);
+  });
+
+  it("keeps the gateway response module below the HTTP shell", () => {
+    const violations: string[] = [];
+    for (const base of scanBases()) {
+      const responsesPath = join(base, "codex", "gateway", "responses.ts");
+      const responsesJs = join(base, "codex", "gateway", "responses.js");
+      for (const path of [responsesPath, responsesJs]) {
+        if (!existsSync(path)) continue;
+        for (const specifier of importSpecifiers(readFileSync(path, "utf8"))) {
+          const resolved = resolve(dirname(path), specifier);
+          if (/(gateway[\\/])server\.(ts|js)$/.test(resolved)) {
+            violations.push(`${relative(base, path)} -> ${specifier}`);
+          }
+        }
       }
-    } else {
-      collectViolations(rootDir, "src", violations);
     }
     assert.deepEqual(violations, []);
   });

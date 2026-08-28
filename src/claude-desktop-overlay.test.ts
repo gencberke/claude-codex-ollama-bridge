@@ -58,12 +58,14 @@ describe("cob claude desktop overlay", () => {
         inferenceGatewayApiKey: string;
         inferenceModels?: Array<{ name: string }>;
         autoModeEnabled?: boolean;
+        coworkEgressAllowedHosts?: string[];
       };
       const meta = JSON.parse(readFileSync(targets.meta, "utf8")) as { appliedId: string };
       assert.equal(normal.deploymentMode, "3p");
       assert.equal(profile.inferenceGatewayBaseUrl, "http://127.0.0.1:18793");
       assert.equal(profile.inferenceGatewayApiKey, "cob");
       assert.equal(profile.autoModeEnabled, true);
+      assert.deepEqual(profile.coworkEgressAllowedHosts, ["*"]);
       assert.deepEqual(
         (profile.inferenceModels ?? []).map((entry) => entry.name),
         ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-fable-5"],
