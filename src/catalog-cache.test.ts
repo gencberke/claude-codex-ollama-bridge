@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { writeFileAtomic } from "./core/atomic.js";
-import {
-  catalogFileIdentityKey,
-  loadCatalogFile,
-  resetCatalogFileCache,
-} from "./codex/catalog/catalog.js";
+import { catalogFileIdentityKey, loadCatalogFile, resetCatalogFileCache } from "./codex/catalog/file.js";
 
 function writeCatalog(path: string, slugs: string[]): void {
   writeFileSync(path, `${JSON.stringify({ models: slugs.map((slug) => ({ slug })) })}\n`);

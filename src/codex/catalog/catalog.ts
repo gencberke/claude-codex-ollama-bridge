@@ -1,4 +1,3 @@
-import { readFileSync, statSync } from "node:fs";
 import {
   FEATURED_NATIVE_SLUGS,
   GPT_IDENTITY_FIELDS,
@@ -6,7 +5,6 @@ import {
   OLLAMA_CATALOG_CONTEXT_CAP,
   OLLAMA_CATALOG_FIELDS,
 } from "../constants.js";
-import { writeFileAtomic } from "../../core/atomic.js";
 import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "../config/schema.js";
 import {
   evidenceFromOllamaTag,
@@ -61,34 +59,6 @@ export function parseCatalogJson(text: string): CatalogFile {
     throw new Error("catalog JSON must be { models: [] }");
   }
   return { models: parsed.models.filter(isRecord) };
-}
-
-type CatalogFileCache = {
-  path: string;
-  identity: string;
-  catalog: CatalogFile;
-};
-
-let catalogFileCache: CatalogFileCache | undefined;
-
-export function resetCatalogFileCache(): void {
-  catalogFileCache = undefined;
-}
-
-export function catalogFileIdentityKey(path: string): string {
-  const stat = statSync(path);
-  return `${stat.dev}:${stat.ino}:${stat.size}:${Math.round(stat.mtimeMs)}`;
-}
-
-/** Process-local parsed catalog cache keyed by file identity. Not provenance. */
-export function loadCatalogFile(path: string): CatalogFile {
-  const identity = catalogFileIdentityKey(path);
-  if (catalogFileCache && catalogFileCache.path === path && catalogFileCache.identity === identity) {
-    return catalogFileCache.catalog;
-  }
-  const catalog = parseCatalogJson(readFileSync(path, "utf8"));
-  catalogFileCache = { path, identity, catalog };
-  return catalog;
 }
 
 export function listVisibleTopSlugs(models: JsonObject[], limit = 5): string[] {
@@ -551,19 +521,3 @@ export function serializeCatalog(catalog: CatalogFile): string {
   return `${JSON.stringify(catalog, null, 2)}\n`;
 }
 
-export function writeCatalogIfChanged(
-  path: string,
-  catalog: CatalogFile,
-  options?: CatalogSafetyOptions,
-): boolean {
-  assertOllamaRowsSafe(catalog, options);
-  const next = serializeCatalog(catalog);
-  try {
-    const previous = readFileSync(path, "utf8");
-    if (previous === next) return false;
-  } catch {
-    // first write
-  }
-  writeFileAtomic(path, next, 0o600);
-  return true;
-}

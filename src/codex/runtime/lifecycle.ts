@@ -8,9 +8,9 @@ import {
   mergeCatalogWithFallback,
   parseCatalogJson,
   serializeCatalog,
-  writeCatalogIfChanged,
 } from "../catalog/catalog.js";
 import { loadBundledCatalog } from "../catalog/source.js";
+import { writeCatalogIfChanged } from "../catalog/file.js";
 import { syncCatalogControlPlane } from "../catalog/sync.js";
 import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "../catalog/validator.js";
 import { loadOllamaTags } from "../../core/ollama/tags.js";

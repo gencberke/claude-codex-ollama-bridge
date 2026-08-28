@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Readable } from "node:stream";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./constants.js";
 import { DEFAULT_OLLAMA_URL } from "../core/ollama/constants.js";
-import { loadCatalogFile } from "./catalog/catalog.js";
+import { loadCatalogFile } from "./catalog/file.js";
 import { ollamaReasoningLadderForModel } from "./capabilities.js";
 import { decodeRequestBody, RequestDecodeError } from "./decode.js";
 import { forwardNativeResponses, type HeaderMap, type UpstreamFetch } from "./native.js";
