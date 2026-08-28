@@ -14,7 +14,7 @@ import { NATIVE_RESPONSES_URL } from "./codex/constants.js";
 import { DEFAULT_OLLAMA_URL } from "./core/ollama/constants.js";
 import { listenGateway } from "./codex/gateway.js";
 import { isForbiddenOllamaHeader } from "./codex/ollama.js";
-import { ollamaCompactHandoffSkeleton } from "./codex/compaction.js";
+import { ollamaCompactHandoffSkeleton } from "./codex/compaction/summary.js";
 import { assertValidOllamaFollowUpInput } from "./codex/ollama/history.js";
 import { writeCobProfile } from "./codex/profile.js";
 import { resolvePaths } from "./codex/paths.js";

@@ -11,7 +11,7 @@ import { resetCompactAttemptLog } from "./codex/compact-attempt-log.js";
 import { pickForwardHeaders } from "./codex/native.js";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./codex/constants.js";
 import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
-import { ollamaCompactHandoffSkeleton } from "./codex/compaction.js";
+import { ollamaCompactHandoffSkeleton } from "./codex/compaction/summary.js";
 import { assertValidOllamaFollowUpInput, ollamaFollowUpInputError } from "./codex/ollama/history.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./codex/ollama.js";
 import { APPLY_PATCH_TOOL_NAME, COB_APPLY_PATCH_ALIAS } from "./codex/experimental/apply-patch.js";

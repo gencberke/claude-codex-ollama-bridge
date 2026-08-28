@@ -4,7 +4,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ollamaCompactHandoffSkeleton } from "./codex/compaction.js";
+import { ollamaCompactHandoffSkeleton } from "./codex/compaction/summary.js";
 import { ollamaWireUnsafeReason } from "./eval-g8r.js";
 import { finalizeG9, initialG9State, reduceG9 } from "./eval-g9.js";
 import { listenGateway } from "./codex/gateway.js";

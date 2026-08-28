@@ -11,7 +11,7 @@ import {
   OLLAMA_REQUEST_ALLOWLIST,
 } from "./codex/ollama-boundary.js";
 import { isOllamaReject, prepareOllamaWire, sanitizeOllamaPayload } from "./codex/ollama.js";
-import { buildOllamaSummarizerPayload } from "./codex/compaction.js";
+import { buildOllamaSummarizerPayload } from "./codex/compaction/summary.js";
 import { extractOllamaUsage } from "./codex/request-metrics.js";
 import type { JsonObject } from "./core/json.js";
 import { isRecord } from "./core/json.js";

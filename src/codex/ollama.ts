@@ -16,7 +16,7 @@ import {
   stripPlaintextEncryptedContent,
 } from "./encrypted.js";
 import { ollamaUpstreamModel } from "./route.js";
-import { isResponseEnvelope } from "./compaction.js";
+import { isResponseEnvelope } from "./compaction/native.js";
 import { SSE_OMIT_LINE, sseRewriteTransform, type SseObserver } from "./sse.js";
 import { fetchWithHeadersTimeout } from "../core/http/timeouts.js";
 import { OLLAMA_HEADERS_TIMEOUT_MS } from "./limits.js";

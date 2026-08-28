@@ -1,26 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  buildOllamaSummarizerPayload,
-  classifyCompactionTrigger,
-  COB_OLLAMA_COMPACT_INSTRUCTIONS,
-  compactHandoffSectionFlags,
-  formatCompactSectionFlags,
-  incompleteOllamaCompactHandoffError,
-  ollamaCompactHandoffSkeleton,
-  OLLAMA_COMPACT_HANDOFF_SECTIONS,
-  ollamaSummarizerInstructionCopyCount,
-  extractOllamaCompactSummary,
-  findCompactionInputItem,
-  nativeCompactRequest,
-  nativeCompactionResponseError,
-  ollamaSummaryHandoffItem,
-  projectNativeCompactInput,
-  projectOllamaSummarizerHistory,
-  resolveCompactPlan,
-  resolveNativeCompactModel,
-  unsupportedOllamaCompactMediaError,
-} from "./codex/compaction.js";
+import { classifyCompactionTrigger, resolveCompactPlan, resolveNativeCompactModel } from "./codex/compaction/policy.js";
+import { findCompactionInputItem, nativeCompactRequest, nativeCompactionResponseError, projectNativeCompactInput, unsupportedOllamaCompactMediaError } from "./codex/compaction/native.js";
+import { buildOllamaSummarizerPayload, COB_OLLAMA_COMPACT_INSTRUCTIONS, compactHandoffSectionFlags, formatCompactSectionFlags, incompleteOllamaCompactHandoffError, ollamaCompactHandoffSkeleton, OLLAMA_COMPACT_HANDOFF_SECTIONS, ollamaSummarizerInstructionCopyCount, extractOllamaCompactSummary, ollamaSummaryHandoffItem, projectOllamaSummarizerHistory } from "./codex/compaction/summary.js";
 import {
   assertValidOllamaFollowUpInput,
   ollamaFollowUpInputError,

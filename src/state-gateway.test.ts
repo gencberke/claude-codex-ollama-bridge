@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { ConversationStateStore } from "./codex/state/store.js";
 import type { PublishCheckpoint } from "./codex/state/schema.js";
 import { listenGateway } from "./codex/gateway.js";
-import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./codex/compaction.js";
+import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./codex/compaction/summary.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
 

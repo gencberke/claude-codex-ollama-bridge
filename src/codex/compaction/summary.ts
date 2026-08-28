@@ -1,10 +1,8 @@
-import { PREFERRED_NATIVE_COMPACT_SLUGS } from "./constants.js";
-import { OLLAMA_PREFIX } from "../core/ollama/constants.js";
-import type { CompactionPolicy } from "./config/schema.js";
-import { MAX_COB_COMPACT_SUMMARY_BYTES } from "./compact-envelope.js";
-import { isEncryptedFieldName } from "./encrypted.js";
-import type { JsonObject } from "../core/json.js";
-import { isRecord } from "../core/json.js";
+import { isRecord, type JsonObject } from "../../core/json.js";
+import { MAX_COB_COMPACT_SUMMARY_BYTES } from "../compact-envelope.js";
+import type { OllamaCompactEffort } from "./policy.js";
+
+/** Ollama summarizer payload, handoff skeleton, and summary extraction. */
 
 export const OLLAMA_COMPACT_HANDOFF_SECTIONS = [
   "Goal",
@@ -28,83 +26,6 @@ export const COB_OLLAMA_COMPACT_INSTRUCTIONS = [
   ...OLLAMA_COMPACT_HANDOFF_SECTIONS,
 ].join("\n");
 
-const UNSUPPORTED_OLLAMA_COMPACT_MEDIA = new Set([
-  "input_image",
-  "input_file",
-  "image_url",
-  "computer_screenshot",
-  "input_audio",
-  "audio",
-  "image",
-]);
-
-export type CompactPlan =
-  | { kind: "passthrough-native" }
-  | { kind: "summarize-ollama"; compactModel: string }
-  | { kind: "native-for-ollama"; compactModel: string }
-  | { kind: "error"; status: number; code: string; message: string };
-
-export function compactionHeader(provider: string, model: string): string {
-  const rest = model.startsWith(OLLAMA_PREFIX) ? model.slice(OLLAMA_PREFIX.length) : model;
-  return `${provider}/${rest}`;
-}
-
-export function resolveCompactPlan(opts: {
-  threadModel: string;
-  target: "native" | "ollama" | "unknown";
-  policy: CompactionPolicy;
-  nativeSlugs: ReadonlySet<string>;
-}): CompactPlan {
-  if (opts.target === "native") return { kind: "passthrough-native" };
-  if (opts.target !== "ollama") {
-    return {
-      kind: "error",
-      status: 400,
-      code: "unknown_model",
-      message: `Unknown model ${opts.threadModel}; not in the native catalog and not an ollama/ slug.`,
-    };
-  }
-  if (opts.policy.provider !== "native") {
-    return {
-      kind: "error",
-      status: 400,
-      code: "compaction_provider_unsupported",
-      message:
-        "cob compaction.provider must stay native. Ollama /compact is never called. Set compaction.ollama_threads to summarize or native.",
-    };
-  }
-  const ollamaThreads = opts.policy.ollamaThreads ?? "summarize";
-  if (ollamaThreads === "summarize") {
-    const compactModel = opts.policy.ollamaModel ?? opts.threadModel;
-    if (!compactModel.startsWith(OLLAMA_PREFIX)) {
-      return {
-        kind: "error",
-        status: 400,
-        code: "compaction_model_unavailable",
-        message:
-          "Ollama-thread summarize compact requires an ollama/ slug (the thread model, or compaction.ollama_model). Do not reuse compaction.model, which is the native ChatGPT slug.",
-      };
-    }
-    return { kind: "summarize-ollama", compactModel };
-  }
-  const compactModel = resolveNativeCompactModel(opts.policy.model, opts.nativeSlugs);
-  if (!compactModel) {
-    return {
-      kind: "error",
-      status: 400,
-      code: "compaction_model_unavailable",
-      message:
-        "Native compaction requires a catalogued native model. Set compaction.model to a loaded native slug or add one to the cob catalog.",
-    };
-  }
-  return { kind: "native-for-ollama", compactModel };
-}
-
-export const OLLAMA_COMPACT_EFFORTS = ["none", "low", "high", "max"] as const;
-export type OllamaCompactEffort = (typeof OLLAMA_COMPACT_EFFORTS)[number];
-
-/** Legacy DeepSeek-compatible effort constant; omitted effort is model-specific on the wire. */
-export const DEFAULT_OLLAMA_COMPACT_EFFORT = "high" satisfies OllamaCompactEffort;
 
 export function buildOllamaSummarizerPayload(opts: {
   compactModel: string;
@@ -285,7 +206,7 @@ function projectOllamaSummarizerItem(item: unknown): unknown | undefined {
   };
 }
 
-function isEmptyReasoningItem(value: JsonObject): boolean {
+export function isEmptyReasoningItem(value: JsonObject): boolean {
   const hasSummary = Array.isArray(value.summary) && value.summary.length > 0;
   const hasContent = Array.isArray(value.content) && value.content.length > 0;
   return !hasSummary && !hasContent;
@@ -413,163 +334,3 @@ export function extractOllamaCompactSummary(value: unknown): OllamaSummaryExtrac
   return { kind: "ok", text };
 }
 
-export function unsupportedOllamaCompactMediaError(value: unknown, path = "input"): string | undefined {
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i += 1) {
-      const err = unsupportedOllamaCompactMediaError(value[i], `${path}[${i}]`);
-      if (err) return err;
-    }
-    return undefined;
-  }
-  if (!isRecord(value)) return undefined;
-  if (typeof value.type === "string" && UNSUPPORTED_OLLAMA_COMPACT_MEDIA.has(value.type)) {
-    return `${path}: ${value.type} cannot be summarized; resend the full context without images or files`;
-  }
-  for (const [key, nested] of Object.entries(value)) {
-    const err = unsupportedOllamaCompactMediaError(nested, `${path}.${key}`);
-    if (err) return err;
-  }
-  return undefined;
-}
-
-export function resolveNativeCompactModel(
-  configured: string | undefined,
-  nativeSlugs: ReadonlySet<string>,
-): string | undefined {
-  if (configured && configured.trim().length > 0) {
-    const model = configured.trim();
-    return nativeSlugs.has(model) ? model : undefined;
-  }
-  for (const slug of PREFERRED_NATIVE_COMPACT_SLUGS) {
-    if (nativeSlugs.has(slug)) return slug;
-  }
-  return nativeSlugs.values().next().value;
-}
-
-export type CompactionTriggerResult =
-  | { kind: "none" }
-  | { kind: "trigger"; inputWithoutTrigger: unknown[] }
-  | { kind: "error"; status: number; code: string; message: string };
-
-/**
- * Classify the v2 compaction trigger before any provider-specific rewriting.
- * The trigger is transient and must never enter the Ollama transcript or a
- * durable checkpoint history.
- */
-export function classifyCompactionTrigger(payload: JsonObject): CompactionTriggerResult {
-  if (!Array.isArray(payload.input)) return { kind: "none" };
-  const triggerIndexes = payload.input.flatMap((item, index) =>
-    isRecord(item) && item.type === "compaction_trigger" ? [index] : [],
-  );
-  if (triggerIndexes.length === 0) return { kind: "none" };
-  if (triggerIndexes.length !== 1 || triggerIndexes[0] !== payload.input.length - 1) {
-    return {
-      kind: "error",
-      status: 400,
-      code: "invalid_compaction_trigger",
-      message: "Responses compaction requires exactly one terminal compaction_trigger input item.",
-    };
-  }
-  return { kind: "trigger", inputWithoutTrigger: payload.input.slice(0, -1) };
-}
-
-export function findCompactionInputItem(payload: JsonObject): JsonObject | undefined {
-  if (!Array.isArray(payload.input)) return undefined;
-  return payload.input.find(
-    (item): item is JsonObject => isRecord(item) && item.type === "compaction",
-  );
-}
-
-/**
- * Validate the completed response returned by the native v2 compactor. The
- * encrypted payload is intentionally opaque: cob checks shape and presence,
- * never attempts to decrypt or manufacture replacement ciphertext.
- */
-export function nativeCompactionResponseError(value: unknown): string | undefined {
-  const envelope = isRecord(value) && isRecord(value.response) ? value.response : value;
-  if (!isRecord(envelope)) return "native compaction response is not an object";
-  if (envelope.status !== "completed") {
-    return `native compaction response status is ${typeof envelope.status === "string" ? envelope.status : "missing"}`;
-  }
-  if (!Array.isArray(envelope.output)) return "native compaction response has no output array";
-  const items = envelope.output.filter(
-    (item): item is JsonObject => isRecord(item) && item.type === "compaction",
-  );
-  if (items.length !== 1) {
-    return `native compaction response must contain exactly one compaction output item; got ${items.length}`;
-  }
-  const encrypted = items[0]?.encrypted_content;
-  if (typeof encrypted !== "string" || encrypted.trim().length === 0) {
-    return "native compaction output is missing encrypted_content";
-  }
-  if (typeof envelope.id !== "string" || envelope.id.trim().length === 0) {
-    return "native compaction response is missing a response id";
-  }
-  return undefined;
-}
-
-/**
- * Native Responses compaction rejects assistant `input_text` (`output_text` or
- * `refusal` only). Cob stores Ollama-safe history, so restore assistant content
- * types before the ChatGPT compact call. User/developer messages stay
- * `input_text`. Ciphertext is never forwarded.
- *
- * Ollama-thread compact uses `store: false` (the v2 compactor rejects stored
- * responses). Codex still embeds item ids (`rs_…`, `msg_…`) from the local
- * thread; ChatGPT then 404s looking them up. Strip those ids, drop
- * id-only references, and keep in-request `call_id` pairing.
- */
-export function projectNativeCompactInput(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    const next: unknown[] = [];
-    for (const item of value) {
-      const projected = projectNativeCompactInput(item);
-      if (shouldDropNativeCompactItem(projected)) continue;
-      next.push(projected);
-    }
-    return next;
-  }
-  if (!isRecord(value)) return value;
-  const next: JsonObject = {};
-  for (const [key, nested] of Object.entries(value)) {
-    if (isEncryptedFieldName(key)) continue;
-    next[key] = projectNativeCompactInput(nested);
-  }
-  if (typeof next.type === "string") {
-    delete next.id;
-  }
-  if (next.type === "message" && next.role === "assistant" && Array.isArray(next.content)) {
-    next.content = next.content.map((part) => {
-      if (!isRecord(part) || part.type !== "input_text") return part;
-      return { ...part, type: "output_text" };
-    });
-  }
-  return next;
-}
-
-function shouldDropNativeCompactItem(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  if (value.type === "item_reference") return true;
-  if (value.type !== "reasoning") return false;
-  return isEmptyReasoningItem(value);
-}
-
-export function nativeCompactRequest(payload: JsonObject, compactModel: string): JsonObject {
-  const next: JsonObject = {
-    ...payload,
-    model: compactModel,
-  };
-  delete next.previous_response_id;
-  // The ChatGPT v2 compactor rejects stored responses. Native-thread
-  // passthrough remains byte-for-byte; this applies only to Ollama reroutes.
-  next.store = false;
-  return next;
-}
-
-export function isResponseEnvelope(value: JsonObject): boolean {
-  return (
-    value.object === "response" ||
-    value.object === "response.compaction" ||
-    Array.isArray(value.output)
-  );
-}

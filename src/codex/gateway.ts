@@ -40,24 +40,24 @@ import {
 import { assertLoopbackBindHost } from "../core/loopback.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "./route.js";
 import type { CompactionPolicy, NativePlaintextSpawnPolicy } from "./config/schema.js";
+import { classifyCompactionTrigger, compactionHeader, resolveCompactPlan } from "./compaction/policy.js";
 import {
-  classifyCompactionTrigger,
-  compactionHeader,
-  findCompactionInputItem,
-  nativeCompactRequest,
-  nativeCompactionResponseError,
-  projectNativeCompactInput,
-  resolveCompactPlan,
-  isResponseEnvelope,
   buildOllamaSummarizerPayload,
   compactHandoffSectionFlags,
   incompleteOllamaCompactHandoffError,
   extractOllamaCompactSummary,
   formatCompactSectionFlags,
-  unsupportedOllamaCompactMediaError,
   ollamaSummaryHandoffItem,
   projectOllamaSummarizerHistory,
-} from "./compaction.js";
+} from "./compaction/summary.js";
+import {
+  findCompactionInputItem,
+  isResponseEnvelope,
+  nativeCompactRequest,
+  nativeCompactionResponseError,
+  projectNativeCompactInput,
+  unsupportedOllamaCompactMediaError,
+} from "./compaction/native.js";
 import { ollamaFollowUpInputError, projectOllamaInputValue } from "./ollama/history.js";
 import {
   CobCompactEnvelopeError,
