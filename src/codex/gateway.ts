@@ -106,7 +106,6 @@ import type { ToolSearchBridge } from "./tool-search.js";
 import { ConversationStateError, type StateHistoryItem } from "./state/schema.js";
 import { ConversationStateStore } from "./state/store.js";
 import { createStateHistoryItems, mergeStateHistory, stateHistoryValues } from "./state/history.js";
-import { resolvePaths } from "./paths.js";
 import { ollamaUpstreamModel } from "./route.js";
 
 const HOP_BY_HOP = new Set([
@@ -122,7 +121,7 @@ const HOP_BY_HOP = new Set([
   "content-length",
 ]);
 
-export type GatewayOptions = {
+export type GatewayOptionsBase = {
   host?: string;
   port: number;
   ollamaUrl?: string;
@@ -142,8 +141,6 @@ export type GatewayOptions = {
   /** @deprecated one-release alias for headersMs */
   connectMs?: number;
   idleMs?: number;
-  stateDir?: string;
-  stateStore?: ConversationStateStore;
   stateRetention?: {
     maxNodes?: number;
     maxHeads?: number;
@@ -151,6 +148,14 @@ export type GatewayOptions = {
     maxAgeMs?: number;
   };
 };
+
+/**
+ * At least one of stateDir / stateStore is required: the gateway never
+ * guesses which codex home it persists checkpoints into.
+ */
+export type GatewayOptions =
+  | (GatewayOptionsBase & { stateDir: string; stateStore?: ConversationStateStore })
+  | (GatewayOptionsBase & { stateStore: ConversationStateStore; stateDir?: string });
 
 export function createGateway(options: GatewayOptions): Server {
   if (options.stateDir === undefined && options.stateStore === undefined) {

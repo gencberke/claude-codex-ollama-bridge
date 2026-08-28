@@ -142,9 +142,10 @@ function t2Roster(): void {
 async function t4EncryptedNeverHitsOllama(): Promise<void> {
   let ollamaHits = 0;
   const port = await freePort();
+  const stateDir = mkdtempSync(join(tmpdir(), "cob-smoke-state-"));
   const server = await listenGateway({
     port,
-    stateDir: mkdtempSync(join(tmpdir(), "cob-smoke-state-")),
+    stateDir,
     ollamaUrl: "http://127.0.0.1:9",
     ollamaFetch: async () => {
       ollamaHits += 1;
@@ -179,6 +180,7 @@ async function t4EncryptedNeverHitsOllama(): Promise<void> {
     if (ollamaHits !== 0) throw new Error("Ollama fetch was invoked");
   } finally {
     await closeServer(server);
+    rmSync(stateDir, { recursive: true, force: true });
   }
 }
 
@@ -190,8 +192,10 @@ async function gptToGptGuardrail(): Promise<void> {
   let nativeHits = 0;
   let ollamaHits = 0;
   const port = await freePort();
+  const stateDir = mkdtempSync(join(tmpdir(), "cob-smoke-state-"));
   const server = await listenGateway({
     port,
+    stateDir,
     catalog: {
       models: [{ slug: "gpt-5.6-luna" }],
     },
@@ -227,6 +231,7 @@ async function gptToGptGuardrail(): Promise<void> {
     if (ollamaHits !== 0) throw new Error("GPT request leaked to Ollama");
   } finally {
     await closeServer(server);
+    rmSync(stateDir, { recursive: true, force: true });
   }
 }
 
@@ -268,7 +273,8 @@ function profilePinsContract(): void {
 
 async function t3LiveOllama(ollamaUrl: string): Promise<void> {
   const port = await freePort();
-  const server = await listenGateway({ port, ollamaUrl, stateDir: mkdtempSync(join(tmpdir(), "cob-smoke-state-")) });
+  const stateDir = mkdtempSync(join(tmpdir(), "cob-smoke-state-"));
+  const server = await listenGateway({ port, ollamaUrl, stateDir });
   try {
     const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
       method: "POST",
@@ -297,6 +303,7 @@ async function t3LiveOllama(ollamaUrl: string): Promise<void> {
     }
   } finally {
     await closeServer(server);
+    rmSync(stateDir, { recursive: true, force: true });
   }
 }
 

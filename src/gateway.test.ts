@@ -12,6 +12,7 @@ import { pickForwardHeaders } from "./codex/native.js";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./codex/constants.js";
 import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
 import { serializeCatalog } from "./codex/catalog/catalog.js";
+import type { GatewayOptions } from "./codex/gateway.js";
 import { ollamaCompactHandoffSkeleton } from "./codex/compaction/summary.js";
 import { assertValidOllamaFollowUpInput, ollamaFollowUpInputError } from "./codex/ollama/history.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./codex/ollama.js";
@@ -137,10 +138,8 @@ async function freePort(): Promise<number> {
 
 describe("gateway", () => {
   it("refuses to start without an explicit stateDir or stateStore", () => {
-    assert.throws(
-      () => createGateway({ port: 0, catalog: TEST_CATALOG }),
-      /refusing to guess the codex home/,
-    );
+    const unowned = { port: 0, catalog: TEST_CATALOG } as unknown as GatewayOptions;
+    assert.throws(() => createGateway(unowned), /refusing to guess the codex home/);
   });
 
   it("rejects Chat Completions on the Ollama path without translating", () => {

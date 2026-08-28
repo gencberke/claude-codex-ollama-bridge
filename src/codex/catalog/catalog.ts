@@ -520,4 +520,3 @@ function hasInstructionsTemplate(model: JsonObject): boolean {
 export function serializeCatalog(catalog: CatalogFile): string {
   return `${JSON.stringify(catalog, null, 2)}\n`;
 }
-

@@ -10,7 +10,7 @@ import {
   mergeCatalog,
   mergeCatalogWithFallback,
 } from "./codex/catalog/catalog.js";
-import { assertConsumersAcceptCatalog } from "./codex/catalog/validator.js";
+import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "./codex/catalog/validator.js";
 import { loadBundledCatalog } from "./codex/catalog/source.js";
 import { loadOllamaTags } from "./core/ollama/tags.js";
 import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./codex/constants.js";
@@ -542,7 +542,12 @@ describe("consumer catalog validation", () => {
     assert.doesNotThrow(() => assertConsumersAcceptCatalog({ models: [{ slug: "gpt-x" }] }, [consumers[0]!]));
     assert.throws(
       () => assertConsumersAcceptCatalog({ models: [{ slug: "gpt-x" }] }, consumers),
-      /rejected cob catalog \(path .*bad field context_window/,
+      (error: unknown) => {
+        assert.ok(error instanceof CatalogConsumerRejectedError);
+        assert.equal(error.consumer.path, reject);
+        assert.match(error.message, /rejected cob catalog \(path .*bad field context_window/);
+        return true;
+      },
     );
   });
 });
