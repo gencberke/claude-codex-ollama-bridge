@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -30,8 +31,8 @@ function listModules(dir: string): string[] {
   return out;
 }
 
-function areaOf(file: string): Area | undefined {
-  const rel = relative(rootDir, file);
+function areaOf(baseDir: string, file: string): Area | undefined {
+  const rel = relative(baseDir, file);
   for (const area of AREAS) {
     if (rel === area || rel.startsWith(`${area}/`)) return area;
   }
@@ -53,9 +54,9 @@ function importSpecifiers(text: string): string[] {
   return specifiers;
 }
 
-function targetArea(fromFile: string, specifier: string): Area | undefined {
+function targetArea(baseDir: string, fromFile: string, specifier: string): Area | undefined {
   if (!specifier.startsWith(".")) return undefined;
-  return areaOf(resolve(dirname(fromFile), specifier));
+  return areaOf(baseDir, resolve(dirname(fromFile), specifier));
 }
 
 function forbidden(from: Area, to: Area): boolean {
@@ -70,12 +71,12 @@ function collectViolations(baseDir: string, label: string, violations: string[])
     const areaDir = join(baseDir, area);
     if (!existsSync(areaDir)) continue;
     for (const file of listModules(areaDir)) {
-      const from = areaOf(file);
+      const from = areaOf(baseDir, file);
       if (!from) continue;
       for (const specifier of importSpecifiers(readFileSync(file, "utf8"))) {
-        const to = targetArea(file, specifier);
+        const to = targetArea(baseDir, file, specifier);
         if (to && forbidden(from, to)) {
-          violations.push(`${label}/${relative(rootDir, file)} -> ${specifier}`);
+          violations.push(`${label}/${relative(baseDir, file)} -> ${specifier}`);
         }
       }
     }
@@ -98,5 +99,24 @@ describe("architecture dependency direction", () => {
       collectViolations(rootDir, "src", violations);
     }
     assert.deepEqual(violations, []);
+  });
+
+  it("flags a forbidden type-only cross-surface import in scanned sources", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "cob-arch-fixture-"));
+    try {
+      mkdirSync(join(fixture, "claude"), { recursive: true });
+      mkdirSync(join(fixture, "codex"), { recursive: true });
+      writeFileSync(join(fixture, "codex", "target.ts"), "export type Secret = 1;\n");
+      writeFileSync(
+        join(fixture, "claude", "bad.ts"),
+        'import type { Secret } from "../codex/target.js";\nexport const use = (): unknown => null;\n',
+      );
+      const violations: string[] = [];
+      collectViolations(fixture, "fixture", violations);
+      assert.equal(violations.length, 1);
+      assert.match(violations[0]!, /fixture\/claude\/bad\.ts -> \.\.\/codex\/target\.js/);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });

@@ -118,8 +118,26 @@ export async function startClaudeGatewayDetached(opts: {
     throw new Error("internal error: detached claude start lost the child process");
   }
   child.unref();
-  const runtime = await waitForClaudeRuntime(opts.paths, opts.port);
-  return { alreadyRunning: false, runtime };
+  const childPid = child.pid;
+  try {
+    const runtime = await waitForClaudeRuntime(opts.paths, { pid: childPid, port: opts.port });
+    await acquireLock(opts.paths.lock);
+    try {
+      const current = readClaudeRuntime(opts.paths);
+      if (!current || current.pid !== childPid || current.port !== runtime.port) {
+        throw new Error("cob claude start lost its gateway runtime before commit");
+      }
+      if (!isPidAlive(childPid) || !(await isClaudeHealthy(current.port))) {
+        throw new Error("cob claude start commit failed the health check");
+      }
+    } finally {
+      releaseLock(opts.paths.lock);
+    }
+    return { alreadyRunning: false, runtime };
+  } catch (error) {
+    await removeClaudeChildRuntime(opts.paths, childPid);
+    throw error;
+  }
 }
 
 export async function stopClaudeGateway(
@@ -219,16 +237,54 @@ function writeClaudeRuntime(paths: ClaudePaths, runtime: ClaudeRuntime): void {
   }
 }
 
-async function waitForClaudeRuntime(paths: ClaudePaths, port: number): Promise<ClaudeRuntime> {
+async function waitForClaudeRuntime(
+  paths: ClaudePaths,
+  expected: { pid: number; port: number },
+): Promise<ClaudeRuntime> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const runtime = readClaudeRuntime(paths);
-    if (runtime && isPidAlive(runtime.pid) && (await isClaudeHealthy(runtime.port))) {
-      return runtime;
+    if (runtime) {
+      if (runtime.pid !== expected.pid && isPidAlive(runtime.pid)) {
+        throw new Error(
+          `cob claude start found a foreign gateway runtime (pid ${runtime.pid}, expected ${expected.pid})`,
+        );
+      }
+      const portMatches = expected.port <= 0 || runtime.port === expected.port;
+      if (runtime.pid === expected.pid && portMatches && isPidAlive(runtime.pid) && (await isClaudeHealthy(runtime.port))) {
+        return runtime;
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`cob claude did not become healthy on 127.0.0.1:${port}`);
+  throw new Error(`cob claude did not become healthy on 127.0.0.1:${expected.port}`);
+}
+
+/** Removes only the runtime/pid files that still belong to the failed start's own child. */
+async function removeClaudeChildRuntime(paths: ClaudePaths, childPid: number): Promise<void> {
+  if (isPidAlive(childPid)) {
+    try {
+      process.kill(childPid, "SIGTERM");
+    } catch {
+      // already gone
+    }
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && isPidAlive(childPid)) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (isPidAlive(childPid)) {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        // ignore
+      }
+    }
+  }
+  const runtime = readClaudeRuntime(paths);
+  if (!runtime || runtime.pid === childPid) {
+    unlinkIfExists(paths.pid);
+    unlinkIfExists(paths.runtime);
+  }
 }
 
 async function isClaudeHealthy(port: number): Promise<boolean> {
