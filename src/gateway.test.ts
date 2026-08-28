@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { connect, createServer, type AddressInfo } from "node:net";
 import { zstdCompressSync } from "node:zlib";
-import { listenGateway } from "./codex/gateway.js";
+import {listenGateway, createGateway } from "./codex/gateway.js";
 import { resetCompactAttemptLog } from "./codex/compact-attempt-log.js";
 import { pickForwardHeaders } from "./codex/native.js";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./codex/constants.js";
@@ -136,6 +136,13 @@ async function freePort(): Promise<number> {
 }
 
 describe("gateway", () => {
+  it("refuses to start without an explicit stateDir or stateStore", () => {
+    assert.throws(
+      () => createGateway({ port: 0, catalog: TEST_CATALOG }),
+      /refusing to guess the codex home/,
+    );
+  });
+
   it("rejects Chat Completions on the Ollama path without translating", () => {
     const rejection = rejectOllamaRequest({
       model: "ollama/deepseek-v4-flash:cloud",
