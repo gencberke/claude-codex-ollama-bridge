@@ -82,6 +82,20 @@ Ask the parent for `cob-deepseek-0731`, not built-in Haiku. Native Claude ids
 (`opus` / `sonnet` / `haiku` / `fable` / `claude-*`) stay on Anthropic.
 Do not set `ANTHROPIC_AUTH_TOKEN=ollama`.
 
+Ollama-routed `count_tokens` requests are answered locally (a bytes/4
+estimate) and never forwarded to Ollama. A `<!-- cob-route: model -->`
+comment in the system prompt rewrites the request model, restricted to the
+spawn allowlist (`deepseek-v4-flash:0731-cloud`); native or off-allowlist
+targets are ignored. `cob claude start` generates a per-install 256-bit
+Desktop gateway token and `--desktop` writes it into the Claude Desktop 3P
+profile; only a request carrying that exact token triggers Claude Code
+credential injection (macOS Keychain or env fallback). Missing, stale, or
+placeholder credentials — including the retired static `"cob"` key — are
+rejected locally with 401 and never reach the credential reader.
+`--desktop` requires macOS or Windows, and
+`--dev --desktop` still writes the real Claude Desktop 3P overlay (pointed
+at the dev port) — use it only for an authorized isolated trial.
+
 ### cob Claude — Claude Desktop 3P
 
 ```bash
@@ -141,7 +155,10 @@ not serve Codex's `web.run` requests. cob allowlists only
 `POST /v1/alpha/search`, forwards the Codex JSON and allowlisted ChatGPT auth /
 turn headers to the native ChatGPT Codex endpoint, and relays the native status,
 headers, and body. It does not rewrite the request model or fall back to Ollama.
-Every other search-like or unknown `/v1/*` route remains closed.
+Every other search-like or unknown `/v1/*` route remains closed. The gateway
+also answers `GET /v1/models` with the catalog rows, rejects Responses over
+WebSocket with 426 `upgrade_required`, and refuses a model that is neither a
+catalogued native slug nor `ollama/*` with 400 `unknown_model`.
 
 On the Ollama Responses path, cob snapshots the final outbound `tools[]` after
 deferred-tool promotion and the request allowlist. A client-executed
@@ -177,18 +194,20 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 | --- | --- |
 | `cob start` | Spawn `cob serve` if needed. Holds the cob lock until the child has written overlays and is healthy. Live install uses `~/.codex` and port 18790 |
 | `cob start --dev` | Isolated `$HOME/.codex-cob-dev` and port 18791. Copies `auth.json` if missing. Does not touch live Desktop overlays |
+| `cob start --foreground` | Run the gateway in the foreground instead of spawning `cob serve` |
 | `cob stop` | Stop the gateway. Leaves the profile in place |
 | `cob restore` | Stop, then delete profile + catalog + catalog metadata + cob state. Root config is untouched |
 | `cob sync` | Refresh `cob-catalog.json` from the selected Codex producer (`COB_CODEX_BIN`, live Desktop bundle, or PATH) + Ollama `/api/tags`. Writes `cob-catalog.meta.json`. A running gateway reloads the catalog on the next request |
 | `cob status` | First line `cob: ok\|ready\|broken\|absent\|unreadable\|stale\|unknown`; exit 1 if cob, the Desktop overlay, or catalog provenance needs action. Read-only overlay + sidecar check. Does not spawn Codex or probe Ollama. After reboot or a dead gateway: `cob start` |
 | `cob smoke` | Catalog, roster, encrypted-content, restore, and native passthrough checks. `cob smoke --live` also pings Ollama through the gateway |
 | `cob pack` | Workspace only: production `tsc` + `npm pack` (no `*.test.js` in the tarball) |
-| `cob version` | Print `cob <version> (global\|workspace)` |
+| `cob version` | Print `cob <version> (global\|workspace\|unknown)` |
 | `cob claude start` | Live cob Claude Messages loopback (`~/.claude-cob`, port 18792). Global install. Does not write `~/.claude/settings.json`. Not ChatGPT Desktop gold |
 | `cob claude start --desktop` | Same loopback, plus cob-owned Claude Desktop 3P overlay and cob-owned `~/.claude/agents/cob-*.md` (snapshot then write). Restore reverts both. Never `ollama launch` or nativeAlias |
 | `cob claude start --dev` | Isolated cob Claude (`~/.claude-cob-dev`, port 18793). Workspace checkouts. |
 | `cob claude agents --dir .` | Writes cob-owned `cob-deepseek-0731.md` into this project's `.claude/agents`; it routes to the default `deepseek-v4-flash:0731-cloud` child. Refuses `~/.claude`. Ask the parent for that subagent, not built-in haiku |
 | `cob claude status` / `stop` / `restore` | cob-owned Claude runtime; restore also reverts Desktop overlay and user-agents snapshots. Never `~/.claude/settings.json` |
+| `cob claude sync` | No-op: cob claude has no catalog sync |
 
 Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation, spawn, workspace R/W, compaction, restart, and restore procedures plus gold-standard metrics are in [LIVE-TESTING.md](./LIVE-TESTING.md). The official spawn harness is `COB_LIVE_SUBAGENT=1`; do not pass `--ignore-user-config`, and keep Codex stdin closed.
 
@@ -308,6 +327,11 @@ opt-in, and `auto_compact_token_limit` is emitted only when the native Codex
 skeleton already supports that field. Exact measurements: [LIVE-TESTING.md](./LIVE-TESTING.md).
 
 `provider = "ollama"` and `provider = "disabled"` are no longer valid; cob reports a migration error instead of converting them silently. `--compaction-model` is still accepted (native ChatGPT slug). `--compaction-provider`, if passed, must be `native`. Envelope details: [COMPACTION.md](./COMPACTION.md).
+
+Every policy key above also has a `COB_*` environment override (for example
+`COB_COMPACTION_OLLAMA_THREADS`, `COB_SUBAGENT_MODELS`,
+`COB_ACTIVE_CONTEXT_WINDOW`, `COB_NATIVE_PLAINTEXT_SPAWN`); see
+`src/codex/config/resolve.ts` for the full list.
 
 ## Durable Ollama state
 

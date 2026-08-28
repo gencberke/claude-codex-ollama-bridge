@@ -616,7 +616,10 @@ async function handleOllamaSummaryCompact(
   }
   const incomplete = incompleteOllamaCompactHandoffError(extracted.text);
   if (incomplete) {
-    console.error(`[cob] ollama compact failed code=${incomplete.code} ${formatCompactAttemptLog(compactNote)}`);
+    const usage = extractOllamaUsage(summarizerResponse);
+    console.error(
+      `[cob] ollama compact failed code=${incomplete.code} summary_bytes=${Buffer.byteLength(extracted.text, "utf8")} effort=${compactEffort} sections=${formatCompactSectionFlags(compactHandoffSectionFlags(extracted.text))} ${usage ? formatOllamaUsage(usage) : "tokens=omitted"} ${formatCompactAttemptLog(compactNote)}`,
+    );
     jsonError(res, 400, incomplete.code, incomplete.message, { requires_full_context: true });
     return;
   }

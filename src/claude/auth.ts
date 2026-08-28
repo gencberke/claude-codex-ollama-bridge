@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./constants.js";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 export type ClaudeUpstreamAuth = {
   authorization?: string;
@@ -9,13 +9,27 @@ export type ClaudeUpstreamAuth = {
 
 export type ClaudeAuthReader = () => ClaudeUpstreamAuth | undefined;
 
-const PLACEHOLDER_KEYS = new Set([CLAUDE_DESKTOP_GATEWAY_KEY, "ollama"]);
 const CLAUDE_CODE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 const OAUTH_BETA = "oauth-2025-04-20";
+/** Placeholder keys older cob Desktop profiles sent. Never valid credentials. */
+const LEGACY_GATEWAY_KEYS = new Set(["cob", "ollama"]);
+/** cob generates 64-hex-char desktop tokens; real Claude credentials never look like this. */
+const DESKTOP_TOKEN_SHAPE = /^[0-9a-f]{64}$/;
 
-export function isPlaceholderGatewayCredential(value: string): boolean {
-  const trimmed = value.trim().toLowerCase();
-  return trimmed.length === 0 || PLACEHOLDER_KEYS.has(trimmed);
+/** Length-safe constant-time string comparison via SHA-256 digests. */
+export function timingSafeTokenEqual(a: string, b: string): boolean {
+  const da = createHash("sha256").update(a, "utf8").digest();
+  const db = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(da, db);
+}
+
+export function isDesktopShapedToken(value: string): boolean {
+  return DESKTOP_TOKEN_SHAPE.test(value);
+}
+
+export function isDesktopGatewayCredential(credential: string, desktopToken: string | undefined): boolean {
+  if (!desktopToken || desktopToken.length === 0 || credential.length === 0) return false;
+  return timingSafeTokenEqual(credential, desktopToken);
 }
 
 export function incomingAnthropicCredential(headers: Record<string, string>): string {
@@ -28,18 +42,31 @@ export function incomingAnthropicCredential(headers: Record<string, string>): st
 
 export function resolveAnthropicUpstreamHeaders(
   incoming: Record<string, string>,
-  reader: ClaudeAuthReader = readClaudeCodeAuth,
+  opts: { desktopToken?: string; reader?: ClaudeAuthReader } = {},
 ): Record<string, string> {
   const credential = incomingAnthropicCredential(incoming);
-  if (!isPlaceholderGatewayCredential(credential)) {
-    return incoming;
+  if (isDesktopGatewayCredential(credential, opts.desktopToken)) {
+    const injected = opts.reader?.();
+    if (!injected) {
+      throw new ClaudeAnthropicAuthError(
+        "cob claude could not resolve Claude Code credentials for the Desktop gateway token",
+      );
+    }
+    return withInjectedCredentials(incoming, injected);
   }
-  const injected = reader();
-  if (!injected) {
+  if (
+    credential.length === 0 ||
+    LEGACY_GATEWAY_KEYS.has(credential.trim().toLowerCase()) ||
+    isDesktopShapedToken(credential)
+  ) {
     throw new ClaudeAnthropicAuthError(
-      "cob claude needs Claude Code credentials for Anthropic routes when Claude Desktop sends the cob gateway placeholder",
+      "cob claude Anthropic routes need the configured Desktop gateway token or real Claude credentials; missing and placeholder credentials are rejected",
     );
   }
+  return incoming;
+}
+
+function withInjectedCredentials(incoming: Record<string, string>, injected: ClaudeUpstreamAuth): Record<string, string> {
   const headers = { ...incoming };
   delete headers.authorization;
   delete headers["x-api-key"];
@@ -58,11 +85,11 @@ export function readClaudeCodeAuth(
   const keychain = keychainReader();
   if (keychain) return keychain;
   const authToken = env.ANTHROPIC_AUTH_TOKEN?.trim();
-  if (authToken && !isPlaceholderGatewayCredential(authToken)) {
+  if (authToken && !LEGACY_GATEWAY_KEYS.has(authToken.toLowerCase())) {
     return authorizationFromToken(authToken);
   }
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
-  if (apiKey && !isPlaceholderGatewayCredential(apiKey)) {
+  if (apiKey && !LEGACY_GATEWAY_KEYS.has(apiKey.toLowerCase())) {
     return { "x-api-key": apiKey };
   }
   return undefined;

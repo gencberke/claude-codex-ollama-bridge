@@ -1349,6 +1349,7 @@ describe("gateway", () => {
             object: "response",
             status: "completed",
             output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "plain recap" }] }],
+            usage: { input_tokens: 123, output_tokens: 7, total_tokens: 130 },
           }),
           { status: 200 },
         );
@@ -1373,7 +1374,12 @@ describe("gateway", () => {
       assert.equal(body.error?.code, "compaction_summary_incomplete");
       assert.equal(body.error?.requires_full_context, true);
       assert.equal(ollamaHits, 1);
-      assert.match(logs.join("\n"), /ollama compact failed code=compaction_summary_incomplete compact_group=[0-9a-f]{8} compact_attempt=/);
+      const joined = logs.join("\n");
+      assert.match(
+        joined,
+        /ollama compact failed code=compaction_summary_incomplete summary_bytes=11 effort=omitted sections=Goal:0,Constraints:0,Completed:0,Pending:0,Decisions:0,Tool_state:0,Verification_evidence:0 in=123 out=7 cache=- total=130 prompt_eval_n=- prompt_eval_ms=- eval_ms=- compact_group=[0-9a-f]{8} compact_attempt=/,
+      );
+      assert.equal(joined.includes("plain recap"), false);
     } finally {
       console.error = originalError;
       await new Promise<void>((resolve, reject) => {

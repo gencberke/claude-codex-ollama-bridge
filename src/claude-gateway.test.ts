@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { request as httpRequest } from "node:http";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { listenClaudeGateway } from "./claude/gateway.js";
 import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
@@ -14,7 +17,11 @@ describe("cob claude gateway", () => {
       const { port } = server.address() as AddressInfo;
       const health = await fetch(`http://127.0.0.1:${port}/health`);
       assert.equal(health.status, 200);
-      assert.deepEqual(await health.json(), { ok: true, surface: "claude" });
+      const healthBody = (await health.json()) as { ok: boolean; surface: string; pid: number; nonce?: string };
+      assert.equal(healthBody.ok, true);
+      assert.equal(healthBody.surface, "claude");
+      assert.equal(typeof healthBody.pid, "number");
+      assert.equal(healthBody.nonce, undefined, "health must never publish the runtime nonce");
       const missing = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", body: "{}" });
       assert.equal(missing.status, 404);
       const models = await fetch(`http://127.0.0.1:${port}/v1/models`);
@@ -65,14 +72,72 @@ describe("cob claude gateway", () => {
     }
   });
 
-  it("injects Claude Code credentials when Desktop sends the cob placeholder", async () => {
+  it("injects Claude Code credentials only for the configured Desktop token and 401s the rest without reading credentials", async () => {
     const seen: string[] = [];
+    let readerCalls = 0;
+    let upstreamCalls = 0;
+    const desktopToken = "a".repeat(64);
     const server = await listenClaudeGateway({
       port: 0,
       ollamaUrl: "http://127.0.0.1:9",
-      authReader: () => ({ authorization: "Bearer injected-oauth" }),
-      fetchImpl: async (_url, init) => {
-        seen.push(init.headers.authorization ?? "");
+      desktopToken,
+      authReader: () => {
+        readerCalls += 1;
+        return { authorization: "Bearer injected-oauth" };
+      },
+      fetchImpl: async (url, init) => {
+        upstreamCalls += 1;
+        seen.push(`${url} ${init.headers.authorization ?? ""}`);
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const post = (authorization?: string): Promise<Response> =>
+        fetch(`http://127.0.0.1:${port}/v1/messages`, {
+          method: "POST",
+          headers: {
+            ...(authorization === undefined ? {} : { authorization }),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ model: "claude-opus-5", messages: [] }),
+        });
+
+      const injected = await post(`Bearer ${desktopToken}`);
+      assert.equal(injected.status, 200);
+      assert.equal(upstreamCalls, 1);
+      assert.equal(seen[0], "https://api.anthropic.com/v1/messages Bearer injected-oauth");
+
+      const missing = await post();
+      assert.equal(missing.status, 401);
+      const stale = await post(`Bearer ${"f".repeat(64)}`);
+      assert.equal(stale.status, 401);
+      const legacy = await post("Bearer cob");
+      assert.equal(legacy.status, 401);
+      assert.equal(readerCalls, 1, "reader must run only for the exact desktop token");
+      assert.equal(upstreamCalls, 1, "rejected local auth must not reach the upstream fetch");
+
+      const foreign = await post("Bearer some-real-claude-oauth");
+      assert.equal(foreign.status, 200, "non-desktop-shaped credentials pass through to the upstream verdict");
+      assert.equal(upstreamCalls, 2);
+      assert.equal(seen[1], "https://api.anthropic.com/v1/messages Bearer some-real-claude-oauth");
+      assert.equal(readerCalls, 1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("never asks Anthropic credentials for Ollama routes", async () => {
+    const seen: { url: string; authorization?: string }[] = [];
+    const server = await listenClaudeGateway({
+      port: 0,
+      ollamaUrl: "http://127.0.0.1:9",
+      desktopToken: "a".repeat(64),
+      authReader: () => {
+        throw new Error("reader must not run for Ollama routes");
+      },
+      fetchImpl: async (url, init) => {
+        seen.push({ url, authorization: init.headers.authorization });
         return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
       },
     });
@@ -80,11 +145,132 @@ describe("cob claude gateway", () => {
       const { port } = server.address() as AddressInfo;
       const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
         method: "POST",
-        headers: { authorization: "Bearer cob", "content-type": "application/json" },
-        body: JSON.stringify({ model: "claude-opus-5", messages: [] }),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: DEFAULT_OLLAMA_SPAWN_MODEL, messages: [] }),
       });
       assert.equal(response.status, 200);
-      assert.equal(seen[0], "Bearer injected-oauth");
+      assert.match(seen[0]?.url ?? "", /\/v1\/messages$/);
+      assert.equal(seen[0]?.authorization, undefined);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("binds health to a nonce challenge without disclosing the secret and gates /cob/shutdown on it", async () => {
+    let shutdowns = 0;
+    const nonce = "nonce-1234";
+    const server = await listenClaudeGateway({
+      port: 0,
+      ollamaUrl: "http://127.0.0.1:9",
+      healthNonce: nonce,
+      onShutdown: () => {
+        shutdowns += 1;
+      },
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const bare = (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as {
+        pid: number;
+        nonce?: string;
+        nonce_ok?: boolean;
+      };
+      assert.equal(typeof bare.pid, "number");
+      assert.equal(bare.nonce, undefined, "the runtime nonce must not appear in the health body");
+      assert.equal(bare.nonce_ok, false);
+
+      const good = (await (
+        await fetch(`http://127.0.0.1:${port}/health`, { headers: { "x-cob-nonce": nonce } })
+      ).json()) as { nonce_ok?: boolean };
+      assert.equal(good.nonce_ok, true);
+
+      const bad = (await (
+        await fetch(`http://127.0.0.1:${port}/health`, { headers: { "x-cob-nonce": "wrong" } })
+      ).json()) as { nonce_ok?: boolean };
+      assert.equal(bad.nonce_ok, false);
+
+      const wrong = await fetch(`http://127.0.0.1:${port}/cob/shutdown`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: "wrong" }),
+      });
+      assert.equal(wrong.status, 403);
+      assert.equal(shutdowns, 0);
+
+      const correct = await fetch(`http://127.0.0.1:${port}/cob/shutdown`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce }),
+      });
+      assert.equal(correct.status, 200);
+      assert.equal(shutdowns, 1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("wires the default Claude Code reader through a controlled keychain", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cob-claude-keychain-"));
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const security = join(binDir, "security");
+    writeFileSync(
+      security,
+      "#!/bin/sh\ncat <<'EOF'\n{\"claudeAiOauth\":{\"accessToken\":\"sk-ant-oat01-cob-keychain-fixture\"}}\nEOF\n",
+      { mode: 0o755 },
+    );
+    const desktopToken = "b".repeat(64);
+    const seen: { authorization?: string; apiKey?: string }[] = [];
+    const server = await listenClaudeGateway({
+      port: 0,
+      ollamaUrl: "http://127.0.0.1:9",
+      desktopToken,
+      fetchImpl: async (_url, init) => {
+        seen.push({ authorization: init.headers.authorization, apiKey: init.headers["x-api-key"] });
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    const prevPath = process.env.PATH;
+    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.PATH = `${binDir}:${prevPath ?? ""}`;
+    if (process.platform === "darwin") {
+      // The fake `security` binary is found via PATH and serves the fixture.
+    } else {
+      process.env.ANTHROPIC_AUTH_TOKEN = "sk-ant-oat01-cob-env-fixture";
+    }
+    const expected =
+      process.platform === "darwin"
+        ? "Bearer sk-ant-oat01-cob-keychain-fixture"
+        : "Bearer sk-ant-oat01-cob-env-fixture";
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${desktopToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: "claude-opus-5", messages: [] }),
+      });
+      assert.equal(response.status, 200, "the default reader must inject credentials for the exact desktop token");
+      assert.equal(seen[0]?.authorization, expected);
+      assert.equal(seen[0]?.apiKey, undefined);
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+      if (prevToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+      else process.env.ANTHROPIC_AUTH_TOKEN = prevToken;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects /cob/shutdown when no runtime nonce is configured", async () => {
+    const server = await listenClaudeGateway({ port: 0, ollamaUrl: "http://127.0.0.1:9" });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/cob/shutdown`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: "anything" }),
+      });
+      assert.equal(response.status, 404);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

@@ -33,7 +33,7 @@ Source checkpoint `e932eb19c551fbda96dc83fe7fe34840afff2371` still reproduces
 | Port | `18790` | `18792` | `18791` / `18793` |
 | Desktop | ChatGPT Desktop (root `openai_base_url` → `:18790`) | Claude Desktop 3P `--desktop` → `:18792` | No ChatGPT Desktop. Claude `--dev --desktop` is isolated trial |
 
-`cob version` prints `cob <version> (global|workspace)`. `cob status` repeats
+`cob version` prints `cob <version> (global|workspace|unknown)`. `cob status` repeats
 that plus `cli:` path. A workspace mutating command against live `~/.codex`
 exits with the live-home refusal unless `--live-home`.
 
@@ -66,8 +66,8 @@ Desktop keeps talking to whatever process already bound that port.
 # From the checkout, if a workspace cob still owns ~/.codex:
 node dist/cli.js stop --live-home
 
-npm install -g ./codex-ollama-bridge-0.1.14.tgz   # only after explicit live authorization
-cob version    # expect: cob 0.1.14 (global)
+npm install -g ./codex-ollama-bridge-<version>.tgz   # only after explicit live authorization
+cob version    # expect: cob <version> (global)
 cob start
 cob status     # health/overlay ok; provenance fresh, or explained fail-closed skew
 ```

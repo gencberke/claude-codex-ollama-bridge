@@ -6,8 +6,10 @@ import {
   ClaudeAnthropicAuthError,
   describeAnthropicAuthKind,
   incomingAnthropicCredential,
-  isPlaceholderGatewayCredential,
+  isDesktopGatewayCredential,
+  readClaudeCodeAuth,
   resolveAnthropicUpstreamHeaders,
+  timingSafeTokenEqual,
   type ClaudeAuthReader,
 } from "./auth.js";
 import {
@@ -52,6 +54,12 @@ export type ClaudeGatewayOptions = {
   port: number;
   host?: string;
   ollamaUrl?: string;
+  /** Per-install Desktop gateway token. Only its exact match may reach credential injection. */
+  desktopToken?: string;
+  /** Runtime nonce published in /health and required by /cob/shutdown. */
+  healthNonce?: string;
+  /** Test hook for the authenticated self-shutdown; defaults to SIGTERM on this process. */
+  onShutdown?: () => void;
   anthropicMessagesUrl?: string;
   anthropicCountTokensUrl?: string;
   fetchImpl?: ClaudeGatewayFetch;
@@ -67,7 +75,8 @@ export function createClaudeGateway(options: ClaudeGatewayOptions): Server {
   const anthropicUrl = options.anthropicMessagesUrl ?? ANTHROPIC_MESSAGES_URL;
   const anthropicCountTokensUrl = options.anthropicCountTokensUrl ?? ANTHROPIC_COUNT_TOKENS_URL;
   const fetchImpl = options.fetchImpl ?? defaultFetch;
-  const authReader = options.authReader;
+  /** Production default: Desktop token injections come from Claude Code keychain/env. */
+  const authReader = options.authReader ?? readClaudeCodeAuth;
   const listOllamaTags = options.listOllamaTags;
   const spawnAllowlist = options.spawnAllowlist ?? CLAUDE_SPAWN_ALLOWLIST;
   const logLine = options.logLine ?? ((line: string) => process.stderr.write(line));
@@ -78,6 +87,9 @@ export function createClaudeGateway(options: ClaudeGatewayOptions): Server {
       anthropicCountTokensUrl,
       fetchImpl,
       authReader,
+      desktopToken: options.desktopToken,
+      healthNonce: options.healthNonce,
+      onShutdown: options.onShutdown,
       listOllamaTags,
       spawnAllowlist,
       logLine,
@@ -117,6 +129,9 @@ async function handleClaudeRequest(
     anthropicCountTokensUrl: string;
     fetchImpl: ClaudeGatewayFetch;
     authReader?: ClaudeAuthReader;
+    desktopToken?: string;
+    healthNonce?: string;
+    onShutdown?: () => void;
     listOllamaTags?: (ollamaUrl: string) => Promise<OllamaTag[]>;
     spawnAllowlist: readonly string[];
     logLine: (line: string) => void;
@@ -124,8 +139,19 @@ async function handleClaudeRequest(
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/v1/health")) {
+    const presented = headerValue(req.headers["x-cob-nonce"]) ?? "";
+    const body: Record<string, unknown> = {
+      ok: true,
+      surface: "claude",
+      pid: process.pid,
+      nonce_ok: Boolean(options.healthNonce && timingSafeTokenEqual(presented, options.healthNonce)),
+    };
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, surface: "claude" }));
+    res.end(JSON.stringify(body));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/cob/shutdown") {
+    await handleCobShutdown(req, res, options);
     return;
   }
   if (req.method === "GET" && url.pathname === CLAUDE_MODELS_PATH) {
@@ -207,8 +233,12 @@ async function handleClaudeRequest(
       : pickHeaders(req, OLLAMA_MESSAGES_FORWARD_HEADERS);
   if (route.backend === "anthropic") {
     const incomingAuth = incomingAnthropicCredential(headers);
+    const fromDesktop = isDesktopGatewayCredential(incomingAuth, options.desktopToken);
     try {
-      headers = resolveAnthropicUpstreamHeaders(headers, options.authReader);
+      headers = resolveAnthropicUpstreamHeaders(headers, {
+        desktopToken: options.desktopToken,
+        reader: options.authReader,
+      });
     } catch (error) {
       const message =
         error instanceof ClaudeAnthropicAuthError
@@ -217,7 +247,7 @@ async function handleClaudeRequest(
       anthropicError(res, 401, "authentication_error", message);
       return;
     }
-    if (isPlaceholderGatewayCredential(incomingAuth)) {
+    if (fromDesktop) {
       options.logLine(`[cob claude] anthropic auth ${describeAnthropicAuthKind(headers)}\n`);
     }
     if (!hasAnthropicAuth(headers)) {
@@ -258,8 +288,53 @@ async function handleClaudeRequest(
   });
 }
 
+function headerValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
 function hasAnthropicAuth(headers: Record<string, string>): boolean {
   return Boolean(headers.authorization || headers["x-api-key"]);
+}
+
+async function handleCobShutdown(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: { healthNonce?: string; onShutdown?: () => void },
+): Promise<void> {
+  if (!options.healthNonce) {
+    anthropicError(res, 404, "not_found_error", "cob claude shutdown requires a runtime identity nonce");
+    return;
+  }
+  let raw: Buffer;
+  try {
+    raw = await readLimitedBody(req, { maxBytes: 1024 });
+  } catch (error) {
+    if (error instanceof BodyAbortedError) return;
+    anthropicError(res, 400, "invalid_request_error", "cob claude shutdown body is not valid JSON");
+    return;
+  }
+  let nonce = "";
+  try {
+    const parsed: unknown = JSON.parse(raw.toString("utf8"));
+    if (parsed && typeof parsed === "object" && typeof (parsed as { nonce?: unknown }).nonce === "string") {
+      nonce = (parsed as { nonce: string }).nonce;
+    }
+  } catch {
+    // nonce stays empty; comparison below rejects
+  }
+  if (!timingSafeTokenEqual(nonce, options.healthNonce)) {
+    anthropicError(res, 403, "permission_error", "cob claude shutdown nonce rejected");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }), () => {
+    if (options.onShutdown) {
+      options.onShutdown();
+      return;
+    }
+    setImmediate(() => process.kill(process.pid, "SIGTERM"));
+  });
 }
 
 async function listClaudeOllamaTags(

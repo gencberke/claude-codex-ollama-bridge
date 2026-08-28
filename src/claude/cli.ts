@@ -1,13 +1,14 @@
 import { spawn } from "node:child_process";
 import type { CliFlags } from "../cli-session.js";
 import { formatInstallLine } from "../core/install-detection.js";
-import { CLAUDE_DESKTOP_RESTART_HINT, applyClaudeDesktopOverlay, assertClaudeDesktopOverlaySupported, restoreClaudeDesktopOverlay, snapshotSha, type OverlayApplyResult } from "./desktop-overlay.js";
+import { CLAUDE_DESKTOP_RESTART_HINT, applyClaudeDesktopOverlay, assertClaudeDesktopOverlaySupported, snapshotSha, type OverlayApplyResult } from "./desktop-overlay.js";
 import { CLAUDE_SPAWN_AGENTS, syncClaudeSpawnAgents, syncProjectClaudeAgents } from "./agents.js";
-import { applyUserClaudeAgentsOverlay, restoreUserClaudeAgentsOverlay, type UserAgentsApplyResult } from "./user-agents.js";
+import { applyUserClaudeAgentsOverlay, type UserAgentsApplyResult } from "./user-agents.js";
 import {
   claudeStatusReport,
+  ensureClaudeDesktopToken,
   openClaudeLog,
-  restoreClaudeSurface,
+  restoreClaudeGateway,
   serveClaudeForeground,
   startClaudeGatewayDetached,
   stopClaudeGateway,
@@ -21,21 +22,37 @@ export async function runClaudeCli(flags: CliFlags): Promise<void> {
   const { paths, port } = session;
   switch (flags.command) {
     case "start": {
-      const agents = syncClaudeSpawnAgents(session.paths);
       if (flags.foreground) {
-        const desktop = applyClaudeDesktopIfRequested(flags, session);
-        printClaudeStarted(session, undefined, desktop);
-        printClaudeLaunchHint(session, desktop.overlay !== undefined);
-        printClaudeAgentsHint(session, agents.wrote.length);
-        await serveClaudeForeground({ port, ollamaUrl: flags.ollamaUrl, paths });
+        let desktop: ClaudeDesktopApply = {};
+        let agentCount = 0;
+        await serveClaudeForeground({
+          port,
+          ollamaUrl: flags.ollamaUrl,
+          paths,
+          onBooted: () => {
+            agentCount = syncClaudeSpawnAgents(paths).wrote.length;
+            desktop = applyClaudeDesktopIfRequested(flags, session, ensureClaudeDesktopToken(paths));
+            printClaudeStarted(session, undefined, desktop);
+            printClaudeLaunchHint(session, desktop.overlay !== undefined);
+            printClaudeAgentsHint(session, agentCount);
+          },
+        });
         return;
       }
-      const logFd = openClaudeLog(paths);
+      let agentCount = 0;
+      let desktop: ClaudeDesktopApply = {};
       const started = await startClaudeGatewayDetached({
         paths,
         port,
         ollamaUrl: flags.ollamaUrl,
+        prepare: () => {
+          agentCount = syncClaudeSpawnAgents(paths).wrote.length;
+        },
+        commit: () => {
+          desktop = applyClaudeDesktopIfRequested(flags, session, ensureClaudeDesktopToken(paths));
+        },
         spawnServe: ({ token }) => {
+          const logFd = openClaudeLog(paths);
           const args = [
             process.argv[1] ?? "",
             "claude",
@@ -63,17 +80,16 @@ export async function runClaudeCli(flags: CliFlags): Promise<void> {
           });
         },
       });
-      const desktop = applyClaudeDesktopIfRequested(flags, session);
       if (started.alreadyRunning) {
         console.log(`cob claude already running on 127.0.0.1:${started.runtime.port} (pid ${started.runtime.pid})`);
         printClaudeDesktopApply(desktop);
         printClaudeLaunchHint(session, desktop.overlay !== undefined);
-        printClaudeAgentsHint(session, agents.wrote.length);
+        printClaudeAgentsHint(session, agentCount);
         return;
       }
       printClaudeStarted(session, started.runtime.pid, desktop);
       printClaudeLaunchHint(session, desktop.overlay !== undefined);
-      printClaudeAgentsHint(session, agents.wrote.length);
+      printClaudeAgentsHint(session, agentCount);
       return;
     }
     case "serve":
@@ -87,19 +103,19 @@ export async function runClaudeCli(flags: CliFlags): Promise<void> {
       }
       return;
     case "restore": {
-      await stopClaudeGateway(paths);
-      restoreClaudeSurface(paths);
+      const restored = await restoreClaudeGateway(paths);
+      if (restored.stopped) {
+        console.log("cob claude stopped");
+      }
       console.log("removed cob-owned Claude runtime files");
-      const restoredAgents = restoreUserClaudeAgentsOverlay({ overlayDir: paths.desktopOverlay });
-      const restoredDesktop = restoreClaudeDesktopOverlay({ overlayDir: paths.desktopOverlay });
-      if (restoredAgents) {
+      if (restored.agentsRestored) {
         console.log("restored ~/.claude/agents cob overlay snapshot");
       }
-      if (restoredDesktop) {
+      if (restored.desktopRestored) {
         console.log("restored Claude Desktop 3P overlay snapshot");
         console.log(CLAUDE_DESKTOP_RESTART_HINT);
       }
-      if (!restoredAgents && !restoredDesktop) {
+      if (!restored.agentsRestored && !restored.desktopRestored) {
         console.log("~/.claude/settings.json and Claude Desktop left unchanged");
       }
       return;
@@ -184,12 +200,14 @@ function printClaudeAgentsHint(session: ClaudeCliSession, wrote: number): void {
 function applyClaudeDesktopIfRequested(
   flags: CliFlags,
   session: ClaudeCliSession,
+  gatewayApiKey: string,
 ): ClaudeDesktopApply {
   if (!flags.desktop) return {};
   assertClaudeDesktopOverlaySupported();
   const overlay = applyClaudeDesktopOverlay({
     overlayDir: session.paths.desktopOverlay,
     gatewayBaseUrl: `http://127.0.0.1:${session.port}`,
+    gatewayApiKey,
   });
   const userAgents = applyUserClaudeAgentsOverlay({
     overlayDir: session.paths.desktopOverlay,

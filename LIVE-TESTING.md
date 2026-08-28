@@ -63,7 +63,7 @@ inferred from Codex UI text.
 | G19 | Packed post-0.1.9 cob validates Ollama client tool calls against the exact final outbound catalog for JSON, SSE, terminal-only, direct, `tool_search`, V1, and MCP lanes; rejected turns publish no checkpoint | Unknown/invalid call reaches Codex, a false-positive blocks a declared alias, failure is followed by completed, logs leak content, or rejected state becomes continuable |
 | G20 (Gate 5) | In an isolated, explicit opt-in, a real 0731 child receives the declared freeform patch capability, emits a Codex-facing `custom_tool_call(name="apply_patch")` plus matching output, and changes the fixture without a shell write | No custom call/output pair, parent-applied patch, `exec_command`/temporary patch binary/heredoc write, capability on a native/non-spawn/live row, shell enabled, or patch/alias/content leakage |
 | G21 (Gate 6) | One isolated 0731 child receives two `send_message` payloads while still active, then two `followup_task` turns after idle/completed, all in one session/id with nonce order preserved | Second spawn, send after the child already completed, wait between the two active sends, duplicate/lost/wrong-id delivery, or Sol `GATE6_PASS` without those child-session rows |
-| G21-H (Gate 6-H) | Workspace `npm run gate6h` watches parent/child rollout JSONL; two same-turn `send_message` calls with no wait/list/final between them, then two idle `followup_task` rows on one 0731 child | `controller_sequencing_fail` (wait/list/final before send2); three such fails record `controller_sequencing_observed` and `transport_unmeasured`. Do not add a cob queue or open Gate 7–10 |
+| G21-H (Gate 6-H) | Workspace `npm run gate6h` watches parent/child rollout JSONL; two same-turn `send_message` calls with no wait/list/final between them, then two idle `followup_task` rows on one 0731 child | `controller_sequencing_fail` (wait/list/interrupt/final/exec before send2); three such fails record `controller_sequencing_observed` and `transport_unmeasured`. Do not add a cob queue or open Gate 7–10 |
 
 Ollama child catalog rows advertise `shell_type=disabled` and no
 `apply_patch_tool_type` by default. The isolated Gate 5 opt-in may add the
@@ -259,11 +259,18 @@ On the same packed build as G11, after Desktop quit-and-reopen:
 1. New/missing cob.toml should advertise search on Ollama rows (`tools_n` near
    the deferred set, not the 168-tool flatten).
 2. Run three turns containing one deferred MCP leaf and one V1
-   `spawn_agent` leaf. Record input/tool bytes, `alias_sha`,
+   `spawn_agent` leaf. The spawn must use `fork_turns = "none"`; the child
+   prompt must identify the receiver as the child, forbid satisfying inherited
+   parent-phase instructions, and require one exact marker. Do not use an
+   external/V2 task path as the V1 proof.
+3. Record one child/session id, child metadata `multi_agent_version = "v1"`,
+   the exact marker, a real Ollama wire line, input/tool bytes, `alias_sha`,
    `alias_added`/`removed`/`replaced`, `used_alias_missing`, and that the
-   function executed.
-3. Repeat with `catalog.supports_search_tool = false` as the rollback control.
-4. Logs must not contain schemas, arguments, or outputs.
+   function executed. An encrypted V2 `agent_message` rejected before Ollama
+   wire is a separate fail-closed boundary canary, not G12 evidence.
+4. Repeat with `catalog.supports_search_tool = false` as the rollback control,
+   using the same child prompt and fork semantics.
+5. Logs must not contain schemas, arguments, outputs, or marker text.
 
 ## G13 — Ollama request boundary
 
@@ -587,9 +594,12 @@ npm run gate6h
 
 The harness starts isolated `cob start --dev`, runs PATH Codex `exec` with
 `gpt-5.6-sol` and the same 0731 fixture (30s child tool window), and reduces
-rollout JSONL as a state machine. If `wait_agent`, `list_agents`, or a parent
-`final` appears before the second `send_message`, the attempt is killed as
+rollout JSONL as a state machine. If `wait_agent`, `list_agents`,
+`interrupt_agent`, a parent `final`, or a parent `exec_command` appears before
+the second `send_message`, the attempt is killed as
 `controller_sequencing_fail`. The same fixture is retried at most three times.
+The harness requires `~/.codex/auth.json` and writes its verdict to
+`~/.codex-cob-dev/gate6h-verdict.json`.
 Isolated Gate 7–10 canaries are separate from this harness.
 
 - Pass: one spawn, two same-turn sends, wait, two follow-ups, child plaintext

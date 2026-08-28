@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readFileBufferOrNull, writeFileAtomic } from "../core/atomic.js";
 import { isRecord, type JsonObject } from "../core/json.js";
-import { CLAUDE_DESKTOP_GATEWAY_KEY } from "./constants.js";
 import { claudeDesktopInferenceModels } from "./models.js";
 import { assertLoopbackHttpUrl } from "../core/loopback.js";
 
@@ -81,10 +80,15 @@ export function overlayManifestPath(overlayDir: string): string {
 export function applyClaudeDesktopOverlay(opts: {
   overlayDir: string;
   gatewayBaseUrl: string;
+  /** Per-install 256-bit token; the gateway only injects keychain credentials for its exact match. */
+  gatewayApiKey: string;
   targets?: ClaudeDesktopTargets;
   now?: Date;
 }): OverlayApplyResult {
   assertLoopbackHttpUrl(opts.gatewayBaseUrl, "Claude Desktop gateway URL");
+  if (opts.gatewayApiKey.length === 0) {
+    throw new Error("cob claude desktop overlay requires a generated gateway token");
+  }
   const targets = opts.targets ?? resolveClaudeDesktopTargets();
   mkdirSync(opts.overlayDir, { recursive: true });
   const manifestFile = overlayManifestPath(opts.overlayDir);
@@ -113,7 +117,7 @@ export function applyClaudeDesktopOverlay(opts: {
   const profile = readJsonObject(targets.cobProfile);
   profile.inferenceProvider = "gateway";
   profile.inferenceGatewayBaseUrl = opts.gatewayBaseUrl;
-  profile.inferenceGatewayApiKey = CLAUDE_DESKTOP_GATEWAY_KEY;
+  profile.inferenceGatewayApiKey = opts.gatewayApiKey;
   profile.inferenceGatewayAuthScheme = "bearer";
   profile.deploymentDisplayName = CLAUDE_DESKTOP_PROFILE_NAME;
   profile.chatTabEnabled = true;

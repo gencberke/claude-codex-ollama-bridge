@@ -8,6 +8,7 @@ export type ClaudePaths = {
   log: string;
   runtime: string;
   lock: string;
+  desktopToken: string;
   desktopOverlay: string;
   codeConfig: string;
   agents: string;
@@ -25,6 +26,7 @@ export function resolveClaudePaths(claudeHome = resolveClaudeHome()): ClaudePath
     log: join(claudeHome, "cob-claude-gateway.log"),
     runtime: join(claudeHome, "cob-claude-runtime.json"),
     lock: join(claudeHome, "cob-claude.lock"),
+    desktopToken: join(claudeHome, "desktop-gateway-token"),
     desktopOverlay: join(claudeHome, "desktop-overlay"),
     codeConfig,
     agents: join(codeConfig, "agents"),

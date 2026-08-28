@@ -41,6 +41,9 @@ export function isCobGatewayProcess(pid: number): boolean {
 }
 
 export function isPidAlive(pid: number): boolean {
+  // kill(0) targets the caller's process group and negative pids target whole
+  // groups, so only a positive integer may ever be probed or signaled.
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;

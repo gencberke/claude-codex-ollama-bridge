@@ -8,24 +8,49 @@ release: [RELEASE.md](./RELEASE.md).
 Ship decisions still follow live traces in [LIVE-TESTING.md](./LIVE-TESTING.md),
 not this file.
 
-## Unreleased
+## 0.2.1 — 2026-08-29
 
-Workspace-only: pack-excluded Gate 6-H, G2–G9 eval fixtures, and
-[UPSTREAM-U1.md](./UPSTREAM-U1.md). They are not live gold and are not in
-the tarball.
+First packed cut of the post-0.2.0 hardening series: the cob Claude security
+package plus redacted compact observability. Live claims stay in
+[LIVE-TESTING.md](./LIVE-TESTING.md); installing this tarball is not G11/G12
+gold.
 
-- Keep DeepSeek V4 Flash 0731 as the default Codex and cob Claude V1 spawn
-  slot. GLM-5.3 Flash remains available when explicitly selected in
-  `cob.toml`; its catalog rows advertise `low` / `high` / `max` with `max` as
-  the default, while DeepSeek keeps its `high` default. Existing explicit
-  `cob.toml` model lists stay user-owned and are not silently rewritten.
-- Preserve the previously visible Ollama spawn row when tag discovery fails
-  during a model migration, without inventing the newly configured model.
-- Pin the reviewed Ollama Responses contract to 0.33.1. Its tagged
-  `openai/responses.go` is unchanged from 0.32.15, so cob keeps the same narrow
-  allowlist. Incomplete Ollama SSE no longer receives a synthetic success
-  `[DONE]`; content-free terminal telemetry distinguishes EOF, idle/error, and
-  client abort, while valid `response.completed` streams remain streaming.
+- cob Claude auth boundary: the static `"cob"` Desktop key is gone. Start
+  generates a per-install 256-bit token (0600 regular file), `--desktop`
+  writes it into the 3P profile, and only its exact timing-safe match may
+  trigger Claude Code keychain injection; missing, stale, or placeholder
+  credentials are rejected locally with 401 before the credential reader
+  runs. Real Claude OAuth stays byte-faithful passthrough; Ollama routes
+  never see Anthropic auth.
+- cob Claude process ownership: the runtime records a nonce plus ps start
+  identity, health is bound to pid+nonce via the `x-cob-nonce` challenge
+  (`nonce_ok` — the secret is never published), stop uses the authenticated
+  `POST /cob/shutdown` primitive, and any signal fallback re-verifies
+  pid+argv+startKey before TERM and again before KILL, then confirms exit
+  before touching state. Unproven ownership fails closed with state kept.
+- Runtime state machine `absent | invalid | valid` with pid-sidecar
+  consistency. Stop, restore, and start refuse present-but-invalid state
+  instead of deleting it; foreground and detached starts make the runtime
+  decision, prepare, and commit (overlays included) inside the lifecycle
+  lock, and a commit lock timeout reports an explicitly resolvable
+  indeterminate state — no signal, no state change.
+- Token file hardening: `O_NOFOLLOW|O_NONBLOCK` open, fstat regular-file /
+  hardlink / special-bit rejection, and `fchmodSync` on the verified fd.
+- `cob claude restore` is one locked transaction (stop locked → surface
+  cleanup → overlay restore); the cleanup helper no longer deletes the lock
+  file itself.
+- Shared `isPidAlive` refuses non-positive and non-integer pids, so cob can
+  never issue `kill(0)` or group-wide signals.
+- Codex compact: incomplete Ollama handoff logs add `summary_bytes`,
+  configured effort, the seven handoff section flags, and exact usage
+  counters when available — never summary text, prompt content, tool names,
+  or credentials. The G12 gold procedure now requires `fork_turns="none"`,
+  explicit child-role prompts, one child/session id,
+  `multi_agent_version="v1"`, and a real Ollama wire line; the encrypted-V2
+  no-wire rejection is a separate fail-closed boundary canary, not G12
+  evidence.
+- Workspace-only tooling stays pack-excluded: Gate 6-H harness, G2–G9 eval
+  fixtures, and [UPSTREAM-U1.md](./UPSTREAM-U1.md).
 
 ## 0.2.0 — 2026-08-27
 

@@ -116,7 +116,8 @@ Ollama model.
 ```toml
 [compaction]
 # GPT threads: unchanged ChatGPT passthrough
-# Ollama threads: summarize | (later) keep today's native-full-replay if needed
+# Ollama threads: summarize | native
+# native = ChatGPT compact + full provider-safe replay (shipped)
 ollama_threads = "summarize"
 # optional dedicated Ollama slug; default = thread model
 # ollama_model = "ollama/deepseek-v4-flash:0731-cloud"
@@ -153,7 +154,7 @@ Record summarizer latency and pre/post Ollama prompt bytes.
 1–3 and 5 are in cob (envelope, summarizer, handoff checkpoint, docs). Desktop
 `/compact` on 0731 recorded G7. 2026-08-23 20:29 auto-compact on cob 0.1.7
 recorded G8 (flatten handoff, `cob1.` envelope, follow-up
-`replay_ratio ≈ 0.03`). Isolated L5 remains a recorded harness. WP7 Stages 2–4
+`replay_ratio ≈ 0.03`). The isolated L5 harness remains unrun. WP7 Stages 2–4
 (single instruction copy, required section headings, opt-in effort, split
 max vs active context) are packed in cob **0.1.8**.
 G17 acceptance is recorded in `LIVE-TESTING.md`; it did not promote an

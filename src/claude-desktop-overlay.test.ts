@@ -47,6 +47,7 @@ describe("cob claude desktop overlay", () => {
       const applied = applyClaudeDesktopOverlay({
         overlayDir,
         gatewayBaseUrl: "http://127.0.0.1:18793",
+        gatewayApiKey: "d".repeat(64),
         targets,
       });
       assert.equal(applied.snapshotCreated, true);
@@ -63,7 +64,8 @@ describe("cob claude desktop overlay", () => {
       const meta = JSON.parse(readFileSync(targets.meta, "utf8")) as { appliedId: string };
       assert.equal(normal.deploymentMode, "3p");
       assert.equal(profile.inferenceGatewayBaseUrl, "http://127.0.0.1:18793");
-      assert.equal(profile.inferenceGatewayApiKey, "cob");
+      assert.equal(profile.inferenceGatewayApiKey, "d".repeat(64));
+      assert.equal(profile.inferenceGatewayApiKey === "cob", false);
       assert.equal(profile.autoModeEnabled, true);
       assert.deepEqual(profile.coworkEgressAllowedHosts, ["*"]);
       assert.deepEqual(
@@ -77,6 +79,7 @@ describe("cob claude desktop overlay", () => {
       const second = applyClaudeDesktopOverlay({
         overlayDir,
         gatewayBaseUrl: "http://127.0.0.1:18793",
+        gatewayApiKey: "d".repeat(64),
         targets,
       });
       assert.equal(second.snapshotCreated, false);
