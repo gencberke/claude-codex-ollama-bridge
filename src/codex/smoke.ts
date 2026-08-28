@@ -143,15 +143,21 @@ async function t4EncryptedNeverHitsOllama(): Promise<void> {
   let ollamaHits = 0;
   const port = await freePort();
   const stateDir = mkdtempSync(join(tmpdir(), "cob-smoke-state-"));
-  const server = await listenGateway({
-    port,
-    stateDir,
-    ollamaUrl: "http://127.0.0.1:9",
-    ollamaFetch: async () => {
-      ollamaHits += 1;
-      return new Response("should not run", { status: 599 });
-    },
-  });
+  let server;
+  try {
+    server = await listenGateway({
+      port,
+      stateDir,
+      ollamaUrl: "http://127.0.0.1:9",
+      ollamaFetch: async () => {
+        ollamaHits += 1;
+        return new Response("should not run", { status: 599 });
+      },
+    });
+  } catch (error) {
+    rmSync(stateDir, { recursive: true, force: true });
+    throw error;
+  }
   try {
     const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
       method: "POST",
@@ -179,7 +185,7 @@ async function t4EncryptedNeverHitsOllama(): Promise<void> {
     }
     if (ollamaHits !== 0) throw new Error("Ollama fetch was invoked");
   } finally {
-    await closeServer(server);
+    if (server) await closeServer(server);
     rmSync(stateDir, { recursive: true, force: true });
   }
 }
@@ -193,12 +199,14 @@ async function gptToGptGuardrail(): Promise<void> {
   let ollamaHits = 0;
   const port = await freePort();
   const stateDir = mkdtempSync(join(tmpdir(), "cob-smoke-state-"));
-  const server = await listenGateway({
-    port,
-    stateDir,
-    catalog: {
-      models: [{ slug: "gpt-5.6-luna" }],
-    },
+  let server;
+  try {
+    server = await listenGateway({
+      port,
+      stateDir,
+      catalog: {
+        models: [{ slug: "gpt-5.6-luna" }],
+      },
     nativeFetch: async (_url, init) => {
       nativeHits += 1;
       const headers = init.headers;
@@ -216,6 +224,10 @@ async function gptToGptGuardrail(): Promise<void> {
       return new Response("nope", { status: 599 });
     },
   });
+  } catch (error) {
+    rmSync(stateDir, { recursive: true, force: true });
+    throw error;
+  }
   try {
     const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
       method: "POST",
@@ -230,7 +242,7 @@ async function gptToGptGuardrail(): Promise<void> {
     if (nativeHits !== 1) throw new Error("native backend was not called");
     if (ollamaHits !== 0) throw new Error("GPT request leaked to Ollama");
   } finally {
-    await closeServer(server);
+    if (server) await closeServer(server);
     rmSync(stateDir, { recursive: true, force: true });
   }
 }
@@ -274,7 +286,13 @@ function profilePinsContract(): void {
 async function t3LiveOllama(ollamaUrl: string): Promise<void> {
   const port = await freePort();
   const stateDir = mkdtempSync(join(tmpdir(), "cob-smoke-state-"));
-  const server = await listenGateway({ port, ollamaUrl, stateDir });
+  let server;
+  try {
+    server = await listenGateway({ port, ollamaUrl, stateDir });
+  } catch (error) {
+    rmSync(stateDir, { recursive: true, force: true });
+    throw error;
+  }
   try {
     const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
       method: "POST",
@@ -302,7 +320,7 @@ async function t3LiveOllama(ollamaUrl: string): Promise<void> {
       }
     }
   } finally {
-    await closeServer(server);
+    if (server) await closeServer(server);
     rmSync(stateDir, { recursive: true, force: true });
   }
 }
