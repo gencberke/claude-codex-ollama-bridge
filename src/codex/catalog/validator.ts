@@ -9,7 +9,11 @@ import type { CatalogFile } from "../types.js";
 
 export class CatalogConsumerRejectedError extends Error {
   readonly code = "catalog_consumer_rejected";
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** The consumer that rejected the candidate, as typed metadata. */
+    readonly consumer: CodexBinaryRecord,
+  ) {
     super(message);
     this.name = "CatalogConsumerRejectedError";
   }
@@ -26,6 +30,7 @@ export function assertConsumersAcceptCatalog(
       const detail = error instanceof Error ? error.message : String(error);
       throw new CatalogConsumerRejectedError(
         `Codex rejected cob catalog (${consumer.kind} ${consumer.path} ${consumer.version}): ${detail}`,
+        consumer,
       );
     }
   }

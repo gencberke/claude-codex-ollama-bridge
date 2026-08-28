@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { writeFileAtomic } from "../../core/atomic.js";
 import { FEATURED_NATIVE_SLUGS } from "../constants.js";
 import { isSpawnableMatch, listVisibleTopSlugs, parseCatalogJson } from "./catalog.js";
+import { CatalogConsumerRejectedError } from "./validator.js";
 import {
   errorMessage,
   fileIdentityKey,
@@ -692,10 +693,10 @@ function findRejectedValidator(
   error: unknown,
   validators: readonly CodexBinaryRecord[],
 ): CodexBinaryRecord | undefined {
-  const message = errorMessage(error);
-  return validators.find((validator) =>
-    message.includes(`(${validator.kind} ${validator.path} ${validator.version})`),
-  );
+  if (error instanceof CatalogConsumerRejectedError) {
+    return validators.find((validator) => sameFileIdentity(validator.file, error.consumer.file)) ?? error.consumer;
+  }
+  return undefined;
 }
 
 const SAFE_CATALOG_FIELD_HINTS = [
