@@ -401,13 +401,6 @@ export function assessCatalogProvenance(opts: {
     ],
   });
 }
-
-export function catalogStatusKind(freshness: CatalogFreshness): "stale" | "unknown" | undefined {
-  if (freshness === "stale" || freshness === "missing") return "stale";
-  if (freshness === "unknown") return "unknown";
-  return undefined;
-}
-
 function stale(reason: string, detail?: string): CatalogProvenanceAssessment {
   const extra = detail ? `: ${detail}` : "";
   return {

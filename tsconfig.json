@@ -12,6 +12,7 @@
     "sourceMap": true,
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
     "types": ["node"]
   },
   "include": ["src/**/*.ts"]

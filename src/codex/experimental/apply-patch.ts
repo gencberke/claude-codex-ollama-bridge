@@ -9,7 +9,6 @@ export const APPLY_PATCH_TOOL_NAME = "apply_patch" as const;
  */
 export const COB_APPLY_PATCH_ALIAS = "cob_apply_patch_v1" as const;
 /** Compatibility spelling for callers that use the shorter constant name. */
-export const APPLY_PATCH_ALIAS = COB_APPLY_PATCH_ALIAS;
 export const APPLY_PATCH_INPUT_KEY = "input" as const;
 
 export type ApplyPatchPolicy = {
@@ -188,7 +187,6 @@ export function prepareApplyPatchToOllama(
 }
 
 /** Short alias used by wire-boundary callers. */
-export const rewriteApplyPatchToOllama = prepareApplyPatchToOllama;
 
 export function emptyApplyPatchBridge(enabled = false, declared = false): ApplyPatchBridge {
   return {
@@ -303,7 +301,6 @@ export function rewriteApplyPatchFromOllama(
 }
 
 /** Short alias used by response normalization callers. */
-export const rewriteApplyPatchFromOllamaResponse = rewriteApplyPatchFromOllama;
 
 function policyEnabled(policy: ApplyPatchPolicyInput): boolean {
   return typeof policy === "boolean" ? policy : policy?.enabled === true;
