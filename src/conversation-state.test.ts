@@ -12,14 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import {
-  ConversationStateError,
-  ConversationStateStore,
-  createStateHistoryItems,
-  historyItemIdentity,
-  mergeStateHistory,
-  type StateHistoryItem,
-} from "./codex/conversation-state.js";
+import { ConversationStateError, type StateHistoryItem } from "./codex/state/schema.js";
+import { ConversationStateStore } from "./codex/state/store.js";
+import { createStateHistoryItems, historyItemIdentity, mergeStateHistory } from "./codex/state/history.js";
 
 function newStore(options?: ConstructorParameters<typeof ConversationStateStore>[1]): ConversationStateStore {
   return new ConversationStateStore(mkdtempSync(join(tmpdir(), "cob-state-test-")), options);

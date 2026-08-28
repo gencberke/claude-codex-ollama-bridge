@@ -65,7 +65,7 @@ import {
   waitForLockAdopted,
   withExclusiveLock,
 } from "../core/lock.js";
-import { clearConversationState } from "./conversation-state.js";
+import { clearConversationState } from "./state/store.js";
 import {
   cobProcessIdentity,
   isCobGatewayProcess,

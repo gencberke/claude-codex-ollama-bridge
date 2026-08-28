@@ -103,14 +103,9 @@ import {
   type CompactAttemptNote,
 } from "./compact-attempt-log.js";
 import type { ToolSearchBridge } from "./tool-search.js";
-import {
-  ConversationStateError,
-  ConversationStateStore,
-  createStateHistoryItems,
-  mergeStateHistory,
-  stateHistoryValues,
-  type StateHistoryItem,
-} from "./conversation-state.js";
+import { ConversationStateError, type StateHistoryItem } from "./state/schema.js";
+import { ConversationStateStore } from "./state/store.js";
+import { createStateHistoryItems, mergeStateHistory, stateHistoryValues } from "./state/history.js";
 import { resolvePaths } from "./paths.js";
 import { ollamaUpstreamModel } from "./route.js";
 
