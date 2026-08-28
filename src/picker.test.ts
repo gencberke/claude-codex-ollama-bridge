@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {mkdtempSync, readFileSync, writeFileSync} from "node:fs";
+import {tmpdir} from "node:os";
 import { join } from "node:path";
 import { createServer, type AddressInfo } from "node:net";
 import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./codex/catalog/catalog.js";
@@ -13,6 +13,7 @@ import { restoreCob } from "./codex/runtime/lifecycle.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
 import type { OllamaTag } from "./core/ollama/tags.js";
+const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "cob-picker-state-"));
 
 function native(partial: JsonObject): JsonObject {
   return {
@@ -105,6 +106,7 @@ describe("picker visibility", () => {
     let ollamaModel: string | undefined;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog,
       nativeFetch: async () => {

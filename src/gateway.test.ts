@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from "node:fs";
-import { tmpdir } from "node:os";
+import {tmpdir} from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { connect, createServer, type AddressInfo } from "node:net";
@@ -23,6 +23,7 @@ import {
 } from "./codex/experimental/native-plaintext-spawn.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
+const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "cob-gw-state-"));
 
 const TEST_CATALOG: CatalogFile = {
   models: [
@@ -213,6 +214,7 @@ describe("gateway", () => {
     const seen: { nativeAuth?: string; ollamaAuth?: string; ollamaUrl?: string; ollamaModel?: string } = {};
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async (_url, init) => {
@@ -281,6 +283,7 @@ describe("gateway", () => {
     const secret = "SECRET_OLLAMA_HTML_BODY";
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async () => new Response(`<html>${secret}</html>`, {
@@ -310,6 +313,7 @@ describe("gateway", () => {
     const secret = "SECRET_MALFORMED_SSE_DATA";
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       applyPatch: true,
@@ -366,6 +370,7 @@ describe("gateway", () => {
     console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async (url, init) => {
@@ -434,6 +439,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       nativeFetch: async () => {
         nativeHits += 1;
@@ -470,6 +476,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       nativeFetch: async () => {
         nativeHits += 1;
@@ -672,6 +679,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       ollamaFetch: async () => {
         ollamaHits += 1;
@@ -807,7 +815,8 @@ describe("gateway", () => {
 
   it("returns 426 so Codex falls back from WebSocket to HTTP", async () => {
     const port = await freePort();
-    const server = await listenGateway({ port });
+    const server = await listenGateway({
+      stateDir: TEST_STATE_DIR, port });
     try {
       const { status, body } = await new Promise<{ status: number; body: string }>((resolve, reject) => {
         const req = httpRequest(
@@ -852,6 +861,7 @@ describe("gateway", () => {
     const seen: { nativeEncoding?: string; nativeBody?: string; ollamaBody?: string } = {};
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async (_url, init) => {
@@ -911,6 +921,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => {
@@ -979,6 +990,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       nativeFetch: async () => {
         nativeHits += 1;
@@ -1006,6 +1018,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => {
@@ -1318,6 +1331,7 @@ describe("gateway", () => {
     };
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => new Response("nope", { status: 500 }),
@@ -1372,6 +1386,7 @@ describe("gateway", () => {
     };
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => new Response("nope", { status: 500 }),
@@ -1493,6 +1508,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => {
@@ -1801,6 +1817,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async () => {
@@ -1838,6 +1855,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async () => {
@@ -1873,6 +1891,7 @@ describe("gateway", () => {
   it("does not require a model on health or shutdown", async () => {
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       nonce: "secret-nonce",
       compaction: { provider: "native", model: "codex-mini", ollamaThreads: "native" },
@@ -1903,6 +1922,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => {
@@ -1950,6 +1970,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => {
@@ -1994,6 +2015,7 @@ describe("gateway", () => {
   it("closes an idle stream without using a total generation timeout", async () => {
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       idleMs: 40,
@@ -2025,6 +2047,7 @@ describe("gateway", () => {
   it("times out a hung non-stream Ollama body", async () => {
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       idleMs: 40,
@@ -2059,6 +2082,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async () => {
@@ -2096,6 +2120,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       compaction: { provider: "native", model: "codex-mini", ollamaThreads: "native" },
@@ -2139,6 +2164,7 @@ describe("gateway", () => {
     let nativeModel: string | undefined;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalogPath,
       catalog: { models: [{ slug: "gpt-old" }] },
@@ -2192,6 +2218,7 @@ describe("gateway", () => {
     let seen: Buffer | undefined;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeFetch: async (_url, init) => {
@@ -2222,6 +2249,7 @@ describe("gateway", () => {
     };
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog,
       nativePlaintextSpawn: { enabled: true, schemaSha256: "0".repeat(64) },
@@ -2263,6 +2291,7 @@ describe("gateway", () => {
     const argumentsJson = JSON.stringify({ target: "child-0731", message });
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: {
         models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2337,6 +2366,7 @@ describe("gateway", () => {
     const argumentsJson = JSON.stringify({ target: "child-0731", message });
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: {
         models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2425,6 +2455,7 @@ describe("gateway", () => {
     const port = await freePort();
     console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "));
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: {
         models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2527,6 +2558,7 @@ describe("gateway", () => {
     ].join("\r\n");
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: {
         models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2589,6 +2621,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: {
         models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2634,6 +2667,7 @@ describe("gateway", () => {
     let nativeHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: {
         models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2670,6 +2704,7 @@ describe("gateway", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async () => {
@@ -2752,6 +2787,7 @@ describe("gateway", () => {
     const sent: Record<string, unknown>[] = [];
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async (_url, init) => {
@@ -2811,6 +2847,7 @@ describe("gateway", () => {
     let attempts = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async () => {
@@ -2886,6 +2923,7 @@ describe("gateway", () => {
   it("times out native and Ollama header waits with upstream_headers_timeout", async () => {
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeHeadersMs: 40,
@@ -2929,6 +2967,7 @@ describe("gateway", () => {
   it("succeeds when headers arrive just before the route deadline", async () => {
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       nativeHeadersMs: 80,
@@ -2973,6 +3012,7 @@ describe("gateway", () => {
     const closed = await freePort();
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaUrl: `http://127.0.0.1:${closed}`,
@@ -2998,6 +3038,7 @@ describe("gateway", () => {
   it("ends an idle Ollama SSE without a synthetic error terminal or [DONE]", { timeout: 3_000 }, async () => {
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       idleMs: 40,
@@ -3037,6 +3078,7 @@ describe("gateway", () => {
     });
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       ollamaFetch: async (_url, init) => {
@@ -3082,6 +3124,7 @@ describe("gateway", () => {
     let cancelled = false;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: TEST_CATALOG,
       idleMs,

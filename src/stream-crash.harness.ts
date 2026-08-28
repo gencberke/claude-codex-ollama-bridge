@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { listenGateway } from "./codex/gateway.js";
 import { createServer, type AddressInfo } from "node:net";
 
@@ -14,6 +17,7 @@ async function main(): Promise<void> {
   const port = await freePort();
   const server = await listenGateway({
     port,
+    stateDir: mkdtempSync(join(tmpdir(), "cob-crash-state-")),
     catalog: {
       models: [{ slug: "o3" }, { slug: "ollama/x" }],
     },

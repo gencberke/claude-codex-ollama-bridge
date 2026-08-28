@@ -144,6 +144,7 @@ async function t4EncryptedNeverHitsOllama(): Promise<void> {
   const port = await freePort();
   const server = await listenGateway({
     port,
+    stateDir: mkdtempSync(join(tmpdir(), "cob-smoke-state-")),
     ollamaUrl: "http://127.0.0.1:9",
     ollamaFetch: async () => {
       ollamaHits += 1;
@@ -267,7 +268,7 @@ function profilePinsContract(): void {
 
 async function t3LiveOllama(ollamaUrl: string): Promise<void> {
   const port = await freePort();
-  const server = await listenGateway({ port, ollamaUrl });
+  const server = await listenGateway({ port, ollamaUrl, stateDir: mkdtempSync(join(tmpdir(), "cob-smoke-state-")) });
   try {
     const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
       method: "POST",

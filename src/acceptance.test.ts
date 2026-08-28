@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync} from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import {homedir, tmpdir} from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./codex/config/schema.js";
@@ -22,6 +22,7 @@ import { ollamaUpstreamModel } from "./codex/route.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
 import { isRecord } from "./core/json.js";
+const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "cob-acc-state-"));
 
 const CATALOG: CatalogFile = {
   models: [
@@ -37,6 +38,7 @@ describe("acceptance matrix (mock)", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: CATALOG,
       nativeFetch: async () => {
@@ -73,6 +75,7 @@ describe("acceptance matrix (mock)", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: CATALOG,
       nativeFetch: async (url, init) => {
@@ -105,6 +108,7 @@ describe("acceptance matrix (mock)", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: CATALOG,
       nativeFetch: async () => {
@@ -217,6 +221,7 @@ describe("acceptance matrix (mock)", () => {
     const ollamaRequests: { headers: Record<string, string>; body: JsonObject }[] = [];
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: CATALOG,
       compaction: { provider: "native", model: "codex-mini" },
@@ -333,6 +338,7 @@ describe("acceptance matrix (mock)", () => {
     let attempts = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: CATALOG,
       ollamaFetch: async () => {
@@ -364,6 +370,7 @@ describe("acceptance matrix (mock)", () => {
     let ollamaHits = 0;
     const port = await freePort();
     const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog: CATALOG,
       ollamaFetch: async () => {
@@ -502,6 +509,7 @@ async function runLiveGptParentOllamaChild(): Promise<void> {
     const ollamaRequests: { headers: Record<string, string>; body: JsonObject }[] = [];
     const ollamaBodies: string[] = [];
     server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
       port,
       catalog,
       catalogPath: paths.catalog,

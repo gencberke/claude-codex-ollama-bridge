@@ -153,12 +153,17 @@ export type GatewayOptions = {
 };
 
 export function createGateway(options: GatewayOptions): Server {
+  if (options.stateDir === undefined && options.stateStore === undefined) {
+    throw new Error(
+      "cob gateway requires an explicit stateDir or stateStore; refusing to guess the codex home",
+    );
+  }
   const gatewayOptions =
     options.stateStore === undefined
       ? {
           ...options,
           stateStore: new ConversationStateStore(
-            options.stateDir ?? resolvePaths().stateDir,
+            options.stateDir as string,
             options.stateRetention,
           ),
         }
