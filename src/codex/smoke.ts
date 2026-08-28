@@ -8,7 +8,7 @@ import { assertCodexAcceptsCatalog } from "./catalog/validator.js";
 import { OLLAMA_BASE_INSTRUCTIONS } from "./constants.js";
 import { DEFAULT_OLLAMA_SPAWN_MODEL } from "../core/ollama/default-model.js";
 import { listenGateway } from "./gateway.js";
-import { restoreCob } from "./lifecycle.js";
+import { restoreCob } from "./runtime/lifecycle.js";
 import { resolvePaths } from "./paths.js";
 import { renderCobProfile } from "./profile.js";
 import { routeModel } from "./route.js";

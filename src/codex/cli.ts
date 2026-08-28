@@ -7,7 +7,8 @@ import { listVisibleTopSlugs, parseCatalogJson } from "./catalog/catalog.js";
 import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./catalog/provenance.js";
 import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./config/schema.js";
 import { resolveCliSession, type CliSession } from "./session.js";
-import { restoreCob, serveForeground, startGatewayDetached, statusReport, stopGateway, syncCatalog } from "./lifecycle.js";
+import { restoreCob, serveForeground, startGatewayDetached, stopGateway, syncCatalog } from "./runtime/lifecycle.js";
+import { statusReport } from "./runtime/status.js";
 import { runSmoke } from "./smoke.js";
 
 type StartCompaction = { provider: "native"; model?: string };

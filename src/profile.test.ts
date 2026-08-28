@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderCobProfile } from "./codex/profile.js";
-import { restoreCob } from "./codex/lifecycle.js";
+import { restoreCob } from "./codex/runtime/lifecycle.js";
 import { resolvePaths } from "./codex/paths.js";
 
 describe("cob profile", () => {

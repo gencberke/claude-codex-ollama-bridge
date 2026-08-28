@@ -9,7 +9,7 @@ import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./codex/cat
 import { listenGateway } from "./codex/gateway.js";
 import { renderCobProfile } from "./codex/profile.js";
 import { resolvePaths } from "./codex/paths.js";
-import { restoreCob } from "./codex/lifecycle.js";
+import { restoreCob } from "./codex/runtime/lifecycle.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
 import type { OllamaTag } from "./core/ollama/tags.js";

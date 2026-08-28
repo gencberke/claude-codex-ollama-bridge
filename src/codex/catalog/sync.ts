@@ -32,6 +32,8 @@ export async function syncCatalogControlPlane(opts: {
   keepLastGoodOnReject?: boolean;
   /** Lifecycle-owned runtime lookup, injected to keep the control plane cycle-free. */
   resolveRuntimePort: () => number | undefined;
+  /** Known listen port (start preparation); skips the runtime-file lookup. */
+  profilePort?: number;
 }): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
   assertLoopbackHttpUrl(opts.ollamaUrl, "Ollama URL");
   const cob = opts.cob ?? resolveCobConfig({ paths: opts.paths });
@@ -93,7 +95,7 @@ export async function syncCatalogControlPlane(opts: {
       if (error instanceof CatalogConsumerRejectedError && opts.keepLastGoodOnReject && previous) {
         console.error(`[cob] ${error.message}`);
         console.error("[cob] keeping last known-good catalog; run cob sync after consumers agree");
-        writeCobProfile(opts.paths, opts.resolveRuntimePort() ?? DEFAULT_PORT);
+        writeCobProfile(opts.paths, opts.profilePort ?? opts.resolveRuntimePort() ?? DEFAULT_PORT);
         const ollamaCount = previous.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
         return { catalog: previous, wrote: false, ollamaCount, ollamaError: error.message };
       }
@@ -110,7 +112,7 @@ export async function syncCatalogControlPlane(opts: {
     catalogBytes: readFileSync(opts.paths.catalog),
     sources,
   });
-  writeCobProfile(opts.paths, opts.resolveRuntimePort() ?? DEFAULT_PORT);
+  writeCobProfile(opts.paths, opts.profilePort ?? opts.resolveRuntimePort() ?? DEFAULT_PORT);
   const ollamaCount = catalog.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
   return { catalog, wrote, ollamaCount, ollamaError };
 }

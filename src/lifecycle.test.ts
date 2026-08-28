@@ -23,10 +23,8 @@ import { uniqueTempPath } from "./core/atomic.js";
 import { acquireLock, LockTimeoutError, releaseLock, STALE_CORRUPT_MS, withExclusiveLock } from "./core/lock.js";
 import { assertCodexAcceptsCatalog } from "./codex/catalog/validator.js";
 import {
-  isHealthyRuntime,
   isStartLeaseActive,
   prepareProfileAndCatalog,
-  readRuntime,
   readStartLease,
   restrictExperimentalToIsolatedHome,
   restoreCob,
@@ -36,10 +34,10 @@ import {
   startGatewayDetached,
   stopGateway,
   syncCatalog,
-  statusReport,
-  writeRuntime,
   writeStartLease,
-} from "./codex/lifecycle.js";
+} from "./codex/runtime/lifecycle.js";
+import { isHealthyRuntime, readRuntime, writeRuntime } from "./codex/runtime/runtime.js";
+import { statusReport } from "./codex/runtime/status.js";
 import { resolvePaths } from "./codex/paths.js";
 import { cobProcessIdentity, isOurCobArgv, processStartKey } from "./core/process-info.js";
 
@@ -1161,7 +1159,7 @@ describe("overlay rollback and start lease", () => {
     const ready = join(dir, "new-operation-ready");
     const helper = join(dir, "new-operation.mjs");
     const lockUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "core", "lock.js")).href;
-    const lifecycleUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "codex", "lifecycle.js")).href;
+    const lifecycleUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "codex", "runtime", "lifecycle.js")).href;
     const pathsUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "codex", "paths.js")).href;
     const processInfoUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "core", "process-info.js")).href;
     writeFileSync(
@@ -1787,7 +1785,7 @@ function spawnFakeServe(
 ) {
   const script = join(dir, `fake-serve-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.mjs`);
   const lockUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "core", "lock.js")).href;
-  const lifecycleUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "codex", "lifecycle.js")).href;
+  const lifecycleUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "codex", "runtime", "runtime.js")).href;
   const pathsUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "codex", "paths.js")).href;
   writeFileSync(
     script,

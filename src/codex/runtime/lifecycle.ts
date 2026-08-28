@@ -2,18 +2,18 @@ import type { ChildProcess } from "node:child_process";
 import { connect } from "node:net";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { DEFAULT_PORT } from "./constants.js";
-import { DEFAULT_OLLAMA_URL } from "../core/ollama/constants.js";
+import { DEFAULT_PORT } from "../constants.js";
+import { DEFAULT_OLLAMA_URL } from "../../core/ollama/constants.js";
 import {
   mergeCatalogWithFallback,
   parseCatalogJson,
   serializeCatalog,
   writeCatalogIfChanged,
-} from "./catalog/catalog.js";
-import { loadBundledCatalog } from "./catalog/source.js";
-import { syncCatalogControlPlane } from "./catalog/sync.js";
-import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "./catalog/validator.js";
-import { loadOllamaTags } from "../core/ollama/tags.js";
+} from "../catalog/catalog.js";
+import { loadBundledCatalog } from "../catalog/source.js";
+import { syncCatalogControlPlane } from "../catalog/sync.js";
+import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "../catalog/validator.js";
+import { loadOllamaTags } from "../../core/ollama/tags.js";
 import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
@@ -21,41 +21,53 @@ import {
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
   writeCatalogValidationFailure,
-} from "./catalog/provenance.js";
+} from "../catalog/provenance.js";
 import {
   discoverCodexBins,
   resolveCatalogSources,
   sha256Hex,
   type CatalogDiscovery,
   type InspectCodexIo,
-} from "./catalog/source.js";
-import { listenGateway } from "./gateway.js";
-import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "./limits.js";
-import { assertLoopbackHttpUrl } from "../core/loopback.js";
-import { writeCobProfile } from "./profile.js";
+} from "../catalog/source.js";
+import { listenGateway } from "../gateway.js";
+import {
+  isHealthyRuntime,
+  isOurGatewayPid,
+  readRuntime,
+  runtimeStillServing,
+  waitForHealth,
+  waitForPidExit,
+  waitForPortClosed,
+  writeRuntime,
+  type HealthWait,
+  type RuntimeState,
+} from "./runtime.js";
+import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "../limits.js";
+import { assertLoopbackHttpUrl } from "../../core/loopback.js";
+import { writeCobProfile } from "../profile.js";
 import {
   assessDesktopOverlay,
   loadRootTomlKeys,
   openaiPortFromToml,
   summarizeCobStatus,
   type DesktopOverlayAssessment,
-} from "./root-config.js";
-import { resolvePaths, type CobPaths } from "./paths.js";
-import { detectInstall, formatInstallLine } from "../core/install-detection.js";
-import { isLiveCodexHome } from "./home.js";
+} from "../root-config.js";
+import { resolvePaths, type CobPaths } from "../paths.js";
+import { detectInstall, formatInstallLine } from "../../core/install-detection.js";
+import { isLiveCodexHome } from "../home.js";
 import {
   DEFAULT_CATALOG_POLICY,
   type CobFileConfig,
   type CompactionPolicy,
-} from "./config/schema.js";
-import { writeCobToml } from "./config/toml.js";
+} from "../config/schema.js";
+import { writeCobToml } from "../config/toml.js";
 import {
   catalogSupportsApplyPatch,
   catalogSupportsSearchTool,
   resolveCobConfig,
   resolveSpawnableOllamaSlugs,
-} from "./config/resolve.js";
-import { readFileBufferOrNull, writeFileAtomic } from "../core/atomic.js";
+} from "../config/resolve.js";
+import { readFileBufferOrNull, writeFileAtomic } from "../../core/atomic.js";
 import {
   acquireLock,
   adoptLock,
@@ -64,8 +76,8 @@ import {
   releaseLock,
   waitForLockAdopted,
   withExclusiveLock,
-} from "../core/lock.js";
-import { clearConversationState } from "./state/store.js";
+} from "../../core/lock.js";
+import { clearConversationState } from "../state/store.js";
 import {
   cobProcessIdentity,
   isCobGatewayProcess,
@@ -74,12 +86,12 @@ import {
   ownStartKey,
   processStartKey,
   reapChild,
-} from "../core/process-info.js";
-import type { CatalogFile } from "./types.js";
-import { isRecord } from "../core/json.js";
+} from "../../core/process-info.js";
+import type { CatalogFile } from "../types.js";
+import { isRecord } from "../../core/json.js";
 
-export { isCobProcess } from "../core/process-info.js";
-export { adoptLock, heldLockToken } from "../core/lock.js";
+export { isCobProcess } from "../../core/process-info.js";
+export { adoptLock, heldLockToken } from "../../core/lock.js";
 
 export type OverlaySnapshot = Record<string, Buffer | null>;
 
@@ -105,28 +117,26 @@ export type StartOptions = {
   inspect?: InspectCodexIo;
 };
 
-export type RuntimeState = {
-  pid: number;
-  port: number;
-  ollamaUrl: string;
-  startedAt: string;
-  nonce?: string;
-  startKey?: string;
-  compaction?: CompactionPolicy;
-  version?: string;
-  installKind?: string;
-  cliPath?: string;
-};
-
-export type HealthWait = {
-  attempts?: number;
-  deadlineMs?: number;
-  nonce?: string;
-  pid?: number;
-};
+/**
+ * Every file cob owns inside a codex home. This is the single source of
+ * truth; restore deletes all of them and overlay rollback derives its
+ * snapshot set by excluding the files that must survive a failed start.
+ */
+export function cobOwnedFiles(paths: CobPaths): string[] {
+  return [
+    paths.profile,
+    paths.catalog,
+    paths.catalogMeta,
+    paths.cobConfig,
+    paths.log,
+    paths.runtime,
+    paths.pid,
+    paths.startLease,
+  ];
+}
 
 export function overlayStateFiles(paths: CobPaths): string[] {
-  return [paths.profile, paths.catalog, paths.catalogMeta, paths.cobConfig, paths.runtime, paths.pid];
+  return cobOwnedFiles(paths).filter((file) => file !== paths.log && file !== paths.startLease);
 }
 
 export function snapshotOverlays(paths: CobPaths): OverlaySnapshot {
@@ -340,8 +350,8 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     inspect: opts.inspect,
     keepLastGoodOnReject: true,
     resolveRuntimePort: () => readRuntime(paths)?.port,
+    profilePort: port,
   });
-  writeCobProfile(paths, port);
   writeCobToml(paths.cobConfig, {
     compaction: cob.compaction,
     subagents: { models: spawnable },
@@ -477,53 +487,6 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
   });
 }
 
-export function writeRuntime(paths: CobPaths, runtime: RuntimeState): void {
-  writeFileAtomic(paths.runtime, `${JSON.stringify(runtime, null, 2)}\n`, 0o600);
-  writeFileAtomic(paths.pid, `${runtime.pid}\n`, 0o600);
-}
-
-export function readRuntime(paths: CobPaths): RuntimeState | null {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(paths.runtime, "utf8"));
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "pid" in parsed &&
-      "port" in parsed &&
-      typeof (parsed as RuntimeState).pid === "number"
-    ) {
-      return parsed as RuntimeState;
-    }
-  } catch {
-    // fall through to pid file
-  }
-  try {
-    const pid = Number(readFileSync(paths.pid, "utf8").trim());
-    if (Number.isInteger(pid) && pid > 0) {
-      return {
-        pid,
-        port: DEFAULT_PORT,
-        ollamaUrl: DEFAULT_OLLAMA_URL,
-        startedAt: "",
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-export async function isHealthyRuntime(runtime: RuntimeState): Promise<boolean> {
-  if (!isPidAlive(runtime.pid)) return false;
-  const health = await fetchHealthz(runtime.port, runtime.nonce);
-  if (!health) return false;
-  if (!isCobHealth(health.body) || !health.ok) return false;
-  const bodyPid = healthPid(health.body);
-  if (bodyPid !== undefined && bodyPid !== runtime.pid) return false;
-  if (runtime.nonce && !healthNonceOk(health.body)) return false;
-  return true;
-}
-
 export async function stopGateway(paths: CobPaths = resolvePaths(), opts?: { locked?: boolean }): Promise<boolean> {
   const run = () => stopGatewayUnlocked(paths);
   if (opts?.locked) return run();
@@ -599,16 +562,7 @@ export async function restoreCob(paths: CobPaths = resolvePaths()): Promise<{ ro
         throw new Error(`restore refused: port ${runtime.port} still open; leaving overlays in place`);
       }
     }
-    for (const file of [
-      paths.profile,
-      paths.catalog,
-      paths.catalogMeta,
-      paths.cobConfig,
-      paths.pid,
-      paths.log,
-      paths.runtime,
-      paths.startLease,
-    ]) {
+    for (const file of cobOwnedFiles(paths)) {
       if (file === paths.rootConfig) {
         throw new Error("internal error: refuse to delete root config");
       }
@@ -630,281 +584,6 @@ export async function restoreCob(paths: CobPaths = resolvePaths()): Promise<{ ro
     throw new Error("restore changed ~/.codex/config.toml; this is a cob bug");
   }
   return { rootConfigUnchanged: true };
-}
-
-export async function waitForHealth(port: number, opts: number | HealthWait = 40): Promise<void> {
-  const attempts = typeof opts === "number" ? opts : (opts.attempts ?? 40);
-  const nonce = typeof opts === "number" ? undefined : opts.nonce;
-  const expectedPid = typeof opts === "number" ? undefined : opts.pid;
-  const deadlineMs =
-    typeof opts === "number" ? undefined : (opts.deadlineMs ?? START_HEALTH_DEADLINE_MS);
-  const deadline = deadlineMs !== undefined ? Date.now() + deadlineMs : undefined;
-  let last = "no response";
-  for (let i = 0; i < attempts; i += 1) {
-    if (deadline !== undefined && Date.now() >= deadline) break;
-    if (expectedPid !== undefined && !isPidAlive(expectedPid)) {
-      throw new Error(`gateway process ${expectedPid} exited before becoming healthy`);
-    }
-    try {
-      const remaining = deadline !== undefined ? Math.max(1, deadline - Date.now()) : HEALTH_FETCH_TIMEOUT_MS;
-      const health = await fetchHealthz(port, nonce, Math.min(HEALTH_FETCH_TIMEOUT_MS, remaining));
-      if (!health) {
-        last = "no response";
-      } else if (
-        health.ok &&
-        isCobHealth(health.body) &&
-        (nonce === undefined || healthNonceOk(health.body)) &&
-        (expectedPid === undefined || healthPid(health.body) === expectedPid)
-      ) {
-        return;
-      } else {
-        last = `${health.status}`;
-      }
-    } catch (error) {
-      last = error instanceof Error ? error.message : String(error);
-    }
-    const sleepFor =
-      deadline !== undefined ? Math.min(100, Math.max(0, deadline - Date.now())) : 100;
-    if (sleepFor <= 0) break;
-    await sleep(sleepFor);
-  }
-  throw new Error(`gateway did not become healthy on ${port}: ${last}`);
-}
-
-export type StatusReport = {
-  /** Exit 0 when this Codex home needs no cob action. */
-  ok: boolean;
-  text: string;
-};
-
-export async function statusReport(
-  paths: CobPaths = resolvePaths(),
-  opts?: { discovery?: CatalogDiscovery; inspect?: InspectCodexIo },
-): Promise<StatusReport> {
-  const liveHome = isLiveCodexHome(paths.codexHome);
-  const runtime = readRuntime(paths);
-  const root = existsSync(paths.rootConfig);
-  const install = detectInstall();
-  const discovery = opts?.discovery ?? discoverCodexBins({ paths, liveHome });
-  const heading = [
-    formatInstallLine(install),
-    `cli: ${install.cliPath || "-"}`,
-    `codex home: ${paths.codexHome}`,
-    `root config present: ${root} (read-only for cob)`,
-    `profile: ${existsSync(paths.profile) ? paths.profile : "missing"}`,
-    `catalog: ${existsSync(paths.catalog) ? paths.catalog : "missing"}`,
-    `catalog meta: ${existsSync(paths.catalogMeta) ? paths.catalogMeta : "missing"}`,
-    `state: ${existsSync(paths.stateDir) ? paths.stateDir : "missing"}`,
-  ];
-  if (!liveHome) {
-    heading.push("isolated Codex home: ChatGPT Desktop still reads ~/.codex");
-  }
-  if (!runtime) {
-    return finishStatusReport(liveHome, heading, ["gateway: stopped"], paths, {
-      gatewayHealthy: false,
-      discovery,
-      inspect: opts?.inspect,
-    });
-  }
-  let health = "unknown";
-  let liveCompaction: string | undefined;
-  const fetched = await fetchHealthz(runtime.port, runtime.nonce);
-  if (!fetched) {
-    health = "unreachable";
-  } else {
-    const cob = isCobHealth(fetched.body);
-    const nonceOk = !runtime.nonce || healthNonceOk(fetched.body);
-    const pidOk = healthPid(fetched.body) === undefined || healthPid(fetched.body) === runtime.pid;
-    health = fetched.ok && cob && nonceOk && pidOk ? "ok" : `http ${fetched.status}`;
-    if (isRecord(fetched.body) && "compaction" in fetched.body) {
-      const compaction = (fetched.body as {
-        compaction?: { provider?: string; model?: string | null; ollama_threads?: string };
-      }).compaction;
-      if (compaction?.provider) {
-        liveCompaction = `${compaction.provider}${compaction.model ? `/${compaction.model}` : ""}${
-          compaction.ollama_threads ? ` ollama_threads=${compaction.ollama_threads}` : ""
-        }`;
-      }
-    }
-  }
-  const gatewayHealthy = health === "ok";
-  const details = [
-    `gateway pid: ${runtime.pid}`,
-    `gateway port: ${runtime.port}`,
-    `gateway health: ${health}`,
-    `ollama url: ${runtime.ollamaUrl}`,
-  ];
-  if (runtime.version) {
-    details.push(`gateway release: ${runtime.version} (${runtime.installKind ?? "unknown"})`);
-  }
-  if (liveCompaction) {
-    details.push(`compaction: ${liveCompaction}`);
-  } else if (runtime.compaction) {
-    details.push(
-      `compaction: ${runtime.compaction.provider}${runtime.compaction.model ? `/${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction.ollamaThreads ?? "summarize"}`,
-    );
-  }
-  return finishStatusReport(liveHome, heading, details, paths, {
-    runtimePort: runtime.port,
-    gatewayHealthy,
-    discovery,
-    inspect: opts?.inspect,
-  });
-}
-
-function finishStatusReport(
-  liveHome: boolean,
-  heading: string[],
-  details: string[],
-  paths: CobPaths,
-  opts: {
-    runtimePort?: number;
-    gatewayHealthy: boolean;
-    discovery: CatalogDiscovery;
-    inspect?: InspectCodexIo;
-  },
-): StatusReport {
-  const overlay = assessPathsOverlay(paths, opts);
-  const cob = resolveCobConfig({ paths });
-  const provenance = assessCatalogProvenance({
-    catalogPath: paths.catalog,
-    metaPath: paths.catalogMeta,
-    discovery: opts.discovery,
-    spawnableOllamaSlugs: resolveSpawnableOllamaSlugs(cob),
-    io: opts.inspect,
-  });
-  const summary = summarizeCobStatus({
-    liveHome,
-    overlay: overlay.state,
-    gatewayHealthy: opts.gatewayHealthy,
-    catalogFreshness: provenance.freshness,
-  });
-  return {
-    ok: summary.ok,
-    text: [`cob: ${summary.kind}`, ...heading, ...details, ...overlay.lines, ...provenance.lines].join("\n"),
-  };
-}
-
-function assessPathsOverlay(
-  paths: CobPaths,
-  opts: { runtimePort?: number; gatewayHealthy: boolean },
-): DesktopOverlayAssessment {
-  const loaded = loadRootTomlKeys(paths.rootConfig);
-  let profilePort: number | undefined;
-  try {
-    profilePort = openaiPortFromToml(readFileSync(paths.profile, "utf8"));
-  } catch {
-    profilePort = undefined;
-  }
-  return assessDesktopOverlay({
-    keys: loaded.keys,
-    readError: loaded.readError,
-    cobCatalogPath: paths.catalog,
-    cobCatalogExists: existsSync(paths.catalog),
-    codexHome: paths.codexHome,
-    profilePort,
-    runtimePort: opts.runtimePort,
-    gatewayHealthy: opts.gatewayHealthy,
-  });
-}
-
-async function runtimeStillServing(runtime: RuntimeState): Promise<boolean> {
-  const health = await fetchHealthz(runtime.port, runtime.nonce);
-  if (
-    health &&
-    health.ok &&
-    isCobHealth(health.body) &&
-    (runtime.nonce ? healthNonceOk(health.body) : true) &&
-    (healthPid(health.body) === undefined || healthPid(health.body) === runtime.pid)
-  ) {
-    return true;
-  }
-  if (!isPidAlive(runtime.pid)) return false;
-  if (runtime.startKey && !isSameProcess(runtime.pid, runtime.startKey)) return false;
-  const identity = cobProcessIdentity(runtime.pid);
-  if (identity === "unknown") return true;
-  return identity === "cob" && isCobGatewayProcess(runtime.pid);
-}
-
-async function fetchHealthz(
-  port: number,
-  nonce?: string,
-  timeoutMs = HEALTH_FETCH_TIMEOUT_MS,
-): Promise<{ ok: boolean; status: number; body: unknown } | null> {
-  try {
-    const headers: Record<string, string> = {};
-    if (nonce) headers["x-cob-nonce"] = nonce;
-    const response = await fetch(`http://127.0.0.1:${port}/healthz`, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const body: unknown = await response.json().catch(() => null);
-    return { ok: response.ok, status: response.status, body };
-  } catch {
-    return null;
-  }
-}
-
-function isCobHealth(body: unknown): boolean {
-  return Boolean(isRecord(body) && body.service === "cob");
-}
-
-function healthNonceOk(body: unknown): boolean {
-  return Boolean(isRecord(body) && body.nonce_ok === true);
-}
-
-function healthPid(body: unknown): number | undefined {
-  return isRecord(body) && typeof body.pid === "number" ? body.pid : undefined;
-}
-
-function isOurGatewayPid(runtime: RuntimeState): boolean {
-  if (!isCobGatewayProcess(runtime.pid)) return false;
-  if (!runtime.startKey) return false;
-  return isSameProcess(runtime.pid, runtime.startKey);
-}
-
-function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  return (async () => {
-    while (Date.now() < deadline) {
-      if (!isPidAlive(pid)) return;
-      await sleep(50);
-    }
-  })();
-}
-
-function waitForPortClosed(port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  return (async () => {
-    while (Date.now() < deadline) {
-      if (!(await isPortOpen(port))) return true;
-      await sleep(50);
-    }
-    return !(await isPortOpen(port));
-  })();
-}
-
-function isPortOpen(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (open: boolean): void => {
-      if (settled) return;
-      settled = true;
-      resolve(open);
-    };
-    const socket = connect({ host: "127.0.0.1", port }, () => {
-      socket.end();
-      done(true);
-    });
-    socket.setTimeout(HEALTH_FETCH_TIMEOUT_MS, () => {
-      socket.destroy();
-      done(true);
-    });
-    socket.once("error", () => {
-      socket.destroy();
-      done(false);
-    });
-  });
 }
 
 export async function startGatewayDetached(opts: {
