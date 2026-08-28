@@ -330,7 +330,10 @@ async function handleResponsesPost(
   kind: "responses" | "compact",
 ): Promise<void> {
   const abort = attachCancellation(req, res);
-  const nativeSlugs = nativeSlugsFromCatalog(resolveCatalog(options));
+  // One catalog snapshot per request: route, capability, and dispatch
+  // decisions must not straddle an atomic catalog replacement.
+  const catalogSnapshot = resolveCatalog(options);
+  const nativeSlugs = nativeSlugsFromCatalog(catalogSnapshot);
   let inbound: { raw: Buffer; body: Buffer; decoded: boolean; encoding?: string };
   try {
     inbound = await readDecodedBody(req, abort.signal);
@@ -424,7 +427,7 @@ async function handleResponsesPost(
       // assembled, so only a resolved previous_response_id may authorize the
       // stored alias history on the final Ollama wire.
       allowTrustedApplyPatchAliasHistory: continuation.parentResponseId !== undefined,
-      supportsReasoning: catalogRowSupportsReasoning(resolveCatalog(options), catalogModel),
+      supportsReasoning: catalogRowSupportsReasoning(catalogSnapshot, catalogModel),
     });
     if (isOllamaReject(forwarded)) {
       json(res, forwarded.status, forwarded.body);
@@ -527,7 +530,8 @@ async function handleOllamaCompactionTrigger(
   abort: AbortController,
 ): Promise<void> {
   const policy = options.compaction ?? { provider: "native" };
-  const nativeSlugs = nativeSlugsFromCatalog(resolveCatalog(options));
+  const catalogSnapshot = resolveCatalog(options);
+  const nativeSlugs = nativeSlugsFromCatalog(catalogSnapshot);
   const plan = resolveCompactPlan({
     threadModel,
     target: "ollama",
@@ -561,6 +565,7 @@ async function handleOllamaCompactionTrigger(
       plan.compactModel,
       abort,
       payload.stream === true,
+      catalogSnapshot,
     );
     return;
   }
@@ -623,6 +628,7 @@ async function handleOllamaSummaryCompact(
   compactModel: string,
   abort: AbortController,
   stream: boolean,
+  catalogSnapshot: CatalogFile | undefined,
 ): Promise<void> {
   const history = projectOllamaSummarizerHistory(stateHistoryValues(continuation.replayHistory));
   if (!Array.isArray(history) || history.length === 0) {
@@ -664,7 +670,7 @@ async function handleOllamaSummaryCompact(
     `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("ollama", compactModel))} ${formatCompactAttemptLog(compactNote)}`,
   );
   const compactStarted = Date.now();
-  const supportsReasoning = catalogRowSupportsReasoning(resolveCatalog(options), compactModel);
+  const supportsReasoning = catalogRowSupportsReasoning(catalogSnapshot, compactModel);
   const compactEffort = supportsReasoning
     ? mapOllamaReasoningEffort(options.compaction?.ollamaEffort, compactModel) ??
       ollamaReasoningLadderForModel(compactModel).defaultEffort
