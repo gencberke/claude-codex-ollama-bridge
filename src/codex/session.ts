@@ -1,15 +1,7 @@
 import type { CliFlags } from "../cli-session.js";
 import { resolveListenPort } from "../cli-session.js";
 import { detectInstall, type CobInstall } from "../core/install-detection.js";
-import { DEFAULT_PORT } from "./constants.js";
-import {
-  DEFAULT_DEV_PORT,
-  assertWorkspaceMayTouchHome,
-  defaultDevHome,
-  defaultLiveHome,
-  isLiveCodexHome,
-  seedIsolatedCodexHome,
-} from "./home.js";
+import { assertWorkspaceMayTouchHome, defaultDevHome, defaultLiveHome, isLiveCodexHome, seedIsolatedCodexHome } from "./home.js";
 import { resolveCodexHome, resolvePaths, type CobPaths } from "./paths.js";
 
 export type CliSession = {

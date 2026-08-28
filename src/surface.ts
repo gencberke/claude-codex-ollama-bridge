@@ -5,7 +5,3 @@ export const DEFAULT_SURFACE: CobSurface = "codex";
 export function isCobSurface(value: string): value is CobSurface {
   return (COB_SURFACES as readonly string[]).includes(value);
 }
-
-export function surfaceLabel(surface: CobSurface): string {
-  return surface === "claude" ? "cob claude" : "cob codex";
-}

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultDevClaudeHome, defaultLiveClaudeHome } from "./home.js";
+import { defaultLiveClaudeHome } from "./home.js";
 
 export type ClaudePaths = {
   claudeHome: string;
@@ -29,8 +29,4 @@ export function resolveClaudePaths(claudeHome = resolveClaudeHome()): ClaudePath
     codeConfig,
     agents: join(codeConfig, "agents"),
   };
-}
-
-export function resolveClaudeDevHome(): string {
-  return defaultDevClaudeHome(homedir());
 }

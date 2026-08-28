@@ -132,8 +132,6 @@ export function nativePlaintextSpawnSchemaSha256(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
 }
 
-/** Short alias used by the isolated harness. */
-export const nativePlaintextSpawnSchemaFingerprint = nativePlaintextSpawnSchemaSha256;
 
 const OBSERVED_COLLABORATION_TOOL_NAMES = [
   "followup_task",

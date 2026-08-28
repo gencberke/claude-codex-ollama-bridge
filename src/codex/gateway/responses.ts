@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "../constants.js";
 import { DEFAULT_OLLAMA_URL } from "../../core/ollama/constants.js";
@@ -37,7 +37,6 @@ import {
   type OllamaResponseGuardState,
   type OllamaToolDeclaration,
 } from "../ollama-response-boundary.js";
-import { assertLoopbackBindHost } from "../../core/loopback.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "../route.js";
 import type { CompactionPolicy, NativePlaintextSpawnPolicy } from "../config/schema.js";
 import { classifyCompactionTrigger, compactionHeader, resolveCompactPlan } from "../compaction/policy.js";
@@ -86,7 +85,7 @@ import {
   type StreamFailureWriter,
 } from "../../core/http/relay.js";
 import { attachCancellation } from "../../core/http/cancellation.js";
-import { HeadersTimeoutError, IdleTimeoutError } from "../../core/http/timeouts.js";
+import { IdleTimeoutError } from "../../core/http/timeouts.js";
 import { sseDoneTerminal, sseErrorTerminal, sseRewriteTransform, type SseObserver } from "../sse.js";
 import type { CatalogFile } from "../types.js";
 import type { JsonObject } from "../../core/json.js";
@@ -329,8 +328,6 @@ export async function handleResponsesPost(
     }
     await relayOllama(forwarded.response, res, catalogModel, abort, options, {
       state: stateStore(options),
-      originalPayload: payload,
-      preparedPayload: continuation.payload,
       requestInput: continuation.requestInput,
       requestInputProjection: continuation.requestInputProjection,
       baseHistory: continuation.baseHistory,
@@ -502,8 +499,6 @@ async function handleOllamaCompactionTrigger(
     options,
     {
       state: stateStore(options),
-      originalPayload: triggerlessPayload,
-      preparedPayload: compactPayload,
       requestInput: continuation.requestInput,
       requestInputProjection: continuation.requestInputProjection,
       baseHistory: continuation.baseHistory,
@@ -789,8 +784,6 @@ type OllamaContinuation = {
 
 type OllamaStateContext = {
   state: ConversationStateStore;
-  originalPayload: JsonObject;
-  preparedPayload: JsonObject;
   requestInput: unknown;
   requestInputProjection: unknown;
   baseHistory: StateHistoryItem[];

@@ -1,8 +1,6 @@
-import type { IncomingMessage } from "node:http";
 import { connect } from "node:net";
 import { DEFAULT_OLLAMA_URL } from "../../core/ollama/constants.js";
-import { readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { writeFileAtomic } from "../../core/atomic.js";
 import { isRecord } from "../../core/json.js";
 import { cobProcessIdentity, isCobGatewayProcess, isPidAlive, isSameProcess } from "../../core/process-info.js";
@@ -10,7 +8,6 @@ import { DEFAULT_PORT } from "../constants.js";
 import { HEALTH_FETCH_TIMEOUT_MS, START_HEALTH_DEADLINE_MS } from "../limits.js";
 import type { CompactionPolicy } from "../config/schema.js";
 import type { CobPaths } from "../paths.js";
-import { resolvePaths } from "../paths.js";
 
 /**
  * Codex runtime file, pid/nonce identity, and health probing primitives.

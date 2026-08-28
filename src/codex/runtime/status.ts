@@ -1,36 +1,13 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { readFileBufferOrNull } from "../../core/atomic.js";
-import { cobProcessIdentity, isSameProcess } from "../../core/process-info.js";
-import {
-  fetchHealthz,
-  healthNonceOk,
-  healthPid,
-  isCobHealth,
-  isOurGatewayPid,
-  readRuntime,
-  runtimeStillServing,
-  type RuntimeState,
-} from "./runtime.js";
-import { discoverCodexBins, resolveCatalogSources, type CatalogDiscovery, type InspectCodexIo } from "../catalog/source.js";
+import { existsSync, readFileSync } from "node:fs";
+import { fetchHealthz, healthNonceOk, healthPid, isCobHealth, readRuntime } from "./runtime.js";
+import { discoverCodexBins, type CatalogDiscovery, type InspectCodexIo } from "../catalog/source.js";
 import { detectInstall, formatInstallLine } from "../../core/install-detection.js";
 import { isLiveCodexHome } from "../home.js";
 import { isRecord } from "../../core/json.js";
 import { resolveCobConfig, resolveSpawnableOllamaSlugs } from "../config/resolve.js";
-import {
-  assessDesktopOverlay,
-  loadRootTomlKeys,
-  openaiPortFromToml,
-  summarizeCobStatus,
-  type DesktopOverlayAssessment,
-} from "../root-config.js";
+import { assessDesktopOverlay, loadRootTomlKeys, openaiPortFromToml, summarizeCobStatus, type DesktopOverlayAssessment } from "../root-config.js";
 import { resolvePaths } from "../paths.js";
-import {
-  assessCatalogProvenance,
-  catalogStatusKind,
-  missingRequiredPickerRows,
-  parseCatalogMetadata,
-  type CatalogFreshness,
-} from "../catalog/provenance.js";
+import { assessCatalogProvenance } from "../catalog/provenance.js";
 import type { CobPaths } from "../paths.js";
 
 /**

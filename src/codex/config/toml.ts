@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeFileAtomic } from "../../core/atomic.js";
 import { OLLAMA_CATALOG_CONTEXT_CAP } from "../constants.js";
@@ -208,11 +208,6 @@ export function writeCobToml(path: string, config: CobFileConfig): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileAtomic(path, renderCobToml(config), 0o600);
 }
-
-export function cobTomlExists(path: string): boolean {
-  return existsSync(path);
-}
-
 function splitTomlList(inner: string): string[] {
   const items: string[] = [];
   let current = "";

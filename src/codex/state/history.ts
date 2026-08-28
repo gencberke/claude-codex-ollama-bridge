@@ -12,8 +12,8 @@ import {
   type HistorySource,
   type StateHistoryItem,
 } from "./schema.js";
-import { itemIdentity, jsonCloneOrNull, stableJson } from "./schema.js";
-import { ollamaFollowUpInputError, projectOllamaInputValue } from "../ollama/history.js";
+import { itemIdentity, stableJson } from "./schema.js";
+import { projectOllamaInputValue } from "../ollama/history.js";
 
 /**
  * State history identity, merge, and replay helpers. Pure; no filesystem access.

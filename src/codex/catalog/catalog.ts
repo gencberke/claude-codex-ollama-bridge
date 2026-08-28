@@ -134,14 +134,6 @@ export function buildOllamaEntry(
   assertOllamaRowMatchesEvidence(entry, evidence);
   return entry;
 }
-
-export function ollamaCatalogContextWindow(
-  tagLength: number | undefined,
-  activeCap = OLLAMA_CATALOG_CONTEXT_CAP,
-): number {
-  return ollamaCatalogWindows({ tagLength, activeCap }).contextWindow;
-}
-
 export function isVerifiedCloudOllamaTag(tag: Pick<OllamaTag, "name" | "remote_host">): boolean {
   return Boolean(tag.remote_host) || /:cloud$|-cloud$/.test(tag.name);
 }

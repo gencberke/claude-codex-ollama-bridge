@@ -1,6 +1,5 @@
 import type { CliFlags } from "../cli-session.js";
 import { resolveListenPort } from "../cli-session.js";
-import { CLAUDE_DEFAULT_DEV_PORT, CLAUDE_DEFAULT_PORT } from "./constants.js";
 import {
   assertNotUserClaudeHome,
   assertWorkspaceMayTouchClaudeHome,

@@ -14,7 +14,7 @@ import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
 import { serializeCatalog } from "./codex/catalog/catalog.js";
 import type { GatewayOptions } from "./codex/gateway.js";
 import { ollamaCompactHandoffSkeleton } from "./codex/compaction/summary.js";
-import { assertValidOllamaFollowUpInput, ollamaFollowUpInputError } from "./codex/ollama/history.js";
+import { assertValidOllamaFollowUpInput } from "./codex/ollama/history.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./codex/ollama.js";
 import { APPLY_PATCH_TOOL_NAME, COB_APPLY_PATCH_ALIAS } from "./codex/experimental/apply-patch.js";
 import {

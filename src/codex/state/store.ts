@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -16,55 +15,8 @@ import { uniqueTempPath } from "../../core/atomic.js";
 import { MAX_UPSTREAM_BODY_BYTES } from "../../core/http/body.js";
 import { withExclusiveLock } from "../../core/lock.js";
 import { isRecord, type JsonObject } from "../../core/json.js";
-import { findEncryptedContent } from "../encrypted.js";
-import { ollamaFollowUpInputError, projectOllamaInputValue } from "../ollama/history.js";
-import {
-  assertResponseId,
-  assertSafeProviderHistory,
-  CHECKPOINTS_DIRECTORY,
-  COMPACT_ARCHIVE_DIRECTORY,
-  CONVERSATION_STATE_SCHEMA_VERSION,
-  ConversationStateError,
-  decodeResponseId,
-  encodeResponseId,
-  DEFAULT_STATE_MAX_AGE_MS,
-  DEFAULT_STATE_MAX_BYTES,
-  DEFAULT_STATE_MAX_HEADS,
-  DEFAULT_STATE_MAX_NODES,
-  MAX_STATE_CHAIN_DEPTH,
-  MAX_STATE_CHECKPOINT_BYTES,
-  MAX_STATE_HISTORY_ITEMS,
-  MAX_STATE_RESPONSE_ID_BYTES,
-  MAX_STATE_SCAN_FILES,
-  positiveInteger,
-  stableJson,
-  normalizeCheckpoint,
-  serializeCheckpoint,
-  STATE_LOCK_NAME,
-  validateCheckpoint,
-  validateHistory,
-  validateProvenance,
-  type ConversationCheckpoint,
-  type PublishCheckpoint,
-  type StateHistoryItem,
-  type StateProvenance,
-  type StateRetentionOptions,
-  type StateRetentionReport,
-  type HistoryProvenance,
-} from "./schema.js";
-import {
-  checkpointTime,
-  cloneHistoryItem,
-  compactionOpaqueFingerprint,
-  compactionOutputMatchesItem,
-  createStateHistoryItem,
-  createStateHistoryItems,
-  historyItemIdentity,
-  mergeStateHistory,
-  retainedResponseIds,
-  sameHistory,
-  stateHistoryValues,
-} from "./history.js";
+import { assertResponseId, CHECKPOINTS_DIRECTORY, COMPACT_ARCHIVE_DIRECTORY, ConversationStateError, decodeResponseId, encodeResponseId, DEFAULT_STATE_MAX_AGE_MS, DEFAULT_STATE_MAX_BYTES, DEFAULT_STATE_MAX_HEADS, DEFAULT_STATE_MAX_NODES, MAX_STATE_CHAIN_DEPTH, MAX_STATE_CHECKPOINT_BYTES, MAX_STATE_SCAN_FILES, positiveInteger, stableJson, normalizeCheckpoint, serializeCheckpoint, STATE_LOCK_NAME, validateCheckpoint, type ConversationCheckpoint, type PublishCheckpoint, type StateHistoryItem, type StateRetentionOptions, type StateRetentionReport } from "./schema.js";
+import { checkpointTime, cloneHistoryItem, compactionOpaqueFingerprint, compactionOutputMatchesItem, createStateHistoryItems, mergeStateHistory, retainedResponseIds, sameHistory } from "./history.js";
 
 /**
  * ConversationStateStore: the single filesystem resource owner for cob state.

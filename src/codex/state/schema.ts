@@ -3,7 +3,7 @@ import { MAX_UPSTREAM_BODY_BYTES } from "../../core/http/body.js";
 import type { JsonObject } from "../../core/json.js";
 import { isRecord } from "../../core/json.js";
 import { findEncryptedContent } from "../encrypted.js";
-import { ollamaFollowUpInputError, projectOllamaInputValue } from "../ollama/history.js";
+import { ollamaFollowUpInputError } from "../ollama/history.js";
 
 /**
  * Checkpoint schema: types, limits, validation, serialization, and the

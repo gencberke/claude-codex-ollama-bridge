@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readFileBufferOrNull, writeFileAtomic } from "../core/atomic.js";
@@ -288,8 +288,4 @@ function unlinkIfExists(path: string): void {
   } catch {
     // missing is fine
   }
-}
-
-export function overlayDirExists(overlayDir: string): boolean {
-  return existsSync(overlayManifestPath(overlayDir));
 }

@@ -60,8 +60,6 @@ export const GLM53_REASONING_LADDER: OllamaReasoningLadder = {
   levels: GLM53_THINKING_LEVELS,
 };
 
-/** DeepSeek-style default. GLM-5.3 rows use max instead. */
-export const DEFAULT_OLLAMA_REASONING_EFFORT = "high" satisfies OllamaReasoningEffort;
 
 export function ollamaReasoningLadderForModel(model: string | undefined): OllamaReasoningLadder {
   const id = (model ?? "").toLowerCase().replace(/^ollama\//, "");

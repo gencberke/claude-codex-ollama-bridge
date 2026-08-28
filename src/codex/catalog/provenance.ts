@@ -17,8 +17,6 @@ import {
   type FileIdentity,
   type InspectCodexIo,
 } from "./source.js";
-import { isLiveCodexHome } from "../home.js";
-import type { CobPaths } from "../paths.js";
 import type { CatalogFile } from "../types.js";
 import { asSlug, asVisibility } from "../types.js";
 import { isRecord } from "../../core/json.js";

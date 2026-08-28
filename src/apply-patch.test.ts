@@ -15,7 +15,7 @@ import {
   ollamaGuardHttpBody,
   type OllamaResponseGuardState,
 } from "./codex/ollama-response-boundary.js";
-import { normalizeOllamaResponse, ollamaSseTransform, prepareOllamaWire } from "./codex/ollama.js";
+import { normalizeOllamaResponse, ollamaSseTransform } from "./codex/ollama.js";
 import type { JsonObject } from "./core/json.js";
 
 const PATCH_GRAMMAR = "start: /[^\\n]*/";

@@ -14,18 +14,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_DEV_PORT, defaultDevHome, defaultLiveHome } from "./codex/home.js";
 import { findPackageRoot } from "./core/install-detection.js";
 import { runEvalPreflight } from "./eval-preflight.js";
-import {
-  GATE6H_CONTROLLER_SEQUENCING_OBSERVED,
-  GATE6H_MAX_ATTEMPTS,
-  GATE6H_PARENT_MODEL,
-  GATE6H_TRANSPORT_UNMEASURED,
-  buildGate6hPrompt,
-  initialGate6hState,
-  isTerminalGate6h,
-  reduceGate6hJsonl,
-  type Gate6hState,
-  type Gate6hVerdict,
-} from "./gate6h.js";
+import { GATE6H_CONTROLLER_SEQUENCING_OBSERVED, GATE6H_MAX_ATTEMPTS, GATE6H_PARENT_MODEL, GATE6H_TRANSPORT_UNMEASURED, buildGate6hPrompt, initialGate6hState, isTerminalGate6h, reduceGate6hJsonl, type Gate6hVerdict } from "./gate6h.js";
 
 const LIVE_CONFIG = join(defaultLiveHome(), "config.toml");
 const LIVE_CATALOG = join(defaultLiveHome(), "cob-catalog.json");

@@ -12,7 +12,6 @@ import { isRecord } from "../../core/json.js";
 import { ConversationStateError } from "../state/schema.js";
 import { ConversationStateStore } from "../state/store.js";
 import {
-  handleLegacyCompact,
   handleNativeSearchPost,
   handleResponsesPost,
   headerValue,
