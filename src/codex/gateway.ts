@@ -402,6 +402,7 @@ async function handleResponsesPost(
       trigger.inputWithoutTrigger,
       model,
       abort,
+      catalogSnapshot,
     );
     return;
   }
@@ -528,9 +529,9 @@ async function handleOllamaCompactionTrigger(
   inputWithoutTrigger: unknown[],
   threadModel: string,
   abort: AbortController,
+  catalogSnapshot: CatalogFile | undefined,
 ): Promise<void> {
   const policy = options.compaction ?? { provider: "native" };
-  const catalogSnapshot = resolveCatalog(options);
   const nativeSlugs = nativeSlugsFromCatalog(catalogSnapshot);
   const plan = resolveCompactPlan({
     threadModel,

@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
-import { createServer, type AddressInfo } from "node:net";
+import { connect, createServer, type AddressInfo } from "node:net";
 import { zstdCompressSync } from "node:zlib";
 import { listenGateway } from "./codex/gateway.js";
 import { resetCompactAttemptLog } from "./codex/compact-attempt-log.js";
 import { pickForwardHeaders } from "./codex/native.js";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./codex/constants.js";
 import { MAX_RAW_BODY_BYTES } from "./core/http/body.js";
+import { serializeCatalog } from "./codex/catalog/catalog.js";
 import { ollamaCompactHandoffSkeleton } from "./codex/compaction/summary.js";
 import { assertValidOllamaFollowUpInput, ollamaFollowUpInputError } from "./codex/ollama/history.js";
 import { normalizeOllamaResponse, prepareOllamaPayload, rejectOllamaRequest, sanitizeOllamaPayload } from "./codex/ollama.js";
@@ -1138,6 +1139,86 @@ describe("gateway", () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+    }
+  });
+
+  it("keeps one catalog snapshot across a compaction trigger even if the catalog is replaced mid-body", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-snapshot-trigger-"));
+    const catalogPath = join(stateDir, "catalog.json");
+    const withReasoning: CatalogFile = {
+      models: TEST_CATALOG.models.map((model) =>
+        String(model.slug) === "ollama/deepseek-v4-flash:cloud"
+          ? { ...model, supported_reasoning_levels: ["high"] }
+          : model,
+      ),
+    };
+    const withoutReasoning: CatalogFile = {
+      models: TEST_CATALOG.models,
+    };
+    writeFileSync(catalogPath, serializeCatalog(withReasoning));
+    let ollamaHits = 0;
+    let summarizerReasoning: unknown;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      stateDir,
+      catalogPath,
+      ollamaFetch: async (_url, init) => {
+        ollamaHits += 1;
+        const body = JSON.parse(init.body.toString("utf8")) as Record<string, unknown>;
+        if (ollamaHits === 1) summarizerReasoning = body.reasoning;
+        return new Response(
+          JSON.stringify({
+            id: "ollama-sum-1",
+            object: "response",
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: ollamaCompactHandoffSkeleton({ Goal: "keep going" }) }],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const payload = JSON.stringify({
+        model: "ollama/deepseek-v4-flash:cloud",
+        input: [
+          { type: "message", role: "user", content: [{ type: "input_text", text: "long task" }] },
+          { type: "compaction_trigger" },
+        ],
+      });
+      const raw = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1", () => {
+          socket.write(
+            `POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n`,
+          );
+          socket.write(payload.slice(0, 8));
+        });
+        const chunks: Buffer[] = [];
+        socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        setTimeout(() => {
+          writeFileSync(catalogPath, serializeCatalog(withoutReasoning));
+          socket.end(payload.slice(8));
+        }, 150);
+      });
+      assert.match(raw, /HTTP\/1\.1 200/);
+      assert.match(raw, /cob1\.1\./);
+      assert.equal(ollamaHits, 1);
+      // The snapshot was taken before the body was read: the replacement that
+      // landed mid-request must not affect routing or the reasoning decision.
+      assert.deepEqual(summarizerReasoning, { effort: "high" });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
     }
   });
 
