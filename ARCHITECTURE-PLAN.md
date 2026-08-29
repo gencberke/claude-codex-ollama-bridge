@@ -1,7 +1,14 @@
 # COB Mimari Ayrıştırma ve Uygulama Planı
 
 Tarih: 2026-08-27
-Durum: Nihai filtreleme kararı; implementasyon başlamadı
+Durum: Uygulandı; tarihsel karar kaydı
+
+Bu planın modüler ayrıştırması uygulanmıştır. Güncel kalıcı değerlendirme için
+[POST-REFACTOR-REVIEW.md](./POST-REFACTOR-REVIEW.md), ürün sözleşmesi için
+[README.md](./README.md), geçici işler için
+[GitHub Issues](https://github.com/gencberke/claude-codex-ollama-bridge/issues)
+otoritedir. Aşağıdaki sayısal baseline ve fazlar tarihsel planlama bağlamı
+olarak korunur; güncel backlog sayılmaz.
 
 ## 1. Son karar
 

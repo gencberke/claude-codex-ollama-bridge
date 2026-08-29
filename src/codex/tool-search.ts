@@ -11,6 +11,7 @@ export const PROMOTED_BYTES_CAP = 32 * 1024;
 const MAX_ALIAS_LEN = 64;
 const ALIAS_RE = /[^A-Za-z0-9_-]+/g;
 const INCOMPLETE_STATUS = new Set(["in_progress", "incomplete", "failed", "cancelled", "expired"]);
+const RESERVED_FUNCTIONS_NAMESPACE = "functions";
 
 const DEFAULT_DESCRIPTION =
   "Search for deferred tools by query. Use this to find MCP or app tools that were not listed up front.";
@@ -32,6 +33,8 @@ export type DeferredToolIdentity = {
 
 export type ToolSearchBridge = {
   aliases: Map<string, DeferredToolIdentity>;
+  /** Wire names whose request-scoped identity was ambiguous. */
+  blockedAliases: Set<string>;
   promotedN: number;
   promotedBytes: number;
   skippedCap: number;
@@ -63,6 +66,7 @@ type UsedFunctionAlias = {
 export function emptyToolSearchBridge(): ToolSearchBridge {
   return {
     aliases: new Map(),
+    blockedAliases: new Set(),
     promotedN: 0,
     promotedBytes: 0,
     skippedCap: 0,
@@ -94,13 +98,16 @@ export function applyDeferredToolsToOllama(
   const leafCap = options.leafCap ?? PROMOTED_LEAF_CAP;
   const bytesCap = options.bytesCap ?? PROMOTED_BYTES_CAP;
   registerNamespacedWireTools(payload.tools, bridge);
+  if (bridge.blockedAliases.size > 0 && Array.isArray(payload.tools)) {
+    payload.tools = removeBlockedWireTools(payload.tools, bridge);
+  }
   const usedAliases = collectUsedFunctionAliases(payload.input, bridge);
   let promotion: PromotionResult = { appendedAliases: [], candidateAliases: new Set() };
   if (requestHasToolSearchDefinition(payload.tools)) {
     promotion = promoteSearchOutputLeaves(payload, bridge, leafCap, bytesCap);
   }
   flattenNamespacedHistoryCalls(payload, bridge);
-  if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(rewriteToolDefinition);
+  if (Array.isArray(payload.tools)) payload.tools = rewriteToolDefinitions(payload.tools, bridge);
   if (Array.isArray(payload.input)) payload.input = payload.input.map(rewriteHistoryItemToOllama);
   recordAliasMetrics(
     bridge,
@@ -149,13 +156,53 @@ function rewriteFunctionCallFromOllama(item: JsonObject, bridge: ToolSearchBridg
   return item;
 }
 
-function rewriteToolDefinition(tool: unknown): unknown {
-  if (!isRecord(tool)) return tool;
-  if (tool.type === "namespace" && Array.isArray(tool.tools)) {
-    return { ...tool, tools: tool.tools.map(rewriteToolDefinition) };
+function rewriteToolDefinitions(
+  tools: unknown[],
+  bridge: ToolSearchBridge,
+  topLevel = true,
+): unknown[] {
+  const rewritten: unknown[] = [];
+  for (const tool of tools) {
+    if (!isRecord(tool)) {
+      rewritten.push(tool);
+      continue;
+    }
+    if (tool.type === "namespace" && Array.isArray(tool.tools)) {
+      if (topLevel && optionalNamespace(tool.name) === RESERVED_FUNCTIONS_NAMESPACE) {
+        if (canFlattenReservedFunctions(tool.tools, bridge)) {
+          for (const child of tool.tools) {
+            const flattened = { ...child };
+            delete flattened.namespace;
+            rewritten.push(flattened);
+          }
+          continue;
+        }
+      }
+      rewritten.push({
+        ...tool,
+        tools: rewriteToolDefinitions(tool.tools, bridge, false),
+      });
+      continue;
+    }
+    rewritten.push(tool.type === "tool_search" ? nativeToolSearchToFunction(tool) : tool);
   }
-  if (tool.type === "tool_search") return nativeToolSearchToFunction(tool);
-  return tool;
+  return rewritten;
+}
+
+function canFlattenReservedFunctions(
+  tools: unknown[],
+  bridge: ToolSearchBridge,
+): tools is JsonObject[] {
+  for (const tool of tools) {
+    if (!isRecord(tool) || !isDirectFunctionLeaf(tool)) return false;
+    const name = functionName(tool);
+    if (!name || bridge.blockedAliases.has(name)) return false;
+    const mapped = bridge.aliases.get(name);
+    if (!mapped || identityKey(mapped) !== identityKey({ name, namespace: RESERVED_FUNCTIONS_NAMESPACE })) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function nativeToolSearchToFunction(tool: JsonObject): JsonObject {
@@ -245,6 +292,7 @@ function promoteSearchOutputLeaves(
   const searchCallIds = collectSearchCallIds(payload.input);
   if (searchCallIds.size === 0) return result;
   const occupied = existingFunctionNames(payload.tools);
+  for (const alias of bridge.blockedAliases) occupied.add(alias);
   const seenLeaves = new Set<string>();
   const promoted: JsonObject[] = [];
   for (const output of collectSearchOutputsNewestFirst(payload.input, searchCallIds)) {
@@ -331,7 +379,27 @@ function registerNamespacedWireTools(
   tools: unknown,
   bridge: ToolSearchBridge,
 ): void {
-  for (const { wireName, identity } of collectNamespacedWireTools(tools)) {
+  const entries = collectNamespacedWireTools(tools);
+  const reservedEntries = entries.filter((entry) => entry.reservedFunctions === true);
+  const reservedByAlias = new Map<string, DeferredToolIdentity>();
+  const blocked = new Set<string>();
+  const topLevelNames = collectTopLevelWireNames(tools);
+  for (const { wireName, identity } of reservedEntries) {
+    if (topLevelNames.has(wireName) || reservedByAlias.has(wireName)) blocked.add(wireName);
+    reservedByAlias.set(wireName, identity);
+  }
+  for (const { wireName, identity, reservedFunctions } of entries) {
+    if (reservedFunctions !== true) {
+      const reserved = reservedByAlias.get(wireName);
+      if (reserved && identityKey(reserved) !== identityKey(identity)) blocked.add(wireName);
+    }
+  }
+  for (const wireName of blocked) {
+    bridge.blockedAliases.add(wireName);
+    bridge.collisions += 1;
+  }
+  for (const { wireName, identity } of entries) {
+    if (bridge.blockedAliases.has(wireName)) continue;
     const existing = bridge.aliases.get(wireName);
     if (existing && identityKey(existing) !== identityKey(identity)) {
       bridge.collisions += 1;
@@ -344,6 +412,7 @@ function registerNamespacedWireTools(
 type NamespacedWireTool = {
   wireName: string;
   identity: DeferredToolIdentity;
+  reservedFunctions?: boolean;
 };
 
 function collectNamespacedWireTools(
@@ -356,6 +425,26 @@ function collectNamespacedWireTools(
     if (!isRecord(tool)) continue;
     if (tool.type === "namespace" && Array.isArray(tool.tools)) {
       const own = optionalNamespace(tool.name);
+      if (namespaceParts.length === 0 && own === RESERVED_FUNCTIONS_NAMESPACE) {
+        for (const child of tool.tools) {
+          if (isRecord(child) && isDirectFunctionLeaf(child)) {
+            const name = functionName(child);
+            if (name) {
+              entries.push({
+                wireName: name,
+                identity: { name, namespace: RESERVED_FUNCTIONS_NAMESPACE },
+                reservedFunctions: true,
+              });
+            }
+          }
+        }
+        const nested = collectNamespacedWireTools(tool.tools, [RESERVED_FUNCTIONS_NAMESPACE]);
+        entries.push(...nested.map((entry) => ({
+          ...entry,
+          wireName: qualifyOllamaNamespaceName(RESERVED_FUNCTIONS_NAMESPACE, entry.wireName),
+        })));
+        continue;
+      }
       const childParts = own ? [...namespaceParts, own] : namespaceParts;
       const nested = collectNamespacedWireTools(tool.tools, childParts);
       entries.push(...nested.map((entry) => ({
@@ -372,6 +461,59 @@ function collectNamespacedWireTools(
     });
   }
   return entries;
+}
+
+function collectTopLevelWireNames(tools: unknown): Set<string> {
+  const names = new Set<string>();
+  if (!Array.isArray(tools)) return names;
+  for (const tool of tools) {
+    if (!isRecord(tool) || tool.type === "namespace") continue;
+    const name = tool.type === "tool_search" ? TOOL_SEARCH_NAME : functionName(tool);
+    if (name) names.add(name);
+  }
+  return names;
+}
+
+function removeBlockedWireTools(tools: unknown[], bridge: ToolSearchBridge): unknown[] {
+  return filterBlockedWireTools(tools, bridge);
+}
+
+function filterBlockedWireTools(
+  tools: unknown[],
+  bridge: ToolSearchBridge,
+  namespaceParts: string[] = [],
+  reservedRoot = false,
+): unknown[] {
+  const filtered: unknown[] = [];
+  for (const tool of tools) {
+    if (!isRecord(tool)) {
+      filtered.push(tool);
+      continue;
+    }
+    if (tool.type === "namespace" && Array.isArray(tool.tools)) {
+      const own = optionalNamespace(tool.name);
+      const isReservedRoot = namespaceParts.length === 0 && own === RESERVED_FUNCTIONS_NAMESPACE;
+      const childParts = own ? [...namespaceParts, own] : namespaceParts;
+      filtered.push({
+        ...tool,
+        tools: filterBlockedWireTools(tool.tools, bridge, childParts, isReservedRoot),
+      });
+      continue;
+    }
+    const name = tool.type === "tool_search" ? TOOL_SEARCH_NAME : functionName(tool);
+    if (!name) {
+      filtered.push(tool);
+      continue;
+    }
+    let wireName = name;
+    if (!reservedRoot) {
+      for (const namespace of [...namespaceParts].reverse()) {
+        wireName = qualifyOllamaNamespaceName(namespace, wireName);
+      }
+    }
+    if (!bridge.blockedAliases.has(wireName)) filtered.push(tool);
+  }
+  return filtered;
 }
 
 function existingWireName(

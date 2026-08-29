@@ -6,6 +6,7 @@ import {
   rewriteToolSearchFromOllama,
   rewriteToolSearchToOllama,
 } from "./codex/tool-search.js";
+import { guardOllamaJsonResponse } from "./codex/ollama-response-boundary.js";
 import { sha256Hex8 } from "./codex/request-metrics.js";
 import type { JsonObject } from "./core/json.js";
 
@@ -213,6 +214,47 @@ describe("tool_search wire shim", () => {
 });
 
 describe("deferred tool promotion", () => {
+  it("flattens the reserved functions namespace and restores its exact identity", () => {
+    const payload: JsonObject = {
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      tools: [
+        {
+          type: "namespace",
+          name: "functions",
+          tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+        },
+      ],
+      input: [
+        {
+          type: "function_call",
+          name: "exec_command",
+          namespace: "functions",
+          call_id: "history-1",
+          arguments: "{}",
+        },
+      ],
+    };
+    const prepared = prepareOllamaWire(payload);
+    assert.equal(isOllamaReject(prepared), false);
+    if (isOllamaReject(prepared)) return;
+    assert.deepEqual(prepared.payload.tools, [
+      { type: "function", name: "exec_command", parameters: { type: "object" } },
+    ]);
+    assert.deepEqual(prepared.payload.input, [
+      { type: "function_call", name: "exec_command", call_id: "history-1", arguments: "{}" },
+    ]);
+    assert.equal(prepared.bridge.aliases.get("exec_command")?.namespace, "functions");
+    assert.equal(prepared.declaration.names.has("exec_command"), true);
+    const response = {
+      output: [{ type: "function_call", name: "exec_command", call_id: "call-1", arguments: "{}" }],
+    };
+    assert.equal(guardOllamaJsonResponse(response, prepared.declaration), undefined);
+    assert.deepEqual(
+      (normalizeOllamaResponse(response, "ollama/deepseek-v4-flash:0731-cloud", prepared.bridge) as JsonObject).output,
+      [{ type: "function_call", name: "exec_command", namespace: "functions", call_id: "call-1", arguments: "{}" }],
+    );
+  });
+
   it("restores Ollama dot-qualified calls from direct namespace tools", () => {
     const payload: JsonObject = {
       tools: [githubNamespace(), spawnNamespace()],
@@ -227,6 +269,7 @@ describe("deferred tool promotion", () => {
       ],
     };
     const bridge = applyDeferredToolsToOllama(payload);
+    assert.deepEqual(payload.tools, [githubNamespace(), spawnNamespace()]);
     assert.equal((payload.input as JsonObject[])[0]?.name, "mcp__codex_apps__github._search_issues");
     assert.equal("namespace" in ((payload.input as JsonObject[])[0] ?? {}), false);
     assert.equal(bridge.aliasesAdded, 0);
@@ -268,6 +311,53 @@ describe("deferred tool promotion", () => {
         arguments: JSON.stringify({ task: "reply ok" }),
       },
     ]);
+  });
+
+  it("removes an ambiguous reserved alias from the final catalog", () => {
+    const prepared = prepareOllamaWire({
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      tools: [
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+        {
+          type: "namespace",
+          name: "functions",
+          tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+        },
+      ],
+      input: [],
+    });
+    assert.equal(isOllamaReject(prepared), false);
+    if (isOllamaReject(prepared)) return;
+    assert.equal(prepared.bridge.collisions, 1);
+    assert.equal((prepared.payload.tools as JsonObject[]).some((tool) => tool.name === "exec_command"), false);
+    assert.equal(
+      guardOllamaJsonResponse(
+        { output: [{ type: "function_call", name: "exec_command", call_id: "call-1", arguments: "{}" }] },
+        prepared.declaration,
+      )?.code,
+      "ollama_undeclared_tool_call",
+    );
+  });
+
+  it("keeps an undeclared near-miss rejected after reserved flattening", () => {
+    const prepared = prepareOllamaWire({
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      tools: [{
+        type: "namespace",
+        name: "functions",
+        tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+      }],
+      input: [],
+    });
+    assert.equal(isOllamaReject(prepared), false);
+    if (isOllamaReject(prepared)) return;
+    assert.equal(
+      guardOllamaJsonResponse(
+        { output: [{ type: "function_call", name: "exec_comman", call_id: "call-1", arguments: "{}" }] },
+        prepared.declaration,
+      )?.code,
+      "ollama_undeclared_tool_call",
+    );
   });
 
   it("matches Ollama's recursive namespace prefixing when a leaf is already qualified", () => {

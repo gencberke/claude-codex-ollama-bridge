@@ -1,6 +1,6 @@
 {
   "name": "codex-ollama-bridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "cob: loopback bridges so Codex and Claude Code can keep native subscription models and route ollama/* to local Ollama.",
   "type": "module",

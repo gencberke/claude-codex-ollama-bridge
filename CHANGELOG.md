@@ -8,6 +8,29 @@ release: [RELEASE.md](./RELEASE.md).
 Ship decisions still follow live traces in [LIVE-TESTING.md](./LIVE-TESTING.md),
 not this file.
 
+## 0.2.2 — 2026-08-29
+
+Reserved `functions` namespace compatibility for real Ollama V1 children.
+This cut is prepared from source and isolated gold evidence; it is not the
+live `:18790` install until an explicitly authorized gateway replacement.
+
+- At the private Ollama boundary, direct leaves of Codex's exact top-level
+  `functions` namespace are advertised as flat function names. A
+  request-scoped exact alias map restores Codex's separate `name` and
+  `namespace` identity on the response path; no delimiter parsing or fuzzy
+  matching is used.
+- Ordinary namespaces keep the existing dot-qualified Ollama wire identity.
+  Ambiguous reserved aliases are removed from the final declaration set, and
+  undeclared or near-miss calls remain rejected by the strict response guard.
+- Isolated gold: native `gpt-5.6-luna` V1 parent spawned a real
+  `ollama/deepseek-v4-flash:0731-cloud` child with `fork_turns="none"`; the
+  child completed a real flat `exec_command` call plus tool-result
+  continuation with no guard rejection. Exact restoration, ordinary
+  namespace, collision, and near-miss behavior passed the source regression
+  suite.
+- Merge gate: `npx tsc --noEmit`; 508 tests, 505 passed, 3 intentional skips,
+  0 failures; production build and `git diff --check` passed.
+
 ## 0.2.1 — 2026-08-29
 
 First packed cut of the post-0.2.0 hardening series: the cob Claude security
