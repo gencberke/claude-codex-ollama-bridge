@@ -25,16 +25,20 @@ import {
   ollamaSseTransform,
   prepareOllamaPayload,
 } from "../ollama.js";
-import { COB_APPLY_PATCH_ALIAS } from "../experimental/apply-patch.js";
+import { APPLY_PATCH_OMIT, COB_APPLY_PATCH_ALIAS } from "../experimental/apply-patch.js";
 import { normalizeOllamaErrorBody } from "../ollama-boundary.js";
 import { OLLAMA_DIALECT } from "../ollama-dialect.js";
 import {
+  createOllamaTerminalTrack,
   formatOllamaGuardLog,
   guardOllamaJsonResponse,
   ollamaGuardHttpBody,
   ollamaGuardSseTerminal,
+  ollamaTerminalTrackObserver,
+  strictOllamaCompletedEnvelope,
   type OllamaGuardFailure,
   type OllamaResponseGuardState,
+  type OllamaTerminalTrack,
   type OllamaToolDeclaration,
 } from "../ollama-response-boundary.js";
 import { nativeSlugsFromCatalog, routeModel, type RouteTarget } from "../route.js";
@@ -332,6 +336,7 @@ export async function handleResponsesPost(
       baseHistory: continuation.baseHistory,
       parentResponseId: continuation.parentResponseId,
       catalogModel,
+      signal: abort.signal,
     }, forwarded.bridge, forwarded.declaration);
     return;
   }
@@ -503,6 +508,7 @@ async function handleOllamaCompactionTrigger(
       parentResponseId: continuation.parentResponseId,
       catalogModel: threadModel,
       compactModel: plan.compactModel,
+      signal: abort.signal,
     },
   );
 }
@@ -663,6 +669,7 @@ async function handleOllamaSummaryCompact(
         requestInputProjection: [],
         baseHistory: continuation.baseHistory,
         parentResponseId: continuation.parentResponseId,
+        signal: abort.signal,
       },
       response,
       rawBody,
@@ -733,21 +740,31 @@ async function parseSummarizerResponse(upstream: Response, raw: Buffer): Promise
   const contentType = upstream.headers.get("content-type") ?? "";
   const isSse = contentType.includes("text/event-stream") || looksLikeSse(raw);
   if (isSse) {
-    const capture = createStreamCapture();
+    const track = createOllamaTerminalTrack();
+    // The observer is the tracker's single feeding point: onData runs before
+    // the rewrite callback, so feeding the frame decisions from both would
+    // taint the first held terminal as a post-terminal contradiction.
     await collectSseTransform(
       raw,
-      sseRewriteTransform((value) => value, undefined, captureObserver(capture)),
+      sseRewriteTransform((value) => value, undefined, ollamaTerminalTrackObserver(track)),
     );
-    if (capture.malformed) {
-      throw new Error("Ollama summarizer SSE was malformed");
+    if (track.phase !== "held-completed" || track.completedCandidate === undefined) {
+      throw new Error("Ollama summarizer SSE did not end with a completed response");
     }
-    return capture.candidate ?? capture.completedResponse;
+    return track.completedCandidate;
   }
   try {
     const parsed: unknown = JSON.parse(raw.toString("utf8"));
-    return completedResponseEnvelope(parsed) ?? (isRecord(parsed) ? parsed : undefined);
-  } catch {
-    throw new Error("Ollama summarizer response is not valid JSON");
+    const envelope = strictOllamaCompletedEnvelope(parsed);
+    if (!envelope) {
+      throw new Error("Ollama summarizer response is not a completed response");
+    }
+    return envelope;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("Ollama summarizer response is not valid JSON");
+    }
+    throw error;
   }
 }
 
@@ -791,6 +808,8 @@ type OllamaStateContext = {
   parentResponseId?: string;
   catalogModel: string;
   compactModel?: string;
+  /** Client cancellation; re-checked inside the checkpoint publish lock. */
+  signal?: AbortSignal;
 };
 
 type StreamCapture = {
@@ -884,9 +903,13 @@ function logOllamaStreamIncomplete(
   status: number,
   terminal: "empty" | "eof" | "idle" | "error" | "client_abort",
   capture: StreamCapture,
+  track?: OllamaTerminalTrack,
 ): void {
+  const trackInfo = track
+    ? ` phase=${track.phase} done_n=${track.doneTrailers} contra_n=${track.contradictoryFrames} held_malformed=${track.malformed}`
+    : "";
   console.error(
-    `[cob] ollama stream incomplete terminal=${terminal} status=${status} raw_bytes=${capture.rawBytes} completed=${capture.sawCompletedEvent} done=${capture.sawDone} malformed=${capture.malformed}`,
+    `[cob] ollama stream incomplete terminal=${terminal} status=${status} raw_bytes=${capture.rawBytes} completed=${capture.sawCompletedEvent} done=${capture.sawDone} malformed=${capture.malformed}${trackInfo}`,
   );
 }
 
@@ -950,14 +973,6 @@ function captureObserver(capture: StreamCapture, suppressDone = false): SseObser
       }
     },
   };
-}
-
-function isCompleteStreamCapture(capture: StreamCapture): boolean {
-  // Ollama 0.32.15 cloud closes a valid stream after response.completed and
-  // does not emit the OpenAI-style [DONE] sentinel. The completed envelope is
-  // the success authority; cob publishes it durably and emits exactly one
-  // client-facing [DONE]. Failed/incomplete terminals never set candidate.
-  return capture.sawCompletedEvent && !capture.malformed && capture.candidate !== undefined;
 }
 
 function collectSseTransform(raw: Buffer, transform: import("node:stream").Transform): Promise<Buffer> {
@@ -1394,9 +1409,11 @@ async function relayOllama(
   const contentType = upstream.headers.get("content-type") ?? "";
   if (contentType.includes("text/event-stream")) {
     res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
+    const capture = createStreamCapture();
+    const guard: OllamaResponseGuardState = { terminal: createOllamaTerminalTrack() };
     if (!upstream.body) {
       if (upstream.status >= 200 && upstream.status < 300) {
-        logOllamaStreamIncomplete(upstream.status, "empty", createStreamCapture());
+        logOllamaStreamIncomplete(upstream.status, "empty", capture, guard.terminal);
         endOllamaStream(res);
         return;
       }
@@ -1405,19 +1422,21 @@ async function relayOllama(
     }
     const nodeStream = Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream);
     abort.signal.addEventListener("abort", () => nodeStream.destroy(), { once: true });
-    const capture = createStreamCapture();
-    const guard: OllamaResponseGuardState = {};
-    const suppressDone = upstream.status >= 200 && upstream.status < 300;
+    // A 2xx upstream opens cob's terminal transaction: the transform absorbs
+    // the upstream [DONE] trailer and holds the one terminal frame; the
+    // client terminal plus exactly one cob-owned [DONE] are emitted only
+    // after the checkpoint publishes successfully.
+    const okStream = upstream.status >= 200 && upstream.status < 300;
     // Gate 5 has its own explicit response.failed terminal contract for
     // transform/guard rejection. Keep that path on the regular response;
     // ordinary Ollama streams must not get relayTransformed's generic
     // error+[DONE] terminal after a partial prefix.
-    const failClosedSse = suppressDone && declaration.applyPatch?.enabled !== true;
+    const failClosedSse = okStream && declaration.applyPatch?.enabled !== true;
     let relayed: boolean;
     try {
       relayed = await relayTransformed(
         nodeStream,
-        ollamaSseTransform(catalogModel, captureObserver(capture, suppressDone), bridge, declaration, guard),
+        ollamaSseTransform(catalogModel, captureObserver(capture), bridge, declaration, guard),
         res,
         {
           idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
@@ -1430,13 +1449,14 @@ async function relayOllama(
     } catch (error) {
       if (failClosedSse) {
         if (abort.signal.aborted) {
-          logOllamaStreamIncomplete(upstream.status, "client_abort", capture);
+          logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal);
           return;
         }
         logOllamaStreamIncomplete(
           upstream.status,
           error instanceof IdleTimeoutError ? "idle" : "error",
           capture,
+          guard.terminal,
         );
         endOllamaStream(res);
         return;
@@ -1445,16 +1465,16 @@ async function relayOllama(
     }
     if (!relayed && failClosedSse) {
       if (abort.signal.aborted) {
-        logOllamaStreamIncomplete(upstream.status, "client_abort", capture);
+        logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal);
         return;
       }
-      logOllamaStreamIncomplete(upstream.status, "error", capture);
+      logOllamaStreamIncomplete(upstream.status, "error", capture, guard.terminal);
       endOllamaStream(res);
       return;
     }
     if (!relayed) return;
     if (abort.signal.aborted) {
-      logOllamaStreamIncomplete(upstream.status, "client_abort", capture);
+      logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal);
       return;
     }
     if (guard.failure) {
@@ -1463,23 +1483,18 @@ async function relayOllama(
       if (!res.writableEnded && !res.destroyed) res.end();
       return;
     }
-    if (upstream.status >= 200 && upstream.status < 300 && isCompleteStreamCapture(capture)) {
-      try {
-        logOllamaUsage(capture.candidate);
-        await publishOllamaCheckpoint(context, capture.candidate!, {
-          model: context.catalogModel,
-          upstreamModel: ollamaUpstreamModel(context.catalogModel),
-        });
-        if (!res.writableEnded && !res.destroyed) res.write(sseDoneTerminal());
-      } catch (error) {
-        if (!res.writableEnded && !res.destroyed) {
-          res.write(sseErrorTerminal(error instanceof Error ? error.message : String(error)));
-        }
-      }
-    } else if (!res.writableEnded && !res.destroyed && upstream.status >= 200 && upstream.status < 300) {
-      logOllamaStreamIncomplete(upstream.status, "eof", capture);
-      endOllamaStream(res);
+    const track = guard.terminal ?? createOllamaTerminalTrack();
+    if (okStream && track.phase === "held-completed" && track.completedCandidate) {
+      await writeOllamaCompletedTerminal(res, context, track, catalogModel, bridge, declaration);
+      if (!res.writableEnded && !res.destroyed) res.end();
       return;
+    }
+    if (track.phase === "held-non-success") {
+      // A single failed/incomplete/error terminal is relayed verbatim once;
+      // cob never appends a success [DONE] to it.
+      writeOllamaHeldNonSuccessTerminal(res, track, catalogModel, bridge, declaration);
+    } else if (okStream) {
+      logOllamaStreamIncomplete(upstream.status, "eof", capture, track);
     }
     if (!res.writableEnded && !res.destroyed) res.end();
     return;
@@ -1512,7 +1527,15 @@ async function relayOllama(
     );
     return;
   }
-  const failure = guardOllamaJsonResponse(parsed, declaration);
+  // Only the exact normal completed envelope is a success authority on this
+  // route. Compaction shells, status-less bodies, and provider-private
+  // objects fail closed here instead of publishing state.
+  const candidate = strictOllamaCompletedEnvelope(parsed);
+  if (!candidate) {
+    rejectOllamaJsonNormalize(res, declaration);
+    return;
+  }
+  const failure = guardOllamaJsonResponse(candidate, declaration);
   if (failure) {
     rejectOllamaJsonGuard(res, failure, declaration);
     return;
@@ -1532,14 +1555,11 @@ async function relayOllama(
     return;
   }
   try {
-    const candidate = completedResponseEnvelope(parsed);
-    logOllamaUsage(candidate ?? (isRecord(parsed) ? parsed : undefined));
-    if (candidate) {
-      await publishOllamaCheckpoint(context, candidate, {
-        model: context.catalogModel,
-        upstreamModel: ollamaUpstreamModel(context.catalogModel),
-      });
-    }
+    logOllamaUsage(candidate);
+    await publishOllamaCheckpoint(context, candidate, {
+      model: context.catalogModel,
+      upstreamModel: ollamaUpstreamModel(context.catalogModel),
+    });
   } catch (error) {
     if (error instanceof UpstreamLimitError) throw error;
     if (error instanceof ConversationStateError) throw error;
@@ -1550,6 +1570,71 @@ async function relayOllama(
   headers["content-type"] = "application/json";
   res.writeHead(upstream.status, headers);
   res.end(publicBody);
+}
+
+/**
+ * Publish the held completed envelope, then emit the normalized terminal
+ * frame followed by exactly one cob-owned client [DONE]. Any failure before
+ * the client terminal degrades to the single upstream_stream_error terminal,
+ * still carrying exactly one [DONE].
+ */
+async function writeOllamaCompletedTerminal(
+  res: ServerResponse,
+  context: OllamaStateContext,
+  track: OllamaTerminalTrack,
+  catalogModel: string,
+  bridge: ToolSearchBridge,
+  declaration: OllamaToolDeclaration,
+): Promise<void> {
+  try {
+    const candidate = track.completedCandidate;
+    const held = track.heldTerminal;
+    if (!candidate || !held) {
+      throw new Error("Ollama terminal is missing its completed envelope");
+    }
+    const normalized = normalizeOllamaResponse(held, catalogModel, bridge, declaration.applyPatch);
+    if (normalized === APPLY_PATCH_OMIT) {
+      throw new Error("Ollama terminal was rejected by the apply-patch rewrite");
+    }
+    logOllamaUsage(candidate);
+    await publishOllamaCheckpoint(context, candidate, {
+      model: context.catalogModel,
+      upstreamModel: ollamaUpstreamModel(context.catalogModel),
+    });
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(`data: ${JSON.stringify(normalized)}\n\n`);
+      res.write(sseDoneTerminal());
+    }
+  } catch (error) {
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(sseErrorTerminal(error instanceof Error ? error.message : String(error)));
+    }
+  }
+}
+
+/**
+ * Relay the single held failed/incomplete/error frame once, with the same
+ * normalization the inline path used. Never append a success [DONE].
+ */
+function writeOllamaHeldNonSuccessTerminal(
+  res: ServerResponse,
+  track: OllamaTerminalTrack,
+  catalogModel: string,
+  bridge: ToolSearchBridge,
+  declaration: OllamaToolDeclaration,
+): void {
+  const held = track.heldTerminal;
+  if (!held || res.writableEnded || res.destroyed) return;
+  try {
+    const normalized = normalizeOllamaResponse(held, catalogModel, bridge, declaration.applyPatch);
+    if (normalized !== APPLY_PATCH_OMIT) {
+      res.write(`data: ${JSON.stringify(normalized)}\n\n`);
+    }
+  } catch (error) {
+    if (error instanceof UpstreamLimitError) throw error;
+    // A non-success terminal that cannot be safely rewritten simply ends the
+    // stream without a client terminal; cob never invents one.
+  }
 }
 
 function rejectOllamaJsonGuard(

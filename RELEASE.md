@@ -4,13 +4,18 @@ Live ChatGPT Desktop and daily `codex --profile cob` run the **globally
 installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
-Current state (2026-08-29): source on `master` is **0.2.1** and both live
-global surfaces run **0.2.1** (Codex `:18790` pid 77805, cob Claude `:18792`
-pid 78004). Live tarball SHA-256
+Current state (2026-08-30): source on `master` is **0.2.2** at commit
+`94a0d9a`, while both live global surfaces still run **0.2.1** (Codex `:18790`
+pid 77805, cob Claude `:18792` pid 78004). Live tarball SHA-256
 `efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69`, cut from
 commit `7899077` / tag `v0.2.1`. Do not repack 0.1.11–0.1.16, 0.2.0, or 0.2.1
 with different bytes; cut a new version before any future authorized install.
 `package.json` stays `"private": true`; do not `npm publish`.
+
+Active release work is **Codex-scoped**. cob Claude stays frozen at its current
+source/live behavior until the user explicitly reopens that surface; do not
+fold deferred Claude hardening into a Codex cut or treat a Codex approval as a
+whole-product production approval.
 
 0.1.14 is a scoped fail-closed cut (Ollama JSON raw-relay closed, encrypted
 prefixes rejected, live experimental lock). It does not re-prove G12/G14/G17

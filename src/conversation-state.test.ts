@@ -84,6 +84,21 @@ describe("durable Ollama conversation state", () => {
     assert.equal(readdirSync(store.checkpointsDir).filter((name) => name.endsWith(".json")).length, 3);
   });
 
+  it("refuses to commit a publish whose signal aborted before the lock", async () => {
+    const store = newStore();
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      store.publish(
+        draft("resp-aborted", [{ id: "user-1", type: "message", text: "hi" }], [{ id: "out-1", type: "message", text: "lost" }]),
+        { signal: controller.signal },
+      ),
+      (error: unknown) =>
+        error instanceof ConversationStateError && error.code === "state_publish_aborted",
+    );
+    assert.equal(existsSync(store.checkpointsDir), false);
+  });
+
   it("deduplicates identity-backed replay but keeps identical text items distinct", () => {
     const existing = createStateHistoryItems(
       [
@@ -268,6 +283,120 @@ describe("durable Ollama conversation state", () => {
     assert.equal(existsSync(store.checkpointPath("root")), true);
     assert.equal(existsSync(store.checkpointPath("a")), false);
     await store.resolve("b");
+  });
+
+  it("preserves the previous checkpoint state when retention is exhausted", async () => {
+    const store = newStore();
+    await store.publish(draft("old", [{ id: "u-old", type: "message", text: "old" }], []));
+    const tight = new ConversationStateStore(store.stateDir, { maxHeads: 1, maxBytes: 1024 });
+    const oversized = draft(
+      "big",
+      [{ id: "u-big", type: "message", text: "x".repeat(2048) }],
+      [{ id: "o-big", type: "message", text: "y".repeat(2048) }],
+    );
+    await assert.rejects(
+      () => tight.publish(oversized),
+      (error: unknown) => error instanceof ConversationStateError && error.code === "state_retention_exhausted",
+    );
+    assert.equal(existsSync(store.checkpointPath("old")), true);
+    await store.resolve("old");
+    assert.equal(existsSync(store.checkpointPath("big")), false);
+  });
+
+  it("preserves planned removals when the candidate archive write fails", async () => {
+    const store = new ConversationStateStore(mkdtempSync(join(tmpdir(), "cob-state-test-")), {
+      maxNodes: 1,
+      maxHeads: 1,
+    });
+    await store.publish(draft("old", [{ id: "u-old", type: "message", text: "old" }], []));
+    writeFileSync(
+      store.compactArchivePath("sum-1"),
+      '{"id":"sum-1","object":"response"}',
+      { mode: 0o600 },
+    );
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "sum-1",
+      "replacement",
+    );
+    await assert.rejects(
+      () =>
+        store.publish({
+          ...draft("sum-1", [], [{ type: "compaction", encrypted_content: "secret" }], undefined, replacement),
+          providerInput: [],
+          providerOutput: [],
+          responseBody: {
+            id: "sum-1",
+            object: "response.compaction",
+            output: [{ type: "compaction", encrypted_content: "secret" }],
+          },
+          provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+          rawCompactBody: Buffer.from('{"id":"sum-1","object":"response","output":[]}'),
+        }),
+      (error: unknown) => error instanceof ConversationStateError && error.code === "state_checkpoint_conflict",
+    );
+    assert.equal(existsSync(store.checkpointPath("old")), true);
+    await store.resolve("old");
+    assert.equal(existsSync(store.checkpointPath("sum-1")), false);
+  });
+
+  it("prunes obsolete checkpoint and archive pairs after a successful commit", async () => {
+    const store = newStore();
+    await store.publish(draft("head-1", [{ id: "u1" }], []));
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "head-2",
+      "replacement",
+    );
+    await store.publish({
+      ...draft("head-2", [], [{ type: "compaction", encrypted_content: "note-old" }], undefined, replacement),
+      providerInput: [],
+      providerOutput: [],
+      responseBody: {
+        id: "head-2",
+        object: "response.compaction",
+        output: [{ type: "compaction", encrypted_content: "note-old" }],
+      },
+      provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+      rawCompactBody: Buffer.from('{"id":"head-2","object":"response.compaction"}'),
+    });
+    assert.equal(existsSync(store.compactArchivePath("head-2")), true);
+    const tight = new ConversationStateStore(store.stateDir, { maxNodes: 1, maxHeads: 1 });
+    await tight.publish(draft("head-3", [{ id: "u3" }], []));
+    assert.equal(existsSync(store.checkpointPath("head-3")), true);
+    await tight.resolve("head-3");
+    assert.equal(existsSync(store.checkpointPath("head-1")), false);
+    assert.equal(existsSync(store.checkpointPath("head-2")), false);
+    assert.equal(existsSync(store.compactArchivePath("head-2")), false);
+  });
+
+  it("keeps a successful publish successful when post-commit pruning fails", async () => {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message));
+    };
+    try {
+      const store = newStore();
+      await store.publish(
+        { ...draft("lru-a", [{ id: "ua" }], []), createdAt: "2026-01-01T00:00:00.000Z" },
+      );
+      await store.publish(
+        { ...draft("lru-b", [{ id: "ub" }], []), createdAt: "2026-01-02T00:00:00.000Z" },
+      );
+      mkdirSync(store.compactArchivePath("lru-a"), { recursive: true, mode: 0o700 });
+      const tight = new ConversationStateStore(store.stateDir, { maxNodes: 1, maxHeads: 1 });
+      await tight.publish({ ...draft("lru-c", [{ id: "uc" }], []), createdAt: "2026-01-03T00:00:00.000Z" });
+      assert.equal(existsSync(store.checkpointPath("lru-c")), true);
+      await tight.resolve("lru-c");
+      assert.equal(existsSync(store.checkpointPath("lru-a")), false);
+      assert.equal(existsSync(store.checkpointPath("lru-b")), true);
+      await tight.resolve("lru-b");
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!, /planned_n=2 removed_n=0 code=state_prune_io_error/);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it("fails closed when a stored identity no longer matches value or provenance", async () => {

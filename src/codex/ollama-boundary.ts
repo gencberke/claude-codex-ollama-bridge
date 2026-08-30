@@ -169,7 +169,7 @@ export function normalizeOllamaErrorBody(
       ? "Ollama quota is exhausted; replenish quota or retry later. cob start does not fix quota."
       : kind === "rate"
         ? "Ollama is rate limiting or at concurrency; retry later or reduce concurrency. cob start does not fix quota."
-        : upstreamMessage || `Ollama returned HTTP ${status}`;
+        : sanitizeOllamaErrorDetail(upstreamMessage) ?? `Ollama returned HTTP ${status}`;
   const error: JsonObject = {
     type: status >= 500 ? "server_error" : "invalid_request_error",
     code: kind === "quota" ? "ollama_quota_exhausted" : kind === "rate" ? "ollama_rate_limited" : "ollama_upstream_error",
@@ -177,6 +177,42 @@ export function normalizeOllamaErrorBody(
   };
   if (retryAfter) error.retry_after = retryAfter;
   return { error };
+}
+
+const OLLAMA_ERROR_DETAIL_CAP = 2048;
+
+const OLLAMA_BEARER_CREDENTIAL_RE = /\b(?:Bearer|Basic)\s+\S+/gi;
+const OLLAMA_POSIX_USER_PATH_RE = /\/(?:Users|home|root)\/[^\s"'`)}\]]+/g;
+const OLLAMA_WINDOWS_USER_PATH_RE = /[A-Za-z]:\\(?:Users|Documents and Settings)\\[^\s"'`)}\]]+/g;
+const OLLAMA_RESIDUAL_RE = new RegExp(
+  "\\b(?:Bearer|Basic)\\s+(?!\\[redacted-credential\\]\\b)\\S+|/(?:Users|home|root)/|[A-Za-z]:\\\\(?:Users|Documents and Settings)\\\\",
+  "i",
+);
+const OLLAMA_CONTROL_CHAR_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u00ad\u2028\u2029\ufffe\uffff]/g;
+
+/**
+ * Bound the generic (non-quota, non-rate) upstream error detail before it
+ * reaches the client. Credentials and user-absolute paths are redacted
+ * content-free; anything empty, oversized, or still carrying a credential or
+ * user-path shape after redaction falls back to the generic HTTP message.
+ * The check regexes are stateless so a redacted result stays safe to re-test.
+ * Quota and rate classifications keep their fixed cob text.
+ */
+export function sanitizeOllamaErrorDetail(text: string): string | undefined {
+  const redacted = text
+    .replace(OLLAMA_BEARER_CREDENTIAL_RE, "[redacted-credential]")
+    .replace(OLLAMA_POSIX_USER_PATH_RE, "[redacted-path]")
+    .replace(OLLAMA_WINDOWS_USER_PATH_RE, "[redacted-path]")
+    .replace(OLLAMA_CONTROL_CHAR_RE, " ")
+    .trim();
+  if (
+    redacted.length === 0 ||
+    redacted.length > OLLAMA_ERROR_DETAIL_CAP ||
+    OLLAMA_RESIDUAL_RE.test(redacted)
+  ) {
+    return undefined;
+  }
+  return redacted;
 }
 
 export function classifyOllamaError(status: number, message: string): "quota" | "rate" | "other" {

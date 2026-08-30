@@ -230,6 +230,23 @@ describe("cli session", () => {
     }
   });
 
+  it("listens on 18791 for a custom non-live --home even without --dev", () => {
+    const home = tempDir("cob-session-custom-home-");
+    try {
+      const flags = parseCliArgs(["node", "cob", "status", "--home", home]);
+      const session = resolveCliSession(flags, { ...process.env, COB_CODEX_HOME: "" });
+      assert.equal(session.isolated, true);
+      assert.equal(session.port, 18791);
+      // Explicit port precedence is unchanged for the same session shape.
+      const ported = parseCliArgs(["node", "cob", "status", "--home", home, "--port", "19000"]);
+      const portedSession = resolveCliSession(ported, { ...process.env, COB_CODEX_HOME: "" });
+      assert.equal(portedSession.isolated, true);
+      assert.equal(portedSession.port, 19000);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("does not pack from a global install", () => {
     const ran: string[] = [];
     assert.throws(

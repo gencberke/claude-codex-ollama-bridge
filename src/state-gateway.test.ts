@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { ConversationStateStore } from "./codex/state/store.js";
 import type { PublishCheckpoint } from "./codex/state/schema.js";
 import { listenGateway } from "./codex/gateway.js";
+import { acquireLock, releaseLock } from "./core/lock.js";
 import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./codex/compaction/summary.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
@@ -42,6 +43,30 @@ async function close(server: { close: (callback: (error?: Error) => void) => voi
 class FailingStateStore extends ConversationStateStore {
   override async publish(_draft: PublishCheckpoint): Promise<void> {
     throw new Error("forced checkpoint publication failure");
+  }
+}
+
+/**
+ * Resolves once the gateway handler has entered publish(), not before, and a
+ * second latch once that publish attempt has settled (committed or thrown).
+ */
+class LatchingStateStore extends ConversationStateStore {
+  private resolvePublishEntered?: () => void;
+  private resolvePublishSettled?: () => void;
+  readonly publishEntered: Promise<void> = new Promise<void>((resolve) => {
+    this.resolvePublishEntered = resolve;
+  });
+  readonly publishSettled: Promise<void> = new Promise<void>((resolve) => {
+    this.resolvePublishSettled = resolve;
+  });
+
+  override async publish(draft: PublishCheckpoint, options?: { signal?: AbortSignal }): Promise<void> {
+    this.resolvePublishEntered?.();
+    try {
+      return await super.publish(draft, options);
+    } finally {
+      this.resolvePublishSettled?.();
+    }
   }
 }
 
@@ -312,6 +337,85 @@ describe("gateway durable Ollama state", () => {
     const preBytes = Buffer.byteLength(JSON.stringify(summarizer.input), "utf8");
     const postBytes = Buffer.byteLength(JSON.stringify(followBody?.input), "utf8");
     assert.ok(postBytes < preBytes / 2, `isolated replay_ratio=${postBytes / preBytes}`);
+  });
+
+  it("accepts a valid SSE Ollama summarizer response", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-compact-sse-summarizer-"));
+    let ollamaCount = 0;
+    const port = await freePort();
+    const summaryText = ollamaCompactHandoffSkeleton({ Completed: "handoff from sse" });
+    const completedFrame = `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        id: "sum-sse-1",
+        object: "response",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: summaryText }],
+          },
+        ],
+      },
+    })}\n\n`;
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateDir,
+      nativeFetch: async () => new Response("native must not compact Ollama threads", { status: 500 }),
+      ollamaFetch: async (_url, init) => {
+        const body = JSON.parse(init.body.toString("utf8")) as JsonObject;
+        ollamaCount += 1;
+        if (JSON.stringify(body).includes("You are compacting")) {
+          return new Response(`${completedFrame}data: [DONE]\n\n`, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            id: `ollama-${ollamaCount}`,
+            object: "response",
+            status: "completed",
+            output: [
+              {
+                id: `a-${ollamaCount}`,
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "done" }],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const root = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/test", input: message("user-1", "one") }),
+      });
+      assert.equal(root.status, 200, await root.text());
+
+      const compact = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/test",
+          previous_response_id: "ollama-1",
+          input: [{ type: "compaction_trigger" }],
+        }),
+      });
+      const compactText = await compact.text();
+      assert.equal(compact.status, 200, compactText);
+      assert.equal(compactText.includes("cob1.1."), true);
+      assert.equal(compactText.includes("gAAAAA"), false);
+      assert.equal(readdirSync(join(stateDir, "compact-archive")).length, 1);
+    } finally {
+      await close(server);
+    }
   });
 
   it("prefers previous_response_id when a matching compaction item is also present", async () => {
@@ -921,6 +1025,223 @@ describe("gateway durable Ollama state", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert.equal(existsSync(join(stateDir, "checkpoints")), false);
       assert.equal(existsSync(join(stateDir, "compact-archive")), false);
+    } finally {
+      await close(server);
+    }
+  });
+});
+
+describe("gateway Ollama response terminal transaction", () => {
+  const invalidJsonEnvelopes: [string, JsonObject][] = [
+    ["missing status", { id: "json-no-status", object: "response", output: [] }],
+    ["failed status", { id: "json-failed", object: "response", status: "failed", output: [] }],
+    ["missing object", { id: "json-no-object", status: "completed", output: [] }],
+    ["compaction shell", { id: "json-compaction", object: "response.compaction", status: "completed", output: [] }],
+    ["empty id", { id: "", object: "response", status: "completed", output: [] }],
+    ["missing id", { object: "response", status: "completed", output: [] }],
+    ["missing output", { id: "json-no-output", object: "response", status: "completed" }],
+    ["typeless output item", { id: "json-typeless", object: "response", status: "completed", output: [{ role: "assistant" }] }],
+    ["primitive output item", { id: "json-primitive", object: "response", status: "completed", output: ["ok"] }],
+    ["provider-private object", { ok: "private" }],
+  ];
+
+  for (const [label, envelope] of invalidJsonEnvelopes) {
+    it(`rejects a non-normal Ollama JSON body: ${label}`, async () => {
+      const stateDir = mkdtempSync(join(tmpdir(), "cob-json-invalid-"));
+      const port = await freePort();
+      const server = await listenGateway({
+        port,
+        catalog: CATALOG,
+        stateDir,
+        ollamaFetch: async () =>
+          new Response(JSON.stringify(envelope), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      });
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "ollama/test", input: "hi" }),
+        });
+        assert.equal(response.status, 502);
+        const payload = (await response.json()) as { error?: { code?: string } };
+        assert.equal(payload.error?.code, "ollama_response_invalid");
+        assert.equal(existsSync(join(stateDir, "checkpoints")), false);
+      } finally {
+        await close(server);
+      }
+    });
+  }
+
+  const completedFrame =
+    'data: {"type":"response.completed","response":{"id":"tailed","object":"response","status":"completed","output":[]}}\n\n';
+  const failedFrame = 'data: {"type":"response.failed","response":{"status":"failed"}}\n\n';
+  const typedErrorFrame = 'data: {"type":"error","error":{"message":"upstream exploded"}}\n\n';
+  const doneFrame = "data: [DONE]\n\n";
+  const deltaFrame = 'data: {"delta":"one"}\n\n';
+
+  const taintedSseCases: [string, string[]][] = [
+    ["failed terminal followed by completed", [failedFrame, completedFrame, doneFrame]],
+    ["typed error followed by completed", [typedErrorFrame, completedFrame, doneFrame]],
+    ["completed followed by failed", [completedFrame, failedFrame, doneFrame]],
+    ["duplicate completed", [completedFrame, completedFrame, doneFrame]],
+    ["DONE before completed", [doneFrame, completedFrame]],
+    ["DONE only", [doneFrame]],
+    ["duplicate DONE", [doneFrame, doneFrame]],
+    ["data after DONE", [completedFrame, doneFrame, deltaFrame]],
+    ["malformed frame before completed", ["data: not-json\n\n", completedFrame]],
+    ["malformed frame after DONE", [completedFrame, doneFrame, "data: {broken-trailing\n\n"]],
+  ];
+
+  for (const [label, frames] of taintedSseCases) {
+    it(`withholds success for a tainted Ollama SSE stream: ${label}`, async () => {
+      const stateDir = mkdtempSync(join(tmpdir(), "cob-sse-taint-"));
+      const port = await freePort();
+      const server = await listenGateway({
+        port,
+        catalog: CATALOG,
+        stateDir,
+        ollamaFetch: async () =>
+          new Response(frames.join(""), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+      });
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "ollama/test", stream: true, input: [] }),
+        });
+        const body = await response.text();
+        assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 0);
+        assert.equal(body.includes("tailed"), false);
+        assert.equal(body.includes("response.failed"), false);
+        assert.equal(body.includes("upstream exploded"), false);
+        assert.equal(body.includes("broken-trailing"), false);
+        assert.equal(existsSync(join(stateDir, "checkpoints")), false);
+        assert.equal(response.status, 200);
+      } finally {
+        await close(server);
+      }
+    });
+  }
+
+  it("relays a typed Ollama SSE error terminal once and never completes", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-sse-typed-error-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(
+          `${deltaFrame}${typedErrorFrame}${doneFrame}`,
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/test", stream: true, input: [] }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      // The ordinary prefix is relayed live; the typed error is the single
+      // terminal and a success [DONE] never follows it.
+      assert.equal(body.split("upstream exploded").length - 1, 1);
+      assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 0);
+      assert.equal(body.includes("one"), true);
+      assert.equal(existsSync(join(stateDir, "checkpoints")), false);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("suppresses a malformed Ollama line while keeping the ordinary prefix", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-sse-malformed-mid-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(`${deltaFrame}data: {broken-mid\n\n${doneFrame}`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/test", stream: true, input: [] }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      // The ordinary frame parsed before the malformed line stays relayed
+      // live; the unparseable line never reaches the client and the tainted
+      // stream ends without a success terminal or [DONE].
+      assert.equal(body.includes("one"), true);
+      assert.equal(body.includes("broken-mid"), false);
+      assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 0);
+      assert.equal(existsSync(join(stateDir, "checkpoints")), false);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("does not checkpoint a JSON Ollama response when the client aborts before the commit", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-abort-before-commit-"));
+    const state = new LatchingStateStore(stateDir);
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: CATALOG,
+      stateStore: state,
+      ollamaFetch: async () =>
+        new Response(
+          JSON.stringify({ id: "resp_abort_commit", object: "response", status: "completed", output: [] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+    const lockPath = join(state.stateDir, ".state.lock");
+    try {
+      await acquireLock(lockPath);
+      try {
+        // Deterministic synchronization: the test lock makes publish() wait at
+        // the lock grant, the entry latch confirms publish() was reached — the
+        // request is already past body reading — before the client aborts, and
+        // the settled latch waits out the full publish attempt. Aborts that
+        // arrive before publish() (BodyAbortedError) cannot pass this test,
+        // and with a removed in-lock check the commit would land before the
+        // settled latch resolves. The in-lock abort check is therefore the
+        // only gate between the handler and the checkpoint commit here.
+        const controller = new AbortController();
+        const pending = fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "ollama/test", input: [] }),
+          signal: controller.signal,
+        }).catch(() => undefined);
+        await Promise.race([
+          state.publishEntered,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("publish() was never entered")), 2_000)),
+        ]);
+        controller.abort();
+        releaseLock(lockPath);
+        await Promise.race([
+          state.publishSettled,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("publish() never settled")), 2_000)),
+        ]);
+        await pending;
+        assert.equal(existsSync(join(state.stateDir, "checkpoints")), false);
+      } finally {
+        releaseLock(lockPath);
+      }
     } finally {
       await close(server);
     }

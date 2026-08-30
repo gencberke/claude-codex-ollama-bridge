@@ -12,7 +12,7 @@ import {
   type ApplyPatchGuardIssue,
 } from "./experimental/apply-patch.js";
 import { sha256Hex8 } from "./request-metrics.js";
-import { sseDoneTerminal } from "./sse.js";
+import { sseDoneTerminal, type SseObserver } from "./sse.js";
 import type { JsonObject } from "../core/json.js";
 import { isRecord } from "../core/json.js";
 
@@ -49,6 +49,8 @@ export type OllamaGuardFailure = {
 
 export type OllamaResponseGuardState = {
   failure?: OllamaGuardFailure;
+  /** Route-specific SSE terminal transaction state; created lazily by the transform. */
+  terminal?: OllamaTerminalTrack;
 };
 
 export function emptyOllamaToolDeclaration(): OllamaToolDeclaration {
@@ -165,6 +167,124 @@ export function ollamaGuardMessage(failure: OllamaGuardFailure): string {
   // detail) into a client-facing guard error. The bounded preview remains an
   // internal diagnostic field and is intentionally absent from this message.
   return "Ollama returned a client tool call that was not in the final outbound catalog.";
+}
+
+/**
+ * Exact normal Ollama completed envelope. Anything else — a compaction
+ * object, a nested `response` wrapper shell, a status-less body, an empty
+ * id, a non-array or type-less `output` — is not a normal success and must
+ * never publish a checkpoint or open the client DONE window.
+ */
+export function strictOllamaCompletedEnvelope(value: unknown): JsonObject | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.object !== "response") return undefined;
+  if (value.status !== "completed") return undefined;
+  if (typeof value.id !== "string" || value.id.length === 0) return undefined;
+  if (!Array.isArray(value.output)) return undefined;
+  for (const item of value.output) {
+    if (!isRecord(item) || typeof item.type !== "string" || item.type.length === 0) {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+export type OllamaSsePhase = "open" | "held-completed" | "held-non-success" | "tainted";
+
+/**
+ * Pure per-request SSE terminal state for the normal Ollama relay. Exactly
+ * one terminal is held; every frame after a terminal, a DONE trailer, or a
+ * malformed frame taints the stream and withholds success permanently.
+ */
+export type OllamaTerminalTrack = {
+  phase: OllamaSsePhase;
+  heldTerminal?: JsonObject;
+  completedCandidate?: JsonObject;
+  contradictoryFrames: number;
+  doneTrailers: number;
+  malformed: boolean;
+};
+
+export type OllamaSseFrameDecision = "relay" | "withhold";
+
+export function createOllamaTerminalTrack(): OllamaTerminalTrack {
+  return { phase: "open", contradictoryFrames: 0, doneTrailers: 0, malformed: false };
+}
+
+/**
+ * Upstream `[DONE]` sentinel. Always suppressed on the wire by the transform;
+ * tracked here because a terminal followed by at most one DONE is the one
+ * legitimate upstream shape.
+ */
+export function observeOllamaSseDone(track: OllamaTerminalTrack): void {
+  track.doneTrailers += 1;
+  if (track.phase === "open" || track.doneTrailers > 1) {
+    taintOllamaTerminalTrack(track);
+  }
+}
+
+export function noteOllamaSseMalformed(track: OllamaTerminalTrack): void {
+  track.malformed = true;
+  taintOllamaTerminalTrack(track);
+}
+
+function taintOllamaTerminalTrack(track: OllamaTerminalTrack): void {
+  track.phase = "tainted";
+}
+
+export function observeOllamaSseFrame(
+  track: OllamaTerminalTrack,
+  value: unknown,
+): OllamaSseFrameDecision {
+  if (track.phase !== "open") {
+    // Any parseable frame after a held terminal is a contradiction: the
+    // stream may only end now, and success is already off the table.
+    track.contradictoryFrames += 1;
+    taintOllamaTerminalTrack(track);
+    return "withhold";
+  }
+  if (isRecord(value) && value.type === "response.completed") {
+    const envelope = strictOllamaCompletedEnvelope(
+      isRecord(value.response) ? value.response : undefined,
+    );
+    if (!envelope) {
+      // A completed frame without the exact normal envelope cannot open the
+      // success window; fail the stream shut instead of guessing.
+      taintOllamaTerminalTrack(track);
+      return "withhold";
+    }
+    track.phase = "held-completed";
+    track.heldTerminal = value;
+    track.completedCandidate = envelope;
+    return "withhold";
+  }
+  if (isOllamaSseNonSuccessFrame(value)) {
+    track.phase = "held-non-success";
+    track.heldTerminal = value;
+    return "withhold";
+  }
+  return "relay";
+}
+
+function isOllamaSseNonSuccessFrame(value: unknown): value is JsonObject {
+  if (!isRecord(value)) return false;
+  if (value.type === "response.failed" || value.type === "response.incomplete") return true;
+  // Typed SSE error terminals share the failed/incomplete contract: hold them
+  // so a trailing success can never be published after a declared upstream
+  // error.
+  if (value.type === "error") return true;
+  return value.type === undefined && isRecord(value.error);
+}
+
+/** Standalone observer that feeds a tracker outside the live relay. */
+export function ollamaTerminalTrackObserver(track: OllamaTerminalTrack): SseObserver {
+  return {
+    onData(event) {
+      if (event.done) observeOllamaSseDone(track);
+      else if (event.malformed) noteOllamaSseMalformed(track);
+      else if (event.value !== undefined) observeOllamaSseFrame(track, event.value);
+    },
+  };
 }
 
 function inspectOutputBearingValue(

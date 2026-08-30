@@ -122,10 +122,13 @@ describe("picker visibility", () => {
           parsed && typeof parsed === "object" && "model" in parsed && typeof parsed.model === "string"
             ? parsed.model
             : undefined;
-        return new Response(JSON.stringify({ ok: "ollama" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ id: "resp_picker", object: "response", status: "completed", output: [] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       },
     });
     try {

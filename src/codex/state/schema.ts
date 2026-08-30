@@ -109,7 +109,8 @@ export class ConversationStateError extends Error {
       | "state_checkpoint_conflict"
       | "state_checkpoint_too_large"
       | "state_retention_exhausted"
-      | "state_archive_too_large",
+      | "state_archive_too_large"
+      | "state_publish_aborted",
     message: string,
     status = 400,
   ) {

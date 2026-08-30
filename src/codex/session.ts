@@ -21,7 +21,7 @@ export function resolveCliSession(
   const home = flags.home ?? (flags.dev ? defaultDevHome() : resolveCodexHome(env.COB_CODEX_HOME));
   const isolated = flags.dev || !isLiveCodexHome(home, liveHome);
   const port = resolveListenPort({
-    isolated: flags.dev,
+    isolated,
     portExplicit: flags.portExplicit,
     port: flags.port,
     envPort: env.COB_PORT,

@@ -10,7 +10,7 @@ import {
   parseOllamaCompactModel,
   parseOllamaThreadCompaction,
 } from "./codex/config/schema.js";
-import { parseCobToml, renderCobToml, writeCobToml } from "./codex/config/toml.js";
+import { parseCobToml, readCobToml, renderCobToml, writeCobToml } from "./codex/config/toml.js";
 import { resolveCobConfig, resolveCompactionPolicy, resolveSpawnableOllamaSlugs } from "./codex/config/resolve.js";
 
 describe("cob.toml compaction policy", () => {
@@ -251,6 +251,35 @@ supports_search_tool = true
     assert.throws(
       () => parseCobToml(`[catalog]\nsupports_search_tool = "yes"\n`),
       (error: unknown) => error instanceof CobConfigError && error.code === "invalid_cob_toml",
+    );
+  });
+});
+
+describe("readCobToml fail-closed I/O", () => {
+  it("treats a missing file as the default-config case", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-toml-missing-"));
+    assert.equal(readCobToml(join(dir, "cob.toml")), undefined);
+  });
+
+  it("fails closed with a typed error when cob.toml exists but cannot be read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-toml-eisdir-"));
+    const path = join(dir, "cob.toml");
+    writeCobToml(path, { compaction: { provider: "native" }, subagents: {} });
+    try {
+      readCobToml(dir);
+      assert.fail("expected EISDIR");
+    } catch (error) {
+      assert.equal(error instanceof CobConfigError, true);
+      assert.equal((error as CobConfigError).code, "cob_config_read_failed");
+      const message = (error as CobConfigError).message;
+      assert.match(message, /EISDIR/);
+      assert.match(message, /cob\.toml|toml-eisdir/);
+      assert.equal(message.includes("provider"), false);
+    }
+    const clutter = join(dir, "cob.toml");
+    assert.throws(
+      () => readCobToml(join(clutter, "nested", "cob.toml")),
+      (error: unknown) => error instanceof CobConfigError && error.code === "cob_config_read_failed",
     );
   });
 });

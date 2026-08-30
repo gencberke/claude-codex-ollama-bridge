@@ -29,8 +29,12 @@ import {
   type OllamaReject,
 } from "./ollama-boundary.js";
 import {
+  createOllamaTerminalTrack,
   declareOllamaWireTools,
   inspectOllamaSseEvent,
+  noteOllamaSseMalformed,
+  observeOllamaSseDone,
+  observeOllamaSseFrame,
   type OllamaResponseGuardState,
   type OllamaToolDeclaration,
 } from "./ollama-response-boundary.js";
@@ -339,6 +343,8 @@ export function ollamaSseTransform(
   declaration?: OllamaToolDeclaration,
   guard?: OllamaResponseGuardState,
 ): Transform {
+  const track = guard?.terminal ?? (guard ? createOllamaTerminalTrack() : undefined);
+  if (guard && track) guard.terminal = track;
   return sseRewriteTransform(
     (value) => {
       if (guard?.failure) return SSE_OMIT_LINE;
@@ -349,21 +355,30 @@ export function ollamaSseTransform(
           return SSE_OMIT_LINE;
         }
       }
+      if (track && observeOllamaSseFrame(track, value) !== "relay") return SSE_OMIT_LINE;
       const normalized = normalizeOllamaResponse(value, catalogModel, bridge, declaration?.applyPatch);
       return normalized === APPLY_PATCH_OMIT ? SSE_OMIT_LINE : normalized;
     },
     undefined,
     {
       onChunk: observer?.onChunk,
-      onData: observer?.onData,
-      // Gate 5 has a Codex-facing custom tool contract.  A malformed data
-      // line cannot be relayed as an opaque provider line on that path: the
-      // caller must see a stream error before it can interpret any tool
-      // result.  Keep the legacy permissive behavior for the ordinary and
-      // tool-search-only Ollama dialects.
-      failOnError: Boolean(declaration?.applyPatch),
-      suppressDone: observer?.suppressDone,
+      onData: (event) => {
+        if (track && event.done) observeOllamaSseDone(track);
+        if (track && event.malformed) noteOllamaSseMalformed(track);
+        observer?.onData?.(event);
+      },
+      // Gate 5 has a Codex-facing custom tool contract: only an enabled
+      // apply-patch bridge may fail the stream on a malformed data line, so
+      // the caller sees a stream error before interpreting any tool result.
+      // The ordinary Ollama dialect taints the stream through the tracker and
+      // never forwards unparseable upstream bytes to the client.
+      failOnError: declaration?.applyPatch?.enabled === true,
+      // The upstream [DONE] sentinel is always absorbed here: cob owns the
+      // one client-facing [DONE] and re-emits it after a successful
+      // checkpoint publish (or with the route's error terminal).
+      suppressDone: true,
       omitData: () => Boolean(guard?.failure),
+      omitMalformed: true,
     },
   );
 }

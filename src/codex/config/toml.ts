@@ -196,12 +196,22 @@ export function renderCobToml(config: CobFileConfig): string {
 }
 
 export function readCobToml(path: string): CobFileConfig | undefined {
+  let text: string;
   try {
-    return parseCobToml(readFileSync(path, "utf8"));
+    text = readFileSync(path, "utf8");
   } catch (error) {
-    if (error instanceof CobConfigError) throw error;
-    return undefined;
+    if (isFsError(error) && error.code === "ENOENT") return undefined;
+    // A missing cob.toml is the default-config case, but any other I/O error
+    // means the configured file exists and cannot be honored. Fail closed
+    // instead of silently starting with defaults. Never echo file content.
+    const code = isFsError(error) ? error.code : "unknown_error";
+    throw new CobConfigError("cob_config_read_failed", `cannot read ${path}: ${code}`);
   }
+  return parseCobToml(text);
+}
+
+function isFsError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && typeof (error as { code?: unknown }).code === "string";
 }
 
 export function writeCobToml(path: string, config: CobFileConfig): void {

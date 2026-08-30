@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    steps:
+      # Reviewed SHAs, not mutable tags. Re-verify owner/repository when bumping.
+      - name: Clean checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Node/npm cache setup
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+      # Linux/Node 22 only: packed-artifact smoke. No live home/gateway, no
+      # cob start/sync/restore, no network catalog discovery.
+      - name: Pack release tarball
+        if: runner.os == 'Linux' && matrix.node == 22
+        run: |
+          filename="$(npm pack --silent | tail -n 1 | tr -d '[:space:]')"
+          if [ -z "$filename" ] || [ ! -f "$filename" ]; then
+            echo "::error::npm pack did not produce a tarball"
+            exit 1
+          fi
+          echo "tarball=$filename" >> "$GITHUB_ENV"
+      - name: Verify packed file list
+        if: runner.os == 'Linux' && matrix.node == 22
+        run: |
+          tar -tzf "$tarball" > /tmp/cob-pack-list.txt
+          if grep -qE '(^|/)(test|__tests__)/|\.test\.js$|\.harness\.js$|gate6h|eval-' /tmp/cob-pack-list.txt; then
+            echo "::error::packed tarball contains development files"
+            grep -E '(^|/)(test|__tests__)/|\.test\.js$|\.harness\.js$|gate6h|eval-' /tmp/cob-pack-list.txt
+            exit 1
+          fi
+      - name: Smoke the packed binary
+        if: runner.os == 'Linux' && matrix.node == 22
+        run: |
+          prefix="$(mktemp -d)"
+          npm install --silent --global --prefix "$prefix" "./$tarball"
+          "$prefix/bin/cob" version
+          "$prefix/bin/cob" help

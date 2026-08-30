@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 import {
@@ -362,28 +361,37 @@ describe("Ollama SSE response guard", () => {
     assert.equal(text.includes("[DONE]"), false);
   });
 
-  it("forwards a valid declared stream with identical bytes outside existing rewrites", async () => {
+  it("forwards a valid declared stream with identical bytes outside held terminal frames", async () => {
     const item = functionCall("exec_command");
-    const raw = [
+    const prefix = [
       `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_1" } })}`,
       `data: ${JSON.stringify({ type: "response.output_item.added", item })}`,
+    ].join("\n\n") + "\n\n";
+    const raw = `${prefix}${[
       `data: ${JSON.stringify({ type: "response.completed", response: jsonResponse([item]) })}`,
       "data: [DONE]",
-    ].join("\n\n") + "\n\n";
+    ].join("\n\n") + "\n\n"}`;
     const guard: OllamaResponseGuardState = {};
     const guarded = await collectTransform(
       raw,
-      ollamaSseTransform("ollama/m", { suppressDone: true }, undefined, declared, guard),
+      ollamaSseTransform("ollama/m", undefined, undefined, declared, guard),
     );
-    const baseline = await collectTransform(raw, ollamaSseTransform("ollama/m", { suppressDone: true }));
+    const baseline = await collectTransform(prefix, ollamaSseTransform("ollama/m"));
     assert.equal(guard.failure, undefined);
-    assert.equal(
-      createHash("sha256").update(guarded).digest("hex"),
-      createHash("sha256").update(baseline).digest("hex"),
-    );
-    assert.match(guarded, /response.output_item.added/);
-    assert.match(guarded, /response.completed/);
+    // Ordinary pre-terminal frames keep their exact bytes.
+    assert.equal(guarded.trimEnd(), baseline.trimEnd());
+    // The one terminal and the upstream [DONE] are withheld; cob owns the
+    // client-facing [DONE] after its checkpoint publishes.
+    assert.equal(guarded.includes("response.completed"), false);
     assert.equal(guarded.includes("[DONE]"), false);
+    assert.equal(guard.terminal?.phase, "held-completed");
+    const held = guard.terminal?.heldTerminal;
+    assert.ok(held);
+    assert.deepEqual(normalizeOllamaResponse(held, "ollama/m", undefined, undefined), {
+      type: "response.completed",
+      response: { ...jsonResponse([item]), model: "ollama/m" },
+    });
+    assert.deepEqual(guard.terminal?.completedCandidate, jsonResponse([item]));
   });
 });
 

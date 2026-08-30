@@ -36,6 +36,8 @@ export type SseObserver = {
   suppressDone?: boolean;
   /** Drop remaining `data:` lines without parsing them. */
   omitData?: () => boolean;
+  /** Drop unparseable `data:` lines instead of relaying them verbatim. */
+  omitMalformed?: boolean;
 };
 
 export function sseRewriteTransform(
@@ -109,6 +111,10 @@ export function rewriteSseLine(
     if (observer?.failOnError) {
       if (error instanceof SyntaxError) throw new Error("SSE data payload is invalid");
       throw error;
+    }
+    if (error instanceof SyntaxError) {
+      observer?.onData?.({ malformed: true });
+      return observer?.omitMalformed ? SSE_OMIT_LINE : line;
     }
     observer?.onData?.({ malformed: true });
     return line;

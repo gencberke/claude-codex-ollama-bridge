@@ -10,6 +10,17 @@ is a live Messages loopback for Claude Code / Claude Desktop 3P. Do not mix
 protocols, homes, or ports. `cob start` remains Codex; do not steal that
 default.
 
+## Current development scope
+
+As of 2026-08-30, active product development is **cob Codex only**. cob Claude
+remains an existing surface, but its feature work, hardening, canaries, and
+release-gate work are frozen until the user explicitly reopens that scope.
+Preserve the current Claude source and live `:18792` surface; do not refactor or
+fix `src/claude/`, replace its listener, or broaden its claims merely because a
+Codex release is being prepared. Deferred Claude findings do not block a
+clearly Codex-scoped decision, but they still prevent a new whole-product
+production-readiness claim.
+
 ## Do not
 
 - Write `~/.codex/config.toml` from cob (`start` / `sync` / `restore` / tests).
@@ -153,25 +164,22 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Live global Codex is cob **0.2.0** (pid **57072** at the
-latest user-reported status). The earlier **0.1.14** scoped install (tarball
-SHA-256
-`0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`,
-pid **54105**) is historical and is no longer the live listener. cob Claude
-live is a later **0.1.16** global
-`cob claude start` on `:18792` (tarball SHA-256
-`3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`)
-and does not restart that Codex listener.
+child on cob 0.1.6). Both live global surfaces remain cob **0.2.1** from the
+authorized 2026-08-29 cut: Codex `:18790` pid **77805** and cob Claude
+`:18792` pid **78004**. Source on `master` is cob **0.2.2**; it is not the
+live install until an explicitly authorized replacement. The earlier 0.2.0
+and 0.1.x listeners and tarballs are historical and must not be repacked.
 Fail-closed JSON/encrypted-wire is live; `apply_patch` and
 `native_plaintext_spawn` stay off on `~/.codex`. Pack excludes `gate6h` and
 `eval-*`. PATH Codex 0.149.0 and Desktop 0.149.0-alpha.4.3 validate catalog
 `9748309e…` (bytes unchanged at install). Host-network `cob status` is `ok`.
-Current root SHA baseline is `989c27f9…` (Desktop/user; cob did not write it).
+Current root SHA baseline is `e8694a47…` (Desktop/user; cob did not write it).
 G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
 G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
 change. Do not credit the 0.1.14 install with those gates. Do not repack
-0.1.11–0.1.16. Source on `master` is cob **0.2.0** (public GitHub cut, not
-an npm publish). Do not restart the Codex `:18790` listener to pick up 0.2.0
+0.1.11–0.1.16, 0.2.0, or 0.2.1. Source on `master` is cob **0.2.2** (public
+GitHub source, not an npm publish). Do not restart the Codex `:18790` listener
+to pick up 0.2.2
 unless the user authorizes a Codex gateway replace. Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;

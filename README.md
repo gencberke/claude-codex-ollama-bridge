@@ -6,6 +6,12 @@ ports, and auth. Never mix them:
 - **cob Codex** (`cob start`, the unqualified Codex start command) — live product. [Codex](https://github.com/openai/codex) / ChatGPT Desktop keep native GPT on the ChatGPT subscription path and still list local Ollama models in the same picker. Native GPT can spawn selected Ollama models as V1 subagent children. Ollama parent → GPT child is not supported.
 - **cob Claude** (`cob claude start`) — live Messages loopback on `:18792` / `~/.claude-cob`. Claude Code keeps native Claude models on the Anthropic subscription (OAuth forwarded). Other model ids go to Ollama `/v1/messages`. Native Claude ids are never rewritten to Ollama. `cob claude start --desktop` snapshots then points Claude Desktop 3P at this loopback, pins the 3P picker to Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5, and writes cob-owned `~/.claude/agents/cob-*.md` (restore reverts). Never ChatGPT Desktop gold. `ollama launch claude` is not this surface.
 
+Current development scope is **cob Codex only**. cob Claude remains available
+in its existing form, but its feature work, hardening, and release-gate work
+are paused until that scope is explicitly reopened. A Codex-scoped release
+decision does not imply that deferred Claude findings are resolved or that the
+whole two-surface product has received a new production-readiness approval.
+
 <p align="center">
   <img width="2172" height="724" alt="ChatGPT Image 27 Ağu 2026 09_12_45" src="https://github.com/user-attachments/assets/e6e2888f-49ae-46f3-9877-7c5193bf8fbc" />
 </p>
@@ -31,8 +37,8 @@ git clone https://github.com/gencberke/claude-codex-ollama-bridge.git
 cd claude-codex-ollama-bridge
 npm install
 npm run pack
-npm install -g ./codex-ollama-bridge-0.2.0.tgz
-cob version    # cob 0.2.0 (global)
+npm install -g ./codex-ollama-bridge-0.2.2.tgz
+cob version    # cob 0.2.2 (global)
 ```
 
 Pull Ollama models you want listed (example):

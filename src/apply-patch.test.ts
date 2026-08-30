@@ -295,7 +295,7 @@ describe("Gate 5 apply_patch wire bridge", () => {
       `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "item_1", output_index: 0, sequence_number: 13, delta: args.slice(14) })}`,
       `data: ${JSON.stringify({ type: "response.function_call_arguments.done", item_id: "item_1", output_index: 0, sequence_number: 14, arguments: args })}`,
       `data: ${JSON.stringify({ type: "response.output_item.done", item: { type: "function_call", id: "item_1", call_id: "call_1", name: COB_APPLY_PATCH_ALIAS, arguments: args } })}`,
-      `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_1", status: "completed", output: [{ type: "function_call", id: "item_1", call_id: "call_1", name: COB_APPLY_PATCH_ALIAS, arguments: args }] } })}`,
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_1", object: "response", status: "completed", output: [{ type: "function_call", id: "item_1", call_id: "call_1", name: COB_APPLY_PATCH_ALIAS, arguments: args }] } })}`,
       "data: [DONE]",
       "",
     ].join("\n\n");
@@ -306,8 +306,16 @@ describe("Gate 5 apply_patch wire bridge", () => {
     assert.equal(text.includes("response.function_call_arguments.delta"), false);
     assert.equal(text.includes("response.function_call_arguments.done"), false);
     assert.match(text, /custom_tool_call/);
-    assert.match(text, /response.completed/);
-    assert.match(text, /data: \[DONE\]/);
+    // The terminal and upstream [DONE] are held for the route: cob normalizes
+    // and emits them only after its checkpoint publishes.
+    assert.equal(text.includes("response.completed"), false);
+    assert.equal(text.includes("[DONE]"), false);
+    assert.equal(guard.terminal?.phase, "held-completed");
+    const held = guard.terminal?.heldTerminal;
+    assert.ok(held);
+    const normalizedHeld = normalizeOllamaResponse(held, "ollama/m", undefined, declaration.applyPatch);
+    assert.equal(JSON.stringify(normalizedHeld).includes(COB_APPLY_PATCH_ALIAS), false);
+    assert.match(JSON.stringify(normalizedHeld), /custom_tool_call/);
   });
 
   it("passes ordinary function argument deltas and done events while patch is active", async () => {
@@ -323,7 +331,7 @@ describe("Gate 5 apply_patch wire bridge", () => {
       `data: ${JSON.stringify({ type: "response.function_call_arguments.done", item_id: "exec_item", call_id: "exec_call", arguments: ordinaryArgs })}`,
       `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "patch_item", call_id: "patch_call", delta: patchArgs })}`,
       `data: ${JSON.stringify({ type: "response.output_item.done", item: { type: "function_call", id: "patch_item", call_id: "patch_call", name: COB_APPLY_PATCH_ALIAS, arguments: patchArgs } })}`,
-      `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_1", status: "completed", output: [{ type: "function_call", id: "patch_item", call_id: "patch_call", name: COB_APPLY_PATCH_ALIAS, arguments: patchArgs }, { type: "function_call", id: "exec_item", call_id: "exec_call", name: "exec_command", arguments: ordinaryArgs }] } })}`,
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_1", object: "response", status: "completed", output: [{ type: "function_call", id: "patch_item", call_id: "patch_call", name: COB_APPLY_PATCH_ALIAS, arguments: patchArgs }, { type: "function_call", id: "exec_item", call_id: "exec_call", name: "exec_command", arguments: ordinaryArgs }] } })}`,
       "data: [DONE]",
       "",
     ].join("\n\n");

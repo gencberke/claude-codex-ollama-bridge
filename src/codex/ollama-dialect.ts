@@ -125,6 +125,7 @@ export const OLLAMA_DIALECT = {
   response: {
     successfulJson: {
       object: "response",
+      status: "completed",
       id: "non-empty-string",
       output: "array",
     },

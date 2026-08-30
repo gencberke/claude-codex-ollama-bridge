@@ -117,7 +117,10 @@ describe("acceptance matrix (mock)", () => {
       },
       ollamaFetch: async () => {
         ollamaHits += 1;
-        return new Response(JSON.stringify({ ok: "ollama" }), { status: 200 });
+        return new Response(
+          JSON.stringify({ id: "resp_accept_only", object: "response", status: "completed", output: [] }),
+          { status: 200 },
+        );
       },
     });
     try {
@@ -240,7 +243,9 @@ describe("acceptance matrix (mock)", () => {
         if (continuation) {
           return new Response(
             JSON.stringify({
+              id: "resp_spawn_done",
               object: "response",
+              status: "completed",
               model: "deepseek-v4-flash:cloud",
               output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }],
             }),
@@ -249,7 +254,9 @@ describe("acceptance matrix (mock)", () => {
         }
         return new Response(
           JSON.stringify({
+            id: "resp_spawn_first",
             object: "response",
+            status: "completed",
             model: "deepseek-v4-flash:cloud",
             output: [
               {

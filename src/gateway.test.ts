@@ -37,6 +37,14 @@ const TEST_CATALOG: CatalogFile = {
   ],
 };
 
+let ollamaRespSeq = 0;
+
+/** Exact normal completed envelope for Ollama JSON relay fixtures (WP2). */
+function ollamaCompletedBody(extra: JsonObject = {}): JsonObject {
+  ollamaRespSeq += 1;
+  return { id: `resp_ok_${ollamaRespSeq}`, object: "response", status: "completed", output: [], ...extra };
+}
+
 function gate1Payload(): Record<string, unknown> {
   const spawn = {
     type: "function",
@@ -238,10 +246,13 @@ describe("gateway", () => {
           parsed && typeof parsed === "object" && "model" in parsed && typeof parsed.model === "string"
             ? parsed.model
             : undefined;
-        return new Response(JSON.stringify({ ok: "ollama" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(ollamaCompletedBody()),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       },
     });
     try {
@@ -532,6 +543,7 @@ describe("gateway", () => {
           JSON.stringify({
             id: "resp_metrics",
             object: "response",
+            status: "completed",
             output: [{ type: "message", content: "secret-output" }],
             usage: { input_tokens: 12, output_tokens: 3, total_tokens: 15, cached_input_tokens: 0 },
           }),
@@ -601,6 +613,7 @@ describe("gateway", () => {
           JSON.stringify({
             id: "resp_promote",
             object: "response",
+            status: "completed",
             output: [
               {
                 type: "function_call",
@@ -880,10 +893,13 @@ describe("gateway", () => {
       },
       ollamaFetch: async (_url, init) => {
         seen.ollamaBody = init.body.toString("utf8");
-        return new Response(JSON.stringify({ ok: "ollama" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(ollamaCompletedBody()),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       },
     });
     try {
@@ -1872,10 +1888,13 @@ describe("gateway", () => {
       catalog: TEST_CATALOG,
       ollamaFetch: async () => {
         ollamaHits += 1;
-        return new Response(JSON.stringify({ ok: "ollama" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(ollamaCompletedBody()),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       },
     });
     try {
@@ -2804,10 +2823,13 @@ describe("gateway", () => {
       catalog: TEST_CATALOG,
       ollamaFetch: async (_url, init) => {
         sent.push(JSON.parse(init.body.toString("utf8")) as Record<string, unknown>);
-        return new Response(JSON.stringify({ ok: "ollama" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(ollamaCompletedBody()),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       },
     });
     try {
@@ -2908,6 +2930,7 @@ describe("gateway", () => {
           JSON.stringify({
             id: "resp_nousage",
             object: "response",
+            status: "completed",
             output: [{ type: "message", content: "secret-output" }],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -2948,10 +2971,13 @@ describe("gateway", () => {
         }),
       ollamaFetch: async () => {
         await new Promise((resolve) => setTimeout(resolve, 80));
-        return new Response(JSON.stringify({ ok: "ollama" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(ollamaCompletedBody()),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       },
     });
     try {

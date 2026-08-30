@@ -324,4 +324,66 @@ describe("Ollama request boundary", () => {
     assert.equal(plainError.code, "ollama_upstream_error");
     assert.equal(classifyOllamaError(429, ""), "rate");
   });
+
+  it("redacts credentials and user paths from generic Ollama error text", () => {
+    const sanitized = normalizeOllamaErrorBody(
+      502,
+      Buffer.from(
+        JSON.stringify({
+          error: {
+            message:
+              "model load failed for Bearer sk-secret-token at /Users/alice/secret/model.gguf and C:\\Users\\bob\\junk",
+          },
+        }),
+      ),
+      undefined,
+    );
+    const error = isRecord(sanitized.error) ? sanitized.error : {};
+    const message = String(error.message);
+    assert.match(message, /model load failed/);
+    assert.equal(message.includes("sk-secret-token"), false);
+    assert.equal(message.includes("/Users/alice/secret"), false);
+    assert.equal(message.includes("\\Users\\bob"), false);
+    assert.match(message, /\[redacted-credential\]/);
+    assert.match(message, /\[redacted-path\]/);
+    assert.equal(message.includes("\n"), false);
+  });
+
+  it("falls back to the generic HTTP message for empty or oversized Ollama error text", () => {
+    const oversized = normalizeOllamaErrorBody(
+      500,
+      Buffer.from(JSON.stringify({ error: { message: "x".repeat(3000) } })),
+      undefined,
+    );
+    const oversizeError = isRecord(oversized.error) ? oversized.error : {};
+    assert.equal(oversizeError.code, "ollama_upstream_error");
+    assert.equal(oversizeError.message, "Ollama returned HTTP 500");
+
+    const empty = normalizeOllamaErrorBody(502, Buffer.from("   \n"), undefined);
+    const emptyError = isRecord(empty.error) ? empty.error : {};
+    assert.equal(emptyError.message, "Ollama returned HTTP 502");
+
+    const benign = normalizeOllamaErrorBody(
+      503,
+      Buffer.from(JSON.stringify({ error: { message: "engine is loading" } })),
+      undefined,
+    );
+    const benignError = isRecord(benign.error) ? benign.error : {};
+    assert.equal(benignError.message, "engine is loading");
+  });
+
+  it("keeps quota and rate messages fixed even when the upstream body mentions secrets", () => {
+    const quota = normalizeOllamaErrorBody(
+      429,
+      Buffer.from(
+        JSON.stringify({ error: { message: "quota exhausted for Bearer sk-secret at /Users/alice/x" } }),
+      ),
+      "7",
+    );
+    const quotaError = isRecord(quota.error) ? quota.error : {};
+    assert.equal(quotaError.code, "ollama_quota_exhausted");
+    assert.match(String(quotaError.message), /replenish quota/);
+    assert.equal(String(quotaError.message).includes("Alice"), false);
+    assert.equal(quotaError.retry_after, "7");
+  });
 });

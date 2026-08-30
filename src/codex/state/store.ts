@@ -145,7 +145,7 @@ export class ConversationStateStore {
     });
   }
 
-  async publish(draft: PublishCheckpoint): Promise<void> {
+  async publish(draft: PublishCheckpoint, options?: { signal?: AbortSignal }): Promise<void> {
     const node = normalizeCheckpoint(draft);
     if (
       node.rawCompactArchive !== undefined &&
@@ -168,6 +168,16 @@ export class ConversationStateStore {
       );
     }
     await withExclusiveLock(this.lockPath, async () => {
+      // The client may leave between the caller's abort check and this lock
+      // grant. Re-check after the lock and before the first mutation so an
+      // aborted response never becomes a committed checkpoint head.
+      if (options?.signal?.aborted) {
+        throw new ConversationStateError(
+          "state_publish_aborted",
+          "client left before the checkpoint commit; nothing was published",
+          499,
+        );
+      }
       this.ensureDirectories();
       this.recoverTemporaryFiles();
       const existing = this.readValidCheckpoints();
@@ -195,7 +205,10 @@ export class ConversationStateStore {
       ];
       const retained = retainedResponseIds(all.map((entry) => entry.node), node.responseId, this.retention.maxHeads);
       const removable = all.filter((entry) => !retained.has(entry.node.responseId));
-      const removed = new Set<string>();
+      // Plan retention without touching the filesystem: a publish failure must
+      // leave the previous checkpoint set exactly as it was, so the committed
+      // checkpoint file is the transaction's only mutation point.
+      const plannedRemovals: ConversationCheckpoint[] = [];
       let remainingNodes = all.length;
       let remainingBytes = all.reduce((total, entry) => total + entry.size, 0);
       for (const entry of removable.sort((a, b) => checkpointTime(a.node) - checkpointTime(b.node))) {
@@ -203,8 +216,7 @@ export class ConversationStateStore {
         const tooMany = remainingNodes > this.retention.maxNodes;
         const tooLarge = remainingBytes > this.retention.maxBytes;
         if (!tooOld && !tooMany && !tooLarge) continue;
-        removeCheckpointFiles(this, entry.node);
-        removed.add(entry.node.responseId);
+        plannedRemovals.push(entry.node);
         remainingNodes -= 1;
         remainingBytes -= entry.size;
       }
@@ -217,12 +229,27 @@ export class ConversationStateStore {
       }
 
       if (node.rawCompactBody) {
-        const archive = this.compactArchivePath(node.responseId);
-        writeImmutable(archive, node.rawCompactBody);
+        // The archive precedes the commit point: it only becomes authoritative
+        // once the candidate checkpoint that references it is published.
+        writeImmutable(this.compactArchivePath(node.responseId), node.rawCompactBody);
         delete node.rawCompactBody;
       }
       writeImmutable(target, serializeCheckpoint(node));
-      void removed;
+
+      // Post-commit maintenance only. A prune failure must never retract the
+      // committed checkpoint or turn this publish into a reported failure.
+      const removed = new Set<string>();
+      for (const entry of plannedRemovals) {
+        try {
+          removeCheckpointFiles(this, entry);
+          removed.add(entry.responseId);
+        } catch {
+          console.warn(
+            `warning: cob state prune deferred; planned_n=${plannedRemovals.length} removed_n=${removed.size} code=state_prune_io_error`,
+          );
+          break;
+        }
+      }
       this.removeOrphanedArchives(all.filter((entry) => !removed.has(entry.node.responseId)));
     });
   }
@@ -540,6 +567,8 @@ export type CheckpointPublishContext = {
   requestInputProjection: unknown;
   baseHistory: StateHistoryItem[];
   parentResponseId?: string;
+  /** Tripped when the client leaves; checked again inside the publish lock. */
+  signal?: AbortSignal;
 };
 
 export async function publishOllamaCheckpoint(
@@ -575,7 +604,7 @@ export async function publishOllamaCheckpoint(
       upstreamModel: identity.upstreamModel,
     },
     isCompactionReplacement: false,
-  });
+  }, { signal: context.signal });
 }
 
 export async function publishCompactCheckpoint(
@@ -618,7 +647,7 @@ export async function publishCompactCheckpoint(
     },
     isCompactionReplacement: true,
     rawCompactBody: rawBody,
-  });
+  }, { signal: context.signal });
 }
 
 export async function publishOllamaSummaryCheckpoint(
@@ -659,5 +688,5 @@ export async function publishOllamaSummaryCheckpoint(
     },
     isCompactionReplacement: true,
     rawCompactBody: rawBody,
-  });
+  }, { signal: context.signal });
 }
