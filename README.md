@@ -23,6 +23,10 @@ OpenCodex is a proof of concept, not the product. This repo reimplements the loo
 Node.js 22+, a local [Ollama](https://ollama.com) with `/v1/responses`
 (0.13.3+), and the client you actually use:
 
+- Supported platforms: the **cob Codex** surface runs on **macOS and Linux
+  only**; on Windows the CLI exits early with a clear error. The **cob
+  Claude** surface also runs on Windows.
+
 - cob Codex: [Codex CLI](https://github.com/openai/codex) 0.149+ (`codex login`). ChatGPT Desktop is optional.
 - cob Claude: Claude Code logged in on this machine. Claude Desktop is optional (`--desktop`).
 
@@ -262,7 +266,7 @@ Gate 5 is a separate, default-off catalog opt-in for an isolated `--dev` home:
 `[catalog] apply_patch = true` adds cob-owned
 `apply_patch_tool_type = "freeform"` only to Ollama rows whose slugs are listed
 in `[subagents].models`. Native GPT rows remain verbatim, Ollama rows keep
-`shell_type = "disabled"` and `multi_agent_version = "v1"`, and the live
+`multi_agent_version = "v1"`, and the live
 `:18790` gateway/pack/catalog path does not enable it. On that isolated route,
 cob translates the one declared Codex custom/freeform `apply_patch` tool to a
 fixed Ollama function alias with a string input wrapper, then restores the
@@ -270,7 +274,16 @@ Codex custom call/output identity. Missing declarations, alias collisions,
 encrypted fields, malformed history, and undeclared calls fail closed without
 logging the patch body. The 2026-08-24 Gate 5 canary proved one real 0731 child
 edit through that custom tool; `exec_command` plus a temporary patch binary is
-not gold and shell remains disabled.
+not gold and apply_patch remains a separate isolated opt-in.
+
+Ollama shell capability is derived only from fresh `/api/tags` evidence: a row
+whose current tag carries the exact lowercase `tools` capability advertises
+`shell_type = "unified_exec"` (declared `exec_command`/`write_stdin` function
+tools only), and no-tools, unknown, or fallback evidence keeps
+`shell_type = "disabled"`. Parallel tool calls, V2 child content, apply_patch,
+shell_call, and local_shell_call are never opened through that shell. A
+configured spawn row that loses its fresh `tools` capability fails the sync
+closed instead of keeping a stale `unified_exec` row.
 
 Ollama accepts a string as a complete first-turn `input`, but replayed history
 uses `input[]`, whose entries must be typed items. cob preserves the first-turn
@@ -311,7 +324,8 @@ models = [
 # (aliased). Set false to send the full tool list every turn.
 # supports_search_tool = false
 # Gate 5; isolated --dev only and default false. Only configured Ollama spawn
-# rows receive apply_patch_tool_type = "freeform"; shell remains disabled.
+# rows receive apply_patch_tool_type = "freeform"; shell_type is unified_exec
+# only for rows whose fresh /api/tags evidence carries an exact tools capability.
 apply_patch = false
 # Set the preceding key to true only in the isolated --dev cob.toml canary.
 # advertise_cloud_max_context = true

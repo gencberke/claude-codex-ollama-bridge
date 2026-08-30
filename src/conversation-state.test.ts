@@ -285,6 +285,28 @@ describe("durable Ollama conversation state", () => {
     await store.resolve("b");
   });
 
+  it("refuses to commit a child whose ancestry was pruned before the publish lock", async () => {
+    const store = newStore({ maxNodes: 2, maxHeads: 1 });
+    await store.publish(draft("root", [{ id: "u-root" }], []));
+    const rootHistory = (await store.resolve("root")).history;
+    await store.publish(draft("a", [{ id: "u-a" }], [], "root", undefined, rootHistory));
+    const aHistory = (await store.resolve("a")).history;
+    // The request prepares the continuation against a while the publish
+    // lock is still held by another conversation turn.
+    const staleC = draft("c", [{ id: "u-c" }], [], "a", undefined, aHistory);
+    // The sibling commit prunes the now-unreachable fork before c reaches
+    // the lock.
+    await store.publish(draft("b", [{ id: "u-b" }], [], "root", undefined, rootHistory));
+    assert.equal(existsSync(store.checkpointPath("a")), false);
+    await assert.rejects(
+      () => store.publish(staleC),
+      (error: unknown) => error instanceof ConversationStateError && error.code === "state_checkpoint_missing",
+    );
+    assert.equal(existsSync(store.checkpointPath("c")), false);
+    assert.equal(existsSync(store.checkpointPath("b")), true);
+    await store.resolve("b");
+  });
+
   it("preserves the previous checkpoint state when retention is exhausted", async () => {
     const store = newStore();
     await store.publish(draft("old", [{ id: "u-old", type: "message", text: "old" }], []));

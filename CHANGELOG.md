@@ -11,8 +11,10 @@ not this file.
 ## 0.2.2 — 2026-08-29
 
 Reserved `functions` namespace compatibility for real Ollama V1 children.
-This cut is prepared from source and isolated gold evidence; it is not the
-live `:18790` install until an explicitly authorized gateway replacement.
+Live note (2026-08-30): the global `:18790` install is 0.2.2 from the
+2026-08-29 pack (originating tarball SHA/tag unrecorded; installed bytes are
+burned — the next cut is 0.2.3). Later source work — the WP hardening and CI
+at `e6a3449` — stays unpacked and belongs to the next section.
 
 - At the private Ollama boundary, direct leaves of Codex's exact top-level
   `functions` namespace are advertised as flat function names. A

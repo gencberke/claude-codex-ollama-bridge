@@ -196,6 +196,15 @@ export class ConversationStateStore {
         );
       }
 
+      if (node.parentResponseId) {
+        // The caller resolved this parent before the checkpoint was validated,
+        // but retention from a concurrent publish may have pruned it while
+        // this publish waited for the lock. Revalidate the full ancestry under
+        // the lock: a dangling child never becomes a retained head, and no
+        // archive or checkpoint bytes are written before the chain confirms.
+        await this.resolve(node.parentResponseId);
+      }
+
       const all = [
         ...existing,
         {

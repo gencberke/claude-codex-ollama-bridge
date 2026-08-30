@@ -2,6 +2,7 @@ import { connect } from "node:net";
 import { DEFAULT_OLLAMA_URL } from "../../core/ollama/constants.js";
 import { readFileSync } from "node:fs";
 import { writeFileAtomic } from "../../core/atomic.js";
+import { readLimitedResponse } from "../../core/http-body.js";
 import { isRecord } from "../../core/json.js";
 import { cobProcessIdentity, isCobGatewayProcess, isPidAlive, isSameProcess } from "../../core/process-info.js";
 import { DEFAULT_PORT } from "../constants.js";
@@ -137,6 +138,8 @@ export async function runtimeStillServing(runtime: RuntimeState): Promise<boolea
   return identity === "cob" && isCobGatewayProcess(runtime.pid);
 }
 
+const HEALTH_BODY_MAX_BYTES = 4_096;
+
 export async function fetchHealthz(
   port: number,
   nonce?: string,
@@ -145,11 +148,18 @@ export async function fetchHealthz(
   try {
     const headers: Record<string, string> = {};
     if (nonce) headers["x-cob-nonce"] = nonce;
+    const signal = AbortSignal.timeout(timeoutMs);
     const response = await fetch(`http://127.0.0.1:${port}/healthz`, {
       headers,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     });
-    const body: unknown = await response.json().catch(() => null);
+    let body: unknown = null;
+    try {
+      body = JSON.parse(await readLimitedResponse(response, { maxBytes: HEALTH_BODY_MAX_BYTES, signal })) as unknown;
+    } catch {
+      // Oversize, aborted, or malformed bodies fail the probe without content.
+      body = null;
+    }
     return { ok: response.ok, status: response.status, body };
   } catch {
     return null;

@@ -123,16 +123,55 @@ export function parseOllamaThreadCompaction(value: string | undefined): OllamaTh
 }
 
 export function parseOllamaCompactModel(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined || value.length === 0) return undefined;
+  try {
+    return validateOllamaSlug(value, "compaction.ollama_model");
+  } catch (error) {
+    if (error instanceof CobConfigError) {
+      throw new CobConfigError("invalid_compaction_ollama_model", error.message);
+    }
+    throw error;
+  }
+}
+
+/**
+ * The one Ollama slug validator: an exact `ollama/<non-empty-id>` form, no
+ * surrounding whitespace, no interior whitespace or control characters, and
+ * never a native (non-`ollama/`) model slug. Shared by the cob.toml file
+ * config, the COB_SUBAGENT_MODELS env spawn list, and the compact Ollama
+ * model so every entry point fails closed the same way.
+ */
+export function validateOllamaSlug(value: string, field: string): string {
   const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
+  if (trimmed !== value) {
+    throw new CobConfigError("invalid_ollama_slug", `${field} has surrounding whitespace: ${JSON.stringify(value)}`);
+  }
   if (!trimmed.startsWith("ollama/")) {
     throw new CobConfigError(
-      "invalid_compaction_ollama_model",
-      `compaction.ollama_model must be an ollama/ slug, not "${trimmed}". Do not reuse compaction.model (that is the native ChatGPT slug).`,
+      "invalid_ollama_slug",
+      `${field} must be an ollama/ slug, not the native slug "${trimmed}"`,
     );
   }
+  const id = trimmed.slice("ollama/".length);
+  if (id.length === 0) {
+    throw new CobConfigError("invalid_ollama_slug", `${field} must include a model id after ollama/`);
+  }
+  if (/[\s\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw new CobConfigError("invalid_ollama_slug", `${field} must not contain whitespace or control characters`);
+  }
   return trimmed;
+}
+
+export function parseOllamaSlugList(values: readonly string[], field: string): string[] {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const slug = validateOllamaSlug(value, field);
+    if (seen.has(slug)) {
+      throw new CobConfigError("invalid_ollama_slug", `${field} lists a duplicate spawn model: ${slug}`);
+    }
+    seen.add(slug);
+  }
+  return values.slice();
 }
 
 export function parseOllamaCompactEffort(value: string | undefined): OllamaCompactEffort | undefined {

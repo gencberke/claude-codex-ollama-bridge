@@ -208,11 +208,20 @@ export async function withCobLock<T>(paths: CobPaths, fn: () => Promise<T>): Pro
   return withExclusiveLock(paths.lock, fn);
 }
 
+export class RootConfigUnreadableError extends Error {
+  readonly code = "root_config_unreadable";
+  constructor(readonly cause: NodeJS.ErrnoException) {
+    super(`cob cannot read ~/.codex/config.toml (${String(cause.code ?? cause)}); refusing to treat it as missing`);
+    this.name = "RootConfigUnreadableError";
+  }
+}
+
 export function readRootConfig(paths: CobPaths): Buffer | null {
   try {
     return readFileSync(paths.rootConfig);
-  } catch {
-    return null;
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return null;
+    throw new RootConfigUnreadableError(error as NodeJS.ErrnoException);
   }
 }
 
@@ -553,6 +562,14 @@ export async function startGatewayDetached(opts: {
   try {
     const existing = readRuntime(paths);
     if (existing && (await isHealthyRuntime(existing))) {
+      // Reconcile before the early return: a lease matching the healthy
+      // runtime's exact pid+nonce is either the live handoff window (launcher
+      // still active; refuses) or the orphan of a launcher that died after
+      // adoption (cleared under this lock). Any other lease survives.
+      const orphanReconciled = await reconcileHealthyStartLease(paths, existing);
+      if (orphanReconciled === "active") {
+        throw new Error("cob start already in progress");
+      }
       return { alreadyRunning: true, runtime: existing };
     }
     const lease = readStartLease(paths);
@@ -587,7 +604,11 @@ export async function startGatewayDetached(opts: {
       if (lease && lease.pid === child.pid && lease.nonce === nonce) {
         clearStartLease(paths);
       }
-      if (snapshot) restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
+    }
+    // The child is only one of the rollback owners: a spawnServe failure
+    // before any child exists must still restore the overlay snapshot.
+    if (snapshot) {
+      restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
     }
     throw error;
   } finally {
@@ -621,10 +642,13 @@ export async function startGatewayDetached(opts: {
       if (!(await isHealthyRuntime(runtime))) {
         throw new Error("cob serve health check failed after overlays were verified");
       }
-      clearStartLease(paths);
       if (!(await isHealthyRuntime(runtime)) || !existsSync(paths.catalog) || !existsSync(paths.profile)) {
         throw new Error("cob start commit lost the gateway before returning success");
       }
+      // The lease stays in place until the last verification passes: if this
+      // check fails, the lease is still the rollback ownership proof and
+      // rollbackDetachedStart can claim it to restore the overlays.
+      clearStartLease(paths);
       child.unref();
       return { alreadyRunning: false, runtime };
     } finally {
@@ -650,6 +674,29 @@ async function rollbackDetachedStart(
     clearStartLease(paths);
     restoreOverlays(paths, snapshot, { preserveCatalogValidationFailure: true });
   });
+}
+
+/**
+ * Classify a lease that claims a healthy runtime: "active" while the recorded
+ * launcher is alive, "reconciled" when the launcher is gone and the child's
+ * exact runtime identity is healthy, "foreign" for any non-matching lease.
+ */
+async function reconcileHealthyStartLease(
+  paths: CobPaths,
+  runtime: RuntimeState,
+): Promise<"active" | "reconciled" | "foreign"> {
+  const lease = readStartLease(paths);
+  if (!lease) return "foreign";
+  if (lease.pid !== runtime.pid || lease.nonce !== runtime.nonce) return "foreign";
+  if (
+    lease.launcherPid !== undefined &&
+    isLeaseProcessActive(lease.launcherPid, lease.launcherStartKey)
+  ) {
+    return "active";
+  }
+  if (!(await isHealthyRuntime(runtime))) return "foreign";
+  clearStartLease(paths);
+  return "reconciled";
 }
 
 

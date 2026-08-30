@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import {
   existsSync,
   chmodSync,
+  chownSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -12,21 +14,25 @@ import {
   realpathSync,
   rmdirSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { uniqueTempPath } from "./core/atomic.js";
-import { acquireLock, LockTimeoutError, releaseLock, STALE_CORRUPT_MS, withExclusiveLock } from "./core/lock.js";
+import { acquireLock, LockTimeoutError, releaseLock, STALE_CORRUPT_MS, waitForLockAdopted, withExclusiveLock } from "./core/lock.js";
 import { assertCodexAcceptsCatalog } from "./codex/catalog/validator.js";
 import {
   isStartLeaseActive,
   prepareProfileAndCatalog,
+  readRootConfig,
   readStartLease,
   restrictExperimentalToIsolatedHome,
+  RootConfigUnreadableError,
   restoreCob,
   restoreOverlays,
   serveForeground,
@@ -36,7 +42,10 @@ import {
   syncCatalog,
   writeStartLease,
 } from "./codex/runtime/lifecycle.js";
-import { isHealthyRuntime, readRuntime, writeRuntime } from "./codex/runtime/runtime.js";
+import { isHealthyRuntime, readRuntime, waitForHealth, writeRuntime } from "./codex/runtime/runtime.js";
+import { closePrivateLogFd, openPrivateLogFd } from "./codex/runtime/log-fd.js";
+import { runCodexCli } from "./codex/cli.js";
+import type { CliFlags } from "./cli-session.js";
 import { statusReport } from "./codex/runtime/status.js";
 import { resolvePaths } from "./codex/paths.js";
 import { cobProcessIdentity, isOurCobArgv, processStartKey } from "./core/process-info.js";
@@ -697,39 +706,32 @@ describe("overlay rollback and start lease", () => {
     writeFileSync(reject, "#!/bin/sh\necho 'Codex rejected cob catalog: missing consumer field' >&2\nexit 1\n");
     chmodSync(accept, 0o755);
     chmodSync(reject, 0o755);
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    delete process.env.COB_SKIP_CATALOG_CHECK;
-    try {
-      await assert.rejects(
-        () =>
-          serveForeground({
-            paths,
-            port: 1,
-            ollamaUrl: "http://127.0.0.1:1",
-            locked: true,
-            discovery: {
-              liveHome: true,
-              platform: "darwin",
-              desktopBins: [accept],
-              pathBin: reject,
-            },
-            inspect: { readVersion: () => "codex-cli test" },
-          }),
-        /rejected cob catalog/,
-      );
-      assert.equal(existsSync(paths.catalog), false);
-      assert.equal(existsSync(paths.profile), false);
-      assert.equal(existsSync(paths.cobConfig), false);
-      assert.equal(existsSync(paths.runtime), false);
-      const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
-      const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
-      assert.equal(metadata.schema_version, 2);
-      assert.equal(metadata.schema_version === 2 ? metadata.catalog_sha256 : "unexpected", null);
-      assert.ok(metadata.schema_version === 2 && metadata.last_failure);
-    } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
-    }
+    await assert.rejects(
+      () =>
+        serveForeground({
+          paths,
+          port: 1,
+          ollamaUrl: "http://127.0.0.1:1",
+          locked: true,
+          discovery: {
+            liveHome: true,
+            platform: "darwin",
+            desktopBins: [accept],
+            pathBin: reject,
+          },
+          inspect: { readVersion: () => "codex-cli test" },
+        }),
+      /rejected cob catalog/,
+    );
+    assert.equal(existsSync(paths.catalog), false);
+    assert.equal(existsSync(paths.profile), false);
+    assert.equal(existsSync(paths.cobConfig), false);
+    assert.equal(existsSync(paths.runtime), false);
+    const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
+    const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+    assert.equal(metadata.schema_version, 2);
+    assert.equal(metadata.schema_version === 2 ? metadata.catalog_sha256 : "unexpected", null);
+    assert.ok(metadata.schema_version === 2 && metadata.last_failure);
   });
 
   it("restores exact last-good overlays when startup fails after a handled catalog rejection", async () => {
@@ -744,7 +746,9 @@ describe("overlay rollback and start lease", () => {
     const catalog = '{"models":[{"slug":"gpt-5.6-sol","visibility":"list"}]}\n';
     writeFileSync(paths.catalog, catalog);
     writeFileSync(paths.profile, "PREV-PROFILE\n");
-    writeFileSync(paths.cobConfig, "PREV-TOML\n");
+    // The strict cob.toml grammar rejects bare text; a comment is a valid
+    // last-good placeholder that the parser skips.
+    writeFileSync(paths.cobConfig, "# PREV-TOML\n");
     const discovery = {
       liveHome: true,
       platform: "darwin" as const,
@@ -766,8 +770,6 @@ describe("overlay rollback and start lease", () => {
     });
     const address = occupied.address();
     const port = typeof address === "object" && address ? address.port : 0;
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    delete process.env.COB_SKIP_CATALOG_CHECK;
     try {
       await assert.rejects(
         () =>
@@ -787,8 +789,6 @@ describe("overlay rollback and start lease", () => {
       assert.equal(existsSync(paths.runtime), false);
       assert.equal(existsSync(paths.pid), false);
     } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
       await new Promise<void>((resolve, rejectClose) => {
         occupied.close((error) => (error ? rejectClose(error) : resolve()));
       });
@@ -841,32 +841,23 @@ describe("overlay rollback and start lease", () => {
     );
     chmodSync(codexBin, 0o755);
     const brokenPaths = { ...paths, runtime: join(brokenParent, "runtime") };
-    const previousBin = process.env.COB_CODEX_BIN;
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    process.env.COB_CODEX_BIN = codexBin;
-    process.env.COB_SKIP_CATALOG_CHECK = "1";
     const port = await freePort();
-    try {
-      await assert.rejects(
-        () =>
-          serveForeground({
-            paths: brokenPaths,
-            port,
-            ollamaUrl: "http://127.0.0.1:1",
-            locked: true,
-          }),
-        /EACCES|EPERM|permission|read-only/i,
-      );
-      await assert.rejects(
-        () => fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(500) }),
-      );
-      assert.equal(existsSync(paths.runtime), false);
-    } finally {
-      if (previousBin === undefined) delete process.env.COB_CODEX_BIN;
-      else process.env.COB_CODEX_BIN = previousBin;
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
-    }
+    await assert.rejects(
+      () =>
+        serveForeground({
+          paths: brokenPaths,
+          port,
+          ollamaUrl: "http://127.0.0.1:1",
+          locked: true,
+          discovery: { liveHome: false, platform: "darwin", pathBin: codexBin },
+          inspect: { readVersion: () => "codex-cli test" },
+        }),
+      /EACCES|EPERM|permission|read-only/i,
+    );
+    await assert.rejects(
+      () => fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(500) }),
+    );
+    assert.equal(existsSync(paths.runtime), false);
   });
 
   it("refuses restore while a start lease pid is alive", async () => {
@@ -914,9 +905,59 @@ describe("overlay rollback and start lease", () => {
     );
   });
 
+  it("fails sync closed when a configured spawn row lacks a fresh tools capability", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-spawn-tools-"));
+    const paths = resolvePaths(dir);
+    const bin = join(dir, "fake-codex");
+    writeFileSync(bin, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\",\"visibility\":\"list\"}]}'\n");
+    chmodSync(bin, 0o755);
+    const ollamaPort = await freePort();
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          models: [
+            {
+              name: "deepseek-v4-flash:0731-cloud",
+              capabilities: ["completion", "thinking"],
+              details: { context_length: 32768 },
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(ollamaPort, "127.0.0.1", () => resolve());
+    });
+    try {
+      await assert.rejects(
+        () =>
+          syncCatalog({
+            paths,
+            ollamaUrl: `http://127.0.0.1:${ollamaPort}`,
+            locked: true,
+            discovery: { liveHome: false, platform: "darwin", pathBin: bin },
+            inspect: { readVersion: () => "codex-cli test" },
+          }),
+        /fresh tools capability/,
+      );
+      assert.equal(existsSync(paths.catalog), false);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+  });
+
   it("refreshes the v2 profile when sync updates the catalog", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-sync-profile-"));
     const paths = resolvePaths(dir);
+    // A clean runner has no Codex installation; pin the producer the same way
+    // the sibling sync tests do instead of relying on the ambient PATH.
+    const bin = join(dir, "fake-codex");
+    writeFileSync(bin, "#!/bin/sh\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-5.6-sol\",\"visibility\":\"list\"}]}'\n");
+    chmodSync(bin, 0o755);
     const gatewayPort = 19876;
     const ollamaPort = await freePort();
     writeRuntime(paths, {
@@ -933,16 +974,17 @@ describe("overlay rollback and start lease", () => {
       server.once("error", reject);
       server.listen(ollamaPort, "127.0.0.1", () => resolve());
     });
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    process.env.COB_SKIP_CATALOG_CHECK = "1";
     try {
-      await syncCatalog({ paths, ollamaUrl: `http://127.0.0.1:${ollamaPort}` });
+      await syncCatalog({
+        paths,
+        ollamaUrl: `http://127.0.0.1:${ollamaPort}`,
+        discovery: { liveHome: false, platform: "darwin", pathBin: bin },
+        inspect: { readVersion: () => "codex-cli test" },
+      });
       const profile = readFileSync(paths.profile, "utf8");
       assert.match(profile, /openai_base_url = "http:\/\/127\.0\.0\.1:19876\/v1"/);
       assert.match(profile, /remote_compaction_v2 = true/);
     } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
@@ -959,10 +1001,6 @@ describe("overlay rollback and start lease", () => {
       paths.cobConfig,
       `[compaction]\nprovider = "native"\n\n[catalog]\nsupports_search_tool = false\n`,
     );
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    const previousBin = process.env.COB_CODEX_BIN;
-    process.env.COB_SKIP_CATALOG_CHECK = "1";
-    process.env.COB_CODEX_BIN = bin;
     const { parseCatalogMetadata, writeCatalogValidationFailure } = await import(
       "./codex/catalog/provenance.js"
     );
@@ -980,27 +1018,20 @@ describe("overlay rollback and start lease", () => {
       error: new Error(`Codex rejected cob catalog (path ${realpathSync(bin)} codex-cli test)`),
     });
     assert.equal(parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8")).schema_version, 2);
-    try {
-      await syncCatalog({
-        paths,
-        ollamaUrl: "http://127.0.0.1:1",
-        locked: true,
-        discovery: { liveHome: false, platform: "darwin", pathBin: bin },
-        inspect: { readVersion: () => "codex-cli test" },
-      });
-      assert.match(readFileSync(paths.cobConfig, "utf8"), /supports_search_tool = false/);
-      const catalog = JSON.parse(readFileSync(paths.catalog, "utf8")) as {
-        models: Array<{ slug?: string; supports_search_tool?: boolean }>;
-      };
-      const ollama = catalog.models.find((model) => String(model.slug).startsWith("ollama/"));
-      if (ollama) assert.equal(ollama.supports_search_tool, false);
-      assert.equal(parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8")).schema_version, 1);
-    } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
-      if (previousBin === undefined) delete process.env.COB_CODEX_BIN;
-      else process.env.COB_CODEX_BIN = previousBin;
-    }
+    await syncCatalog({
+      paths,
+      ollamaUrl: "http://127.0.0.1:1",
+      locked: true,
+      discovery: { liveHome: false, platform: "darwin", pathBin: bin },
+      inspect: { readVersion: () => "codex-cli test" },
+    });
+    assert.match(readFileSync(paths.cobConfig, "utf8"), /supports_search_tool = false/);
+    const catalog = JSON.parse(readFileSync(paths.catalog, "utf8")) as {
+      models: Array<{ slug?: string; supports_search_tool?: boolean }>;
+    };
+    const ollama = catalog.models.find((model) => String(model.slug).startsWith("ollama/"));
+    if (ollama) assert.equal(ollama.supports_search_tool, false);
+    assert.equal(parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8")).schema_version, 1);
   });
 
   it("keeps Gate 5 isolated and applies patch only to the configured spawn row during sync", async () => {
@@ -1032,8 +1063,6 @@ describe("overlay rollback and start lease", () => {
       ollama.once("error", reject);
       ollama.listen(ollamaPort, "127.0.0.1", () => resolve());
     });
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    process.env.COB_SKIP_CATALOG_CHECK = "1";
     try {
       await syncCatalog({
         paths,
@@ -1051,12 +1080,10 @@ describe("overlay rollback and start lease", () => {
       assert.equal(spawn?.apply_patch_tool_type, "freeform");
       assert.equal("apply_patch_tool_type" in (nonSpawn ?? {}), false);
       assert.equal(native?.apply_patch_tool_type, "freeform");
-      assert.equal(spawn?.shell_type, "disabled");
+      assert.equal(spawn?.shell_type, "unified_exec");
       assert.equal(spawn?.multi_agent_version, "v1");
       assert.match(readFileSync(paths.cobConfig, "utf8"), /apply_patch = true/);
     } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
       await new Promise<void>((resolve, reject) => {
         ollama.close((error) => (error ? reject(error) : resolve()));
       });
@@ -1146,6 +1173,167 @@ describe("overlay rollback and start lease", () => {
     assert.equal(readFileSync(paths.cobConfig, "utf8"), "PREV-TOML\n");
     assert.equal(existsSync(paths.runtime), false);
     assert.equal(existsSync(paths.startLease), false);
+  });
+
+  it("reconciles an orphan healthy-start lease whose launcher died", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-start-orphan-lease-"));
+    const paths = resolvePaths(dir);
+    const nonce = "orphan-lease-nonce";
+    const port = await freePort();
+    const gateway = spawnPlainHealthGateway(dir, port);
+    try {
+      writeRuntime(paths, {
+        pid: gateway.pid!,
+        port,
+        ollamaUrl: "http://127.0.0.1:1",
+        startedAt: new Date().toISOString(),
+        nonce,
+        startKey: processStartKey(gateway.pid!),
+      });
+      await waitForHealth(port, { attempts: 100, nonce, pid: gateway.pid });
+      writeStartLease(paths, {
+        pid: gateway.pid!,
+        nonce,
+        startKey: processStartKey(gateway.pid!),
+        launcherPid: await deadProcessPid(),
+        createdAt: new Date().toISOString(),
+      });
+      const result = await startGatewayDetached({
+        paths,
+        port,
+        ollamaUrl: "http://127.0.0.1:1",
+        spawnServe: () => {
+          throw new Error("must not spawn while the runtime is healthy");
+        },
+      });
+      assert.equal(result.alreadyRunning, true);
+      assert.equal(result.runtime.nonce, nonce);
+      assert.equal(readStartLease(paths), null);
+    } finally {
+      gateway.kill("SIGKILL");
+    }
+  });
+
+  it("keeps a live-launcher lease over a healthy runtime with start in progress", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-start-live-lease-"));
+    const paths = resolvePaths(dir);
+    const nonce = "live-launcher-nonce";
+    const port = await freePort();
+    const gateway = spawnPlainHealthGateway(dir, port);
+    const launcher = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    try {
+      writeRuntime(paths, {
+        pid: gateway.pid!,
+        port,
+        ollamaUrl: "http://127.0.0.1:1",
+        startedAt: new Date().toISOString(),
+        nonce,
+        startKey: processStartKey(gateway.pid!),
+      });
+      await waitForHealth(port, { attempts: 100, nonce, pid: gateway.pid });
+      writeStartLease(paths, {
+        pid: gateway.pid!,
+        nonce,
+        startKey: processStartKey(gateway.pid!),
+        launcherPid: launcher.pid!,
+        launcherStartKey: processStartKey(launcher.pid!),
+        createdAt: new Date().toISOString(),
+      });
+      await assert.rejects(
+        () =>
+          startGatewayDetached({
+            paths,
+            port,
+            ollamaUrl: "http://127.0.0.1:1",
+            spawnServe: () => {
+              throw new Error("must not spawn while the launcher is live");
+            },
+          }),
+        /already in progress/,
+      );
+      assert.equal(readStartLease(paths)?.nonce, nonce);
+    } finally {
+      gateway.kill("SIGKILL");
+      launcher.kill("SIGKILL");
+    }
+  });
+
+  it("does not count a live child as an adopted lock after the record vanished", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-lock-vanished-"));
+    const lockPath = join(dir, "lock");
+    const token = await acquireLock(lockPath);
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      unlinkSync(lockPath);
+      await assert.rejects(
+        () => waitForLockAdopted(lockPath, token, child.pid!, 300),
+        /not adopted|disappeared/,
+      );
+    } finally {
+      child.kill("SIGKILL");
+      releaseLock(lockPath);
+    }
+  });
+
+  it("restores overlays even when spawnServe fails before a child exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-start-prechild-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(paths.rootConfig, "ROOT\n");
+    writeFileSync(paths.catalog, "PREV-CATALOG\n");
+    writeFileSync(paths.profile, "PREV-PROFILE\n");
+    writeFileSync(paths.cobConfig, "PREV-TOML\n");
+    const port = await freePort();
+    await assert.rejects(
+      () =>
+        startGatewayDetached({
+          paths,
+          port,
+          ollamaUrl: "http://127.0.0.1:1",
+          spawnServe: () => {
+            throw new Error("spawn exploded before returning a child");
+          },
+        }),
+      /spawn exploded/,
+    );
+    assert.equal(readFileSync(paths.rootConfig, "utf8"), "ROOT\n");
+    assert.equal(readFileSync(paths.catalog, "utf8"), "PREV-CATALOG\n");
+    assert.equal(readFileSync(paths.profile, "utf8"), "PREV-PROFILE\n");
+    assert.equal(readFileSync(paths.cobConfig, "utf8"), "PREV-TOML\n");
+    assert.equal(existsSync(paths.startLease), false);
+    assert.equal(existsSync(paths.runtime), false);
+  });
+
+  it("keeps the start lease as rollback ownership proof through a commit-lost failure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-start-commit-lost-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(paths.rootConfig, "ROOT\n");
+    writeFileSync(paths.catalog, "PREV-CATALOG\n");
+    writeFileSync(paths.profile, "PREV-PROFILE\n");
+    writeFileSync(paths.cobConfig, "PREV-TOML\n");
+    const port = await freePort();
+    await assert.rejects(
+      () =>
+        startGatewayDetached({
+          paths,
+          port,
+          ollamaUrl: "http://127.0.0.1:1",
+          spawnServe: ({ token, nonce }) =>
+            spawnFakeServe(dir, {
+              token,
+              nonce,
+              port,
+              unlinkProfileAfterHealth: true,
+            }),
+        }),
+      /commit lost/,
+    );
+    assert.equal(readFileSync(paths.rootConfig, "utf8"), "ROOT\n");
+    assert.equal(readFileSync(paths.catalog, "utf8"), "PREV-CATALOG\n");
+    assert.equal(readFileSync(paths.profile, "utf8"), "PREV-PROFILE\n");
+    assert.equal(readFileSync(paths.cobConfig, "utf8"), "PREV-TOML\n");
+    assert.equal(existsSync(paths.startLease), false);
+    assert.equal(existsSync(paths.runtime), false);
   });
 
   it("does not roll back over a newer lock-protected operation", async () => {
@@ -1575,51 +1763,44 @@ describe("cob status desktop overlay", () => {
       sources: resolveCatalogSources(discovery, { readVersion: () => "codex-cli test" }),
     });
     const previousMetadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    delete process.env.COB_SKIP_CATALOG_CHECK;
-    try {
-      await assert.rejects(
-        () =>
-          syncCatalog({
-            paths,
-            ollamaUrl: "http://127.0.0.1:1",
-            locked: true,
-            discovery,
-            inspect: { readVersion: () => "codex-cli test" },
-          }),
-        /rejected cob catalog/,
-      );
-      assert.equal(readFileSync(paths.catalog, "utf8"), previous);
-      const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
-      assert.equal(metadata.schema_version, 2);
-      assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "known");
-      assert.deepEqual(
-        metadata.schema_version === 2 ? metadata.active : undefined,
-        previousMetadata.schema_version === 1
-          ? {
-              state: "known",
-              generated_at: previousMetadata.generated_at,
-              producer: previousMetadata.producer,
-              validators: previousMetadata.validators,
-            }
-          : undefined,
-      );
-      assert.equal(
-        metadata.schema_version === 2 ? metadata.catalog_sha256 : undefined,
-        previousMetadata.catalog_sha256,
-      );
-      assert.equal(
-        metadata.schema_version === 2 ? metadata.last_failure?.rejected_validator?.path : undefined,
-        realpathSync(reject),
-      );
-      assert.match(
-        metadata.schema_version === 2 ? (metadata.last_failure?.diagnostic.summary ?? "") : "",
-        /supports_parallel_tool_calls/,
-      );
-    } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
-    }
+    await assert.rejects(
+      () =>
+        syncCatalog({
+          paths,
+          ollamaUrl: "http://127.0.0.1:1",
+          locked: true,
+          discovery,
+          inspect: { readVersion: () => "codex-cli test" },
+        }),
+      /rejected cob catalog/,
+    );
+    assert.equal(readFileSync(paths.catalog, "utf8"), previous);
+    const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+    assert.equal(metadata.schema_version, 2);
+    assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "known");
+    assert.deepEqual(
+      metadata.schema_version === 2 ? metadata.active : undefined,
+      previousMetadata.schema_version === 1
+        ? {
+            state: "known",
+            generated_at: previousMetadata.generated_at,
+            producer: previousMetadata.producer,
+            validators: previousMetadata.validators,
+          }
+        : undefined,
+    );
+    assert.equal(
+      metadata.schema_version === 2 ? metadata.catalog_sha256 : undefined,
+      previousMetadata.catalog_sha256,
+    );
+    assert.equal(
+      metadata.schema_version === 2 ? metadata.last_failure?.rejected_validator?.path : undefined,
+      realpathSync(reject),
+    );
+    assert.match(
+      metadata.schema_version === 2 ? (metadata.last_failure?.diagnostic.summary ?? "") : "",
+      /supports_parallel_tool_calls/,
+    );
   });
 
   it("starts from the last known-good catalog when a second consumer rejects", async () => {
@@ -1640,32 +1821,25 @@ describe("cob status desktop overlay", () => {
     })}\n`;
     writeFileSync(paths.catalog, previous);
     writeFileSync(paths.catalogMeta, "PREV-META\n");
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    delete process.env.COB_SKIP_CATALOG_CHECK;
-    try {
-      const prepared = await prepareProfileAndCatalog({
-        paths,
-        ollamaUrl: "http://127.0.0.1:1",
-        locked: true,
-        discovery: {
-          liveHome: true,
-          platform: "darwin",
-          desktopBins: [accept],
-          pathBin: reject,
-        },
-        inspect: { readVersion: () => "codex-cli test" },
-      });
-      assert.equal(prepared.wrote, false);
-      assert.equal(readFileSync(paths.catalog, "utf8"), previous);
-      const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
-      const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
-      assert.equal(metadata.schema_version, 2);
-      assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
-      assert.match(String(prepared.ollamaError), /supports_parallel_tool_calls/);
-    } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
-    }
+    const prepared = await prepareProfileAndCatalog({
+      paths,
+      ollamaUrl: "http://127.0.0.1:1",
+      locked: true,
+      discovery: {
+        liveHome: true,
+        platform: "darwin",
+        desktopBins: [accept],
+        pathBin: reject,
+      },
+      inspect: { readVersion: () => "codex-cli test" },
+    });
+    assert.equal(prepared.wrote, false);
+    assert.equal(readFileSync(paths.catalog, "utf8"), previous);
+    const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
+    const metadata = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+    assert.equal(metadata.schema_version, 2);
+    assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
+    assert.match(String(prepared.ollamaError), /supports_parallel_tool_calls/);
   });
 
   it("reports a redacted failed validation for a retained legacy catalog with no sidecar", async () => {
@@ -1695,53 +1869,46 @@ describe("cob status desktop overlay", () => {
       desktopBins: [accept],
       pathBin: reject,
     };
-    const previousSkip = process.env.COB_SKIP_CATALOG_CHECK;
-    delete process.env.COB_SKIP_CATALOG_CHECK;
-    try {
-      await assert.rejects(
-        () =>
-          syncCatalog({
-            paths,
-            ollamaUrl: "http://127.0.0.1:1",
-            locked: true,
-            discovery,
-            inspect: { readVersion: () => "codex-cli test" },
-          }),
-        /rejected cob catalog/,
-      );
-      assert.equal(readFileSync(paths.catalog, "utf8"), previous);
-      assert.equal(existsSync(paths.catalogMeta), true);
-      const diagnostic = readFileSync(paths.catalogMeta, "utf8");
-      assert.doesNotMatch(diagnostic, /DO-NOT-PERSIST/);
-      const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
-      const metadata = parseCatalogMetadata(diagnostic);
-      assert.equal(metadata.schema_version, 2);
-      assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
-      assert.match(
-        metadata.schema_version === 2 && metadata.active.state === "unknown"
-          ? metadata.active.reason
-          : "",
-        /legacy catalog had no cob-catalog\.meta\.json/,
-      );
+    await assert.rejects(
+      () =>
+        syncCatalog({
+          paths,
+          ollamaUrl: "http://127.0.0.1:1",
+          locked: true,
+          discovery,
+          inspect: { readVersion: () => "codex-cli test" },
+        }),
+      /rejected cob catalog/,
+    );
+    assert.equal(readFileSync(paths.catalog, "utf8"), previous);
+    assert.equal(existsSync(paths.catalogMeta), true);
+    const diagnostic = readFileSync(paths.catalogMeta, "utf8");
+    assert.doesNotMatch(diagnostic, /DO-NOT-PERSIST/);
+    const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
+    const metadata = parseCatalogMetadata(diagnostic);
+    assert.equal(metadata.schema_version, 2);
+    assert.equal(metadata.schema_version === 2 ? metadata.active.state : "", "unknown");
+    assert.match(
+      metadata.schema_version === 2 && metadata.active.state === "unknown"
+        ? metadata.active.reason
+        : "",
+      /legacy catalog had no cob-catalog\.meta\.json/,
+    );
 
-      const report = await statusReport(paths, {
-        discovery,
-        inspect: {
-          readVersion: () => {
-            throw new Error("status must not execute Codex");
-          },
+    const report = await statusReport(paths, {
+      discovery,
+      inspect: {
+        readVersion: () => {
+          throw new Error("status must not execute Codex");
         },
-      });
-      assert.equal(report.ok, false);
-      assert.match(report.text, /^cob: unknown\n/);
-      assert.match(report.text, /last candidate validation: failed/);
-      assert.match(report.text, /supports_parallel_tool_calls/);
-      assert.match(report.text, /legacy catalog had no cob-catalog\.meta\.json/);
-      assert.doesNotMatch(report.text, /DO-NOT-PERSIST/);
-    } finally {
-      if (previousSkip === undefined) delete process.env.COB_SKIP_CATALOG_CHECK;
-      else process.env.COB_SKIP_CATALOG_CHECK = previousSkip;
-    }
+      },
+    });
+    assert.equal(report.ok, false);
+    assert.match(report.text, /^cob: unknown\n/);
+    assert.match(report.text, /last candidate validation: failed/);
+    assert.match(report.text, /supports_parallel_tool_calls/);
+    assert.match(report.text, /legacy catalog had no cob-catalog\.meta\.json/);
+    assert.doesNotMatch(report.text, /DO-NOT-PERSIST/);
   });
 });
 
@@ -1768,6 +1935,30 @@ function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean> {
   })();
 }
 
+function spawnPlainHealthGateway(dir: string, port: number): ChildProcess {
+  const script = join(dir, `plain-health-${Math.random().toString(16).slice(2)}.mjs`);
+  writeFileSync(
+    script,
+    `import { createServer } from "node:http";
+const server = createServer((_req, res) => {
+  res.statusCode = 200;
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify({ ok: true, service: "cob", pid: process.pid, nonce_ok: true }));
+});
+server.listen(Number(process.argv[2]), "127.0.0.1");
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));
+`,
+  );
+  return spawn(process.execPath, [script, String(port)], { stdio: "ignore" });
+}
+
+async function deadProcessPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"]);
+  await new Promise((resolve) => child.once("exit", resolve));
+  return child.pid!;
+}
+
 function spawnFakeServe(
   dir: string,
   opts: {
@@ -1780,6 +1971,7 @@ function spawnFakeServe(
     crashRestoredProfile?: string;
     crashRestoredCobConfig?: string;
     delayListenMs?: number;
+    unlinkProfileAfterHealth?: boolean;
     runtimeNonce?: string;
   },
 ) {
@@ -1790,7 +1982,7 @@ function spawnFakeServe(
   writeFileSync(
     script,
     `import { createServer } from "node:http";
-import { writeFileSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { adoptLock, releaseLock } from ${JSON.stringify(lockUrl)};
 import { writeRuntime } from ${JSON.stringify(lifecycleUrl)};
 import { resolvePaths } from ${JSON.stringify(pathsUrl)};
@@ -1800,6 +1992,9 @@ adoptLock(paths.lock, process.env.COB_LOCK_TOKEN ?? "");
 writeFileSync(paths.profile, "profile\\n");
 writeFileSync(paths.catalog, "{\\"models\\":[]}\\n");
 writeFileSync(paths.cobConfig, "[compaction]\\nprovider = \\"native\\"\\n");
+// The launcher's handoff watch polls the adopted lock record; a real serve
+// boot keeps that window open long enough to observe. Emulate it here.
+await new Promise((resolve) => setTimeout(resolve, 120));
 if (process.env.COB_FAKE_SERVE_CRASH === "1") {
   if (process.env.COB_FAKE_SERVE_RETAINED_CATALOG) {
     writeFileSync(paths.catalog, process.env.COB_FAKE_SERVE_RETAINED_CATALOG);
@@ -1822,9 +2017,14 @@ if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
 const port = Number(process.env.COB_PORT);
 const nonce = process.env.COB_RUNTIME_NONCE;
 const runtimeNonce = process.env.COB_FAKE_SERVE_RUNTIME_NONCE || nonce;
+let healthHits = 0;
 const server = createServer((req, res) => {
   const url = req.url ?? "";
   if (url.includes("healthz") || url.includes("/health")) {
+    healthHits += 1;
+    if (healthHits === 2 && process.env.COB_FAKE_SERVE_UNLINK_PROFILE_AFTER === "1") {
+      unlinkSync(paths.profile);
+    }
     const presented = Array.isArray(req.headers["x-cob-nonce"])
       ? req.headers["x-cob-nonce"][0]
       : req.headers["x-cob-nonce"];
@@ -1873,8 +2073,156 @@ process.on("SIGINT", () => process.exit(0));
       COB_FAKE_SERVE_RESTORED_PROFILE: opts.crashRestoredProfile ?? "",
       COB_FAKE_SERVE_RESTORED_COB_CONFIG: opts.crashRestoredCobConfig ?? "",
       COB_FAKE_SERVE_DELAY_MS: String(opts.delayListenMs ?? 0),
+      COB_FAKE_SERVE_UNLINK_PROFILE_AFTER: opts.unlinkProfileAfterHealth ? "1" : "",
       COB_FAKE_SERVE_RUNTIME_NONCE: opts.runtimeNonce ?? "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
+
+function holdsOpenDescriptorFor(filePath: string): boolean | undefined {
+  const real = realpathSync(filePath);
+  const result = spawnSync("lsof", ["-wFn", real], { encoding: "utf8" });
+  if (result.error) return undefined;
+  return (result.stdout ?? "").includes(`n${real}`);
+}
+
+describe("private log target", () => {
+  it("refuses a symlinked log target without touching the real file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-log-symlink-"));
+    const real = join(dir, "real.log");
+    writeFileSync(real, "REAL\n", { mode: 0o600 });
+    const link = join(dir, "link.log");
+    symlinkSync(real, link);
+    try {
+      assert.throws(() => openPrivateLogFd(link), /ELOOP|log target/i);
+      assert.equal(readFileSync(real, "utf8"), "REAL\n");
+      assert.notEqual(existsSync(link), false);
+    } finally {
+      unlinkSync(link);
+    }
+  });
+
+  it("refuses a directory log target", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-log-dir-"));
+    assert.throws(() => openPrivateLogFd(dir), /EISDIR|log target/i);
+  });
+
+  it("re-privileges an existing non-private log and appends through the fd", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-log-mode-"));
+    const logPath = join(dir, "cob.log");
+    writeFileSync(logPath, "PREV\n", { mode: 0o644 });
+    const fd = openPrivateLogFd(logPath);
+    try {
+      assert.equal(fstatSync(fd).mode & 0o777, 0o600);
+      writeSync(fd, Buffer.from("APPEND\n"));
+    } finally {
+      closePrivateLogFd(fd);
+    }
+    assert.equal(readFileSync(logPath, "utf8"), "PREV\nAPPEND\n");
+    assert.equal(statSync(logPath).mode & 0o777, 0o600);
+  });
+
+  it("rejects a log target owned by a different uid", (t) => {
+    if (process.getuid?.() === undefined) {
+      t.skip("uid checks unsupported on this platform");
+      return;
+    }
+    if (typeof process.getuid === "function" && process.getuid() !== 0) {
+      t.skip("requires root to simulate a foreign owner");
+      return;
+    }
+    const dir = mkdtempSync(join(tmpdir(), "cob-log-uid-"));
+    const logPath = join(dir, "cob.log");
+    writeFileSync(logPath, "ROOT-OWNED\n", { mode: 0o600 });
+    chownSync(logPath, 1, 1);
+    assert.throws(() => openPrivateLogFd(logPath), /not owned/);
+  });
+
+  it("closes the launcher log fd when a detached start fails", async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-logfd-close-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(paths.rootConfig, "ROOT\n");
+    const foreign = createServer((req, res) => {
+      res.end("not-cob");
+    });
+    await new Promise<void>((resolve) => {
+      foreign.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = foreign.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+    writeRuntime(paths, {
+      pid: 99999999,
+      port,
+      ollamaUrl: "http://127.0.0.1:11434",
+      startedAt: new Date().toISOString(),
+      nonce: "foreign-nonce",
+    });
+    const flags: CliFlags = {
+      surface: "codex",
+      command: "start",
+      port,
+      portExplicit: true,
+      ollamaUrl: "http://127.0.0.1:11434",
+      foreground: false,
+      live: false,
+      dev: true,
+      liveHome: false,
+      desktop: false,
+      home: dir,
+    };
+    try {
+      await assert.rejects(() => runCodexCli(flags), /still open|already running/i);
+      let leaked = holdsOpenDescriptorFor(paths.log);
+      if (leaked === undefined) {
+        t.skip("no per-process fd listing on this platform");
+        return;
+      }
+      for (let i = 0; i < 100 && leaked; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        leaked = holdsOpenDescriptorFor(paths.log);
+      }
+      assert.equal(leaked, false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        foreign.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("root config read taxonomy", () => {
+  it("returns null only for a missing root config", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-rootcfg-missing-"));
+    const paths = resolvePaths(dir);
+    assert.equal(readRootConfig(paths), null);
+  });
+
+  it("fails typed when the root config is unreadable", async (t) => {
+    if (process.getuid?.() === 0) {
+      t.skip("permission failure requires a non-root process");
+      return;
+    }
+    const dir = mkdtempSync(join(tmpdir(), "cob-rootcfg-eacces-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(paths.rootConfig, "model = \"x\"\n", { mode: 0o600 });
+    chmodSync(paths.rootConfig, 0o000);
+    try {
+      assert.throws(() => readRootConfig(paths), RootConfigUnreadableError);
+    } finally {
+      chmodSync(paths.rootConfig, 0o600);
+    }
+  });
+
+  it("fails typed when the root config path is a directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-rootcfg-eisdir-"));
+    const paths = resolvePaths(dir);
+    mkdirSync(paths.rootConfig, { recursive: true });
+    assert.throws(() => readRootConfig(paths), (error: unknown) => {
+      assert.ok(error instanceof RootConfigUnreadableError);
+      assert.match(String(error), /EISDIR/);
+      assert.doesNotMatch(String(error), /model =/);
+      return true;
+    });
+  });
+});

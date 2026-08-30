@@ -9,7 +9,7 @@ import { isLiveCodexHome } from "../home.js";
 import { writeCobProfile } from "../profile.js";
 import type { CobPaths } from "../paths.js";
 import type { CatalogFile } from "../types.js";
-import { mergeCatalogWithFallback, parseCatalogJson, serializeCatalog } from "./catalog.js";
+import { assertSpawnRowsCarryTools, mergeCatalogWithFallback, parseCatalogJson, serializeCatalog } from "./catalog.js";
 import { writeCatalogIfChanged } from "./file.js";
 import { writeCatalogProvenance, writeCatalogValidationFailure } from "./provenance.js";
 import { discoverCodexBins, loadBundledCatalog, resolveCatalogSources, type CatalogDiscovery, type InspectCodexIo } from "./source.js";
@@ -61,6 +61,9 @@ export async function syncCatalogControlPlane(opts: {
   } catch (error) {
     ollamaError = error instanceof Error ? error.message : String(error);
   }
+  if (tags.length > 0) {
+    assertSpawnRowsCarryTools(tags, spawnable);
+  }
   const retainedCatalogBytes = readFileBufferOrNull(opts.paths.catalog);
   const retainedMetadataBytes = readFileBufferOrNull(opts.paths.catalogMeta);
   let previous: CatalogFile | null = null;
@@ -79,29 +82,27 @@ export async function syncCatalogControlPlane(opts: {
     activeContextWindow: cob.catalog?.activeContextWindow,
     autoCompactTokenLimit: cob.catalog?.autoCompactTokenLimit,
   });
-  if (process.env.COB_SKIP_CATALOG_CHECK !== "1") {
-    try {
-      assertConsumersAcceptCatalog(catalog, sources.validators);
-    } catch (error) {
-      if (error instanceof CatalogConsumerRejectedError) {
-        writeCatalogValidationFailure({
-          metaPath: opts.paths.catalogMeta,
-          candidateBytes: serializeCatalog(catalog),
-          retainedCatalogBytes,
-          retainedMetadataBytes,
-          sources,
-          error,
-        });
-      }
-      if (error instanceof CatalogConsumerRejectedError && opts.keepLastGoodOnReject && previous) {
-        console.error(`[cob] ${error.message}`);
-        console.error("[cob] keeping last known-good catalog; run cob sync after consumers agree");
-        writeCobProfile(opts.paths, opts.profilePort ?? opts.resolveRuntimePort() ?? DEFAULT_PORT);
-        const ollamaCount = previous.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
-        return { catalog: previous, wrote: false, ollamaCount, ollamaError: error.message };
-      }
-      throw error;
+  try {
+    assertConsumersAcceptCatalog(catalog, sources.validators);
+  } catch (error) {
+    if (error instanceof CatalogConsumerRejectedError) {
+      writeCatalogValidationFailure({
+        metaPath: opts.paths.catalogMeta,
+        candidateBytes: serializeCatalog(catalog),
+        retainedCatalogBytes,
+        retainedMetadataBytes,
+        sources,
+        error,
+      });
     }
+    if (error instanceof CatalogConsumerRejectedError && opts.keepLastGoodOnReject && previous) {
+      console.error(`[cob] ${error.message}`);
+      console.error("[cob] keeping last known-good catalog; run cob sync after consumers agree");
+      writeCobProfile(opts.paths, opts.profilePort ?? opts.resolveRuntimePort() ?? DEFAULT_PORT);
+      const ollamaCount = previous.models.filter((model) => String(model.slug).startsWith("ollama/")).length;
+      return { catalog: previous, wrote: false, ollamaCount, ollamaError: error.message };
+    }
+    throw error;
   }
   const wrote = writeCatalogIfChanged(opts.paths.catalog, catalog, {
     allowSearchTool: supportsSearchTool,

@@ -230,7 +230,10 @@ describe("Ollama final tool declaration", () => {
 });
 
 describe("Ollama JSON response guard", () => {
-  const declared = declarationOf([{ type: "function", name: "exec_command" }]);
+  const declared = declarationOf([
+    { type: "function", name: "exec_command" },
+    { type: "function", name: "write_stdin" },
+  ]);
 
   it("accepts a converted tool_search call only when that function reached the wire", () => {
     const withSearch = wireDeclaration({
@@ -261,6 +264,10 @@ describe("Ollama JSON response guard", () => {
       undefined,
     );
     assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("write_stdin")]), declared),
+      undefined,
+    );
+    assert.equal(
       guardOllamaJsonResponse(
         { ...jsonResponse([{ type: "message", role: "assistant", content: "ok" }]), usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
         declared,
@@ -282,6 +289,8 @@ describe("Ollama JSON response guard", () => {
       { output: [{ type: "function_call", call_id: "c1" }], code: "ollama_tool_call_invalid", kind: "invalid_name" },
       { output: [{ type: "custom_tool_call", name: "exec_command" }], code: "ollama_tool_call_invalid", kind: "invalid_type" },
       { output: [{ type: "tool_search_call", name: "tool_search" }], code: "ollama_tool_call_invalid", kind: "invalid_type" },
+      { output: [{ type: "local_shell_call", name: "exec_command" }], code: "ollama_tool_call_invalid", kind: "invalid_type" },
+      { output: [{ type: "shell_call", name: "shell" }], code: "ollama_tool_call_invalid", kind: "invalid_type" },
     ];
     for (const entry of cases) {
       const failure = guardOllamaJsonResponse(jsonResponse(entry.output as unknown[]), declared);

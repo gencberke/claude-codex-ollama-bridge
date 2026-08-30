@@ -5,10 +5,17 @@ installed** `cob` binary. A git checkout is for `--dev` trials and for cutting
 the next tarball. cob still does not write `~/.codex/config.toml`.
 
 Current state (2026-08-30): source on `master` is **0.2.2** at commit
-`94a0d9a`, while both live global surfaces still run **0.2.1** (Codex `:18790`
-pid 77805, cob Claude `:18792` pid 78004). Live tarball SHA-256
+`e6a3449` (the WP hardening series plus CI; **not packed**). The global
+install serving live Codex `:18790` is cob **0.2.2** (pid **24581**, `cob
+serve --port 18790`, observed 2026-08-30, installed 2026-08-29 14:21 local —
+pre-hardening 0.2.2 bytes). The originating tarball SHA/tag for that install
+were not recorded, so the installed 0.2.2 bytes count as burned: the next cut
+bumps to **0.2.3** instead of repacking 0.2.2. The cob Claude `:18792`
+gateway was **not listening** at the 2026-08-30 check; its last recorded live
+state is 0.2.1 (pid 78004, tarball SHA-256
 `efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69`, cut from
-commit `7899077` / tag `v0.2.1`. Do not repack 0.1.11–0.1.16, 0.2.0, or 0.2.1
+commit `7899077` / tag `v0.2.1`). Do not repack 0.1.11–0.1.16, 0.2.0, 0.2.1,
+or the installed 0.2.2
 with different bytes; cut a new version before any future authorized install.
 `package.json` stays `"private": true`; do not `npm publish`.
 

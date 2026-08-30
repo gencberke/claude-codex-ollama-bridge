@@ -739,6 +739,52 @@ describe("gateway durable Ollama state", () => {
     }
   });
 
+  it("fails native compaction SSE ordering closed without a checkpoint or raw relay", async () => {
+    const completedFrame = (id: string) =>
+      `data: {"type":"response.completed","response":{"id":"${id}","object":"response","status":"completed","output":[{"type":"compaction","id":"${id}-item","encrypted_content":"gAAAAA-${id}-secret"}]}}`;
+    const failedFrame =
+      'data: {"type":"response.failed","response":{"id":"compact-bad","object":"response","status":"failed","error":{"type":"upstream_error","code":"boom"}}}';
+    const cases: Array<{ name: string; frames: string[] }> = [
+      { name: "completed then failed", frames: [completedFrame("t1"), "", failedFrame, ""] },
+      { name: "failed then completed", frames: [failedFrame, "", completedFrame("t2"), ""] },
+      { name: "two valid completed", frames: [completedFrame("t3a"), "", completedFrame("t3b"), ""] },
+      { name: "done before completed", frames: ["data: [DONE]", "", completedFrame("t4"), ""] },
+      {
+        name: "data after terminal done",
+        frames: [completedFrame("t5"), "", "data: [DONE]", "", 'data: {"type":"ping","data":"late"}', ""],
+      },
+    ];
+    for (const entry of cases) {
+      const stateDir = mkdtempSync(join(tmpdir(), "cob-compact-ordering-"));
+      const port = await freePort();
+      const server = await listenGateway({
+        port,
+        catalog: CATALOG,
+        stateDir,
+        compaction: { provider: "native", model: "codex-mini", ollamaThreads: "native" },
+        nativeFetch: async () =>
+          new Response(entry.frames.join("\n"), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+      });
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "ollama/test", stream: true, input: [{ type: "compaction_trigger" }] }),
+        });
+        const body = await response.text();
+        assert.equal(response.status, 502, `case=${entry.name} status=${response.status}`);
+        assert.equal(body.includes("gAAAAA-"), false, `case=${entry.name} leaked ciphertext`);
+        assert.equal(existsSync(join(stateDir, "checkpoints")), false, `case=${entry.name}`);
+        assert.equal(existsSync(join(stateDir, "compact-archive")), false, `case=${entry.name}`);
+      } finally {
+        await close(server);
+      }
+    }
+  });
+
   it("sends compact SSE publication errors before one DONE without ciphertext", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "cob-compact-stream-failure-"));
     const port = await freePort();

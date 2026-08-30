@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+import { parseLoopbackHttpUrl } from "../core/loopback.js";
 
 const ROOT_KEYS = ["model_provider", "openai_base_url", "model_catalog_json", "profile"] as const;
 
@@ -194,27 +194,9 @@ export function openaiPortFromToml(text: string): number | undefined {
 export function parseLoopbackBaseUrl(
   url: string,
 ): { ok: true; port: number; host: string; pathname: string } | { ok: false; reason: string } {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { ok: false, reason: `openai_base_url is not a valid URL: ${url}` };
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { ok: false, reason: `openai_base_url must be http(s), got ${parsed.protocol}` };
-  }
-  if (!LOOPBACK_HOSTS.has(parsed.hostname)) {
-    return { ok: false, reason: `openai_base_url must be loopback, got ${parsed.hostname}` };
-  }
-  const port = parsed.port
-    ? Number(parsed.port)
-    : parsed.protocol === "https:"
-      ? 443
-      : 80;
-  if (!Number.isInteger(port) || port <= 0) {
-    return { ok: false, reason: `openai_base_url has an invalid port` };
-  }
-  return { ok: true, port, host: parsed.hostname, pathname: parsed.pathname };
+  const parsed = parseLoopbackHttpUrl(url, "openai_base_url");
+  if (!parsed.ok) return parsed;
+  return { ok: true, port: parsed.port, host: parsed.host, pathname: parsed.pathname };
 }
 
 export function sameFilesystemPath(left: string, right: string, baseDir: string): boolean {

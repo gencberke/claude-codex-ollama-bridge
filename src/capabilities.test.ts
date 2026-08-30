@@ -8,7 +8,7 @@ import {
 } from "./codex/capabilities.js";
 
 describe("ollama child capability profile", () => {
-  it("does not infer parallel tools, apply_patch, or shell from the tools tag", () => {
+  it("infers shell and function tools only from the exact lowercase tools tag", () => {
     const evidence = evidenceFromOllamaTag({
       name: "deepseek-v4-flash:cloud",
       capabilities: ["completion", "tools", "thinking", "vision"],
@@ -20,7 +20,7 @@ describe("ollama child capability profile", () => {
     assert.equal(profile.supportsFunctionTools, true);
     assert.equal(profile.supportsParallelToolCalls, false);
     assert.equal(profile.supportsApplyPatch, false);
-    assert.equal(profile.supportsShell, false);
+    assert.equal(profile.supportsShell, true);
     assert.equal(profile.supportsSearch, false);
     assert.equal(profile.previousResponseState, "unsupported");
     assert.equal(profile.supportsReasoning, true);
@@ -47,7 +47,7 @@ describe("ollama child capability profile", () => {
     assert.equal(fields.supports_parallel_tool_calls, false);
     assert.equal(fields.supports_search_tool, false);
     assert.equal(fields.support_verbosity, false);
-    assert.equal(fields.shell_type, "disabled");
+    assert.equal(fields.shell_type, "unified_exec");
     assert.equal("apply_patch_tool_type" in fields, false);
     assert.equal("tool_mode" in fields, false);
   });
@@ -150,7 +150,7 @@ describe("ollama child capability profile", () => {
       applyPatch: true,
     });
     assert.equal(on.apply_patch_tool_type, "freeform");
-    assert.equal(on.shell_type, "disabled");
+    assert.equal(on.shell_type, "unified_exec");
     assert.equal(on.multi_agent_version, "v1");
     assert.equal("tool_mode" in on, false);
     assert.equal(ollamaChildProfile({ tools: true, thinking: true, vision: false }, { supportsApplyPatch: true }).supportsApplyPatch, true);

@@ -11,27 +11,30 @@ Native GPT parent → Ollama V1 child is the product. Native Multi-Agent V2
 mailbox (two in-flight `send_message`, cob queue, Ollama V2 catalog) is not
 productized; see [UPSTREAM-U1.md](./UPSTREAM-U1.md).
 
-Development scope (2026-08-30): **cob Codex only**. cob Claude remains live at
-`:18792` in its existing 0.2.1 form, but Claude feature work, hardening,
-canaries, and release-gate work are frozen until explicitly reopened. Deferred
-Claude review findings are outside the active Codex gate; they still rule out
-a new whole-product production-readiness claim. No Claude listener replacement
-or source change is authorized by this scope decision.
+Development scope (2026-08-30): **cob Codex only**. cob Claude keeps its
+0.2.1 source and behavior (last live pid 78004 on `:18792`), but the
+`:18792` listener was **not running** at the 2026-08-30 read-only check;
+Claude feature work, hardening, canaries, and release-gate work stay frozen
+until explicitly reopened. Deferred Claude review findings are outside the
+active Codex gate; they still rule out a new whole-product
+production-readiness claim. No Claude listener replacement or source change
+is authorized by this scope decision.
 
-Live global CLI and the Codex `:18790` gateway are cob **0.2.1** (pid **77805**,
-tarball SHA-256
-`efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69`,
-installed 2026-08-29 from commit `7899077` / tag `v0.2.1`). The cob Claude
-`:18792` surface was replaced in the same authorized cut and is cob **0.2.1**
-(pid **78004**) with per-install Desktop-token auth live; Claude Desktop must
-be fully quit and reopened once to pick up the new profile token.
-`apply_patch` and `native_plaintext_spawn` remain off. Ollama is **0.33.1**.
-Root `config.toml` is user/Desktop-owned and its SHA stayed
-`e8694a47f185b22522fc7e3e417c9e7b16a5bb934dece7726dd05e2b5b278516` across the
-replace (cob did not write it). Host-network Codex status is `ok`; catalog
-producer is Desktop-bundled `codex-cli 0.150.0-alpha.12.2`. Historical
+Live global CLI and the Codex `:18790` gateway are cob **0.2.2** (pid
+**24581**, installed 2026-08-29 14:21 local; `cob version` →
+`cob 0.2.2 (global)`). The install predates the source hardening at
+`e6a3449`, and its originating tarball SHA/tag were not recorded, so the
+installed bytes are burned — the next cut is **0.2.3**, never a repack of
+0.2.2. `apply_patch` and `native_plaintext_spawn` remain off. Ollama is
+**0.33.2**. Root `config.toml` is user/Desktop-owned; its SHA-256 was
+`1ecbc836392d9fa71acb5cc1fdcf9ab8…` at the 2026-08-30 read-only check
+(changed by the Desktop/user side after the 0.2.1 record — cob did not write
+it). At that check `cob status` reported health `ok` but the overall verdict
+`stale` because catalog provenance was stale: the Desktop producer binary
+identity changed again (Desktop update), so `cob sync` / `cob start` is
+owed before the next judged picker or catalog change. Historical
 G12/G14/G17 evidence still belongs to the recorded 0.1.x/DeepSeek runs; the
-0.2.1 install is not a G-gate retrace.
+0.2.2 install is not a G-gate retrace.
 
 **This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
 `codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
@@ -44,15 +47,15 @@ or steal native slugs to “survive” an update.
 
 | Surface | Version / note |
 | --- | --- |
-| cob gateway | global **CLI/gateway 0.2.1**, pid **77805**, `127.0.0.1:18790` (2026-08-29 authorized replace of the 2026-08-28 0.2.0 source artifact, pid 61263). |
-| Packed live | **0.2.1** tarball SHA-256 `efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69` (85 files, 79 production JS) from commit `7899077` / tag `v0.2.1`. Both live surfaces run it. |
-| Prior live | 2026-08-28 source-artifact **0.2.0** (SHA `48e05519…`, pid 61263) is superseded and must not be repacked; historical **0.1.14** `0395b5df…` pid 54105 is no longer a listener. |
-| Source | `master` cob **0.2.2** at commit `94a0d9a`: the post-refactor 0.2.1 source plus reserved top-level `functions` namespace compatibility for Ollama V1 children. The live gateways still run the globally installed 0.2.1; source evidence is not live evidence. Active development is Codex-only. Pack excludes tests, harnesses (`*.harness.js`), `gate6h`, and `eval-*`. |
+| cob gateway | global **CLI/gateway 0.2.2**, pid **24581**, `127.0.0.1:18790` (installed 2026-08-29 14:21 local, pre-hardening 0.2.2 bytes; supersedes the 2026-08-29 0.2.1 pid 77805 cut). |
+| Packed live | The running install's originating tarball SHA/tag were **not recorded**; the installed 0.2.2 bytes are burned and must not be repacked. Last fully recorded pack: **0.2.1** tarball SHA-256 `efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69` (85 files, 79 production JS) from commit `7899077` / tag `v0.2.1` — historical, no longer the listener's provenance. |
+| Prior live | 2026-08-29 **0.2.1** pid 77805 and 2026-08-28 source-artifact **0.2.0** (SHA `48e05519…`, pid 61263) are superseded and must not be repacked; historical **0.1.14** `0395b5df…` pid 54105 is no longer a listener. |
+| Source | `master` cob **0.2.2** at commit `e6a3449`: reserved `functions` namespace compatibility plus the WP hardening series (state publish transactions, Ollama SSE terminal gates, config I/O boundaries) and the GitHub Actions CI workflow. The live `:18790` gateway runs the earlier 0.2.2 install; source evidence is not live evidence. Active development is Codex-only. Pack excludes tests, harnesses (`*.harness.js`), `gate6h`, and `eval-*`. |
 | Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
-| ChatGPT Desktop | bundled `codex-cli` **0.150.0-alpha.12.2** is the current catalog producer. Earlier gold hops remain historical evidence. |
-| Ollama | **0.33.1** client and daemon; tags include `deepseek-v4-flash:0731-cloud`, `deepseek-v4-flash:cloud`, `glm-5.3-flash:cloud`, and `kimi-k3:cloud`. |
+| ChatGPT Desktop | bundled `codex-cli` **0.150.0-alpha.12.2** is the last recorded catalog producer, but `cob status` on 2026-08-30 flagged producer identity changed (Desktop update); provenance is stale until `cob sync` / `cob start`. Earlier gold hops remain historical evidence. |
+| Ollama | **0.33.2** client and daemon (2026-08-30 observation); tags include `deepseek-v4-flash:0731-cloud`, `deepseek-v4-flash:cloud`, `glm-5.3-flash:cloud`, and `kimi-k3:cloud`. |
 | Spawn slot | `cob.toml` keeps DeepSeek 0731 first, GLM-5.3 Flash second, and Kimi K3 third. The five-row V1 window exposes DeepSeek + GLM; Kimi remains catalogued/routable but is the expected V1 overflow. Live `apply_patch = false`, `native_plaintext_spawn = false`. |
-| cob Claude | **live Messages** (not ChatGPT Desktop gold). `:18792` pid **78004**, cob **0.2.1** with per-install Desktop-token auth (C-01), nonce-bound health, authenticated shutdown, and single-lock restore. Desktop spawn: Opus parent Anthropic; child 0731 `cob_route=1`. Picker pinned Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6). Overlay `7429a97e…` re-applied with the new token; Claude Desktop needs one full quit/reopen. `~/.claude/settings.json` untouched. |
+| cob Claude | **stopped** at the 2026-08-30 read-only check (no listener on `:18792`). Last live state: cob **0.2.1** pid **78004** with per-install Desktop-token auth (C-01), nonce-bound health, authenticated shutdown, and single-lock restore; picker pinned Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6); overlay `7429a97e…`. Restarting or changing this surface needs explicit user authorization. `~/.claude/settings.json` untouched. |
 
 Live 0.1.9 contains the exact native-only `POST /v1/alpha/search`
 compatibility route required by Codex `web.run` when `openai_base_url` points
@@ -67,8 +70,10 @@ activation is CLI/TUI only. There is no `CODEX_CONFIG_PROFILE` (see
 revert a user-owned Desktop trial.
 
 Current live root-config baseline is SHA-256
-`e8694a47f185b22522fc7e3e417c9e7b16a5bb934dece7726dd05e2b5b278516`
-(Desktop/user-owned; the 0.2.1 gateway replace did not change it).
+`1ecbc836392d9fa71acb5cc1fdcf9ab8…` (read-only observation 2026-08-30;
+Desktop/user-owned — it moved after the recorded 0.2.1-era value
+`e8694a47…` by a change outside cob; the installed 0.2.2 gateway replace
+also did not write it).
 `cob.toml` keeps explicit `apply_patch = false` and
 `[experimental] native_plaintext_spawn = false`.
 
@@ -105,6 +110,21 @@ not live-dispatch a child. `codex exec-server` is a remote environment, not
 a collaboration driver.
 
 ## Proven
+
+- **Read-only live check of the 0.2.2 install (2026-08-30):** no files
+  written, no listener restarted. Observed: global `cob 0.2.2 (global)`
+  serving Codex `:18790` (pid 24581, installed 2026-08-29 14:21 local from
+  pre-hardening 0.2.2 bytes; originating tarball SHA/tag unrecorded — the
+  installed bytes are burned, next cut is 0.2.3). No listener on `:18792`
+  (cob Claude last recorded live as 0.2.1 pid 78004). `cob status`:
+  gateway health `ok`, desktop overlay `ok`, overall verdict `stale` with
+  `catalog provenance: stale` — the Desktop producer binary identity
+  changed (Desktop update), so `cob sync` / `cob start` is owed before any
+  judged picker or catalog change. Root `config.toml` SHA-256 read as
+  `1ecbc836…` (moved from the recorded `e8694a47…` by a change outside
+  cob); Ollama `0.33.2`; PATH Codex `0.149.0`. Source `master` at `e6a3449`
+  (hardening + CI) is packed nowhere. This observation is not a G-gate
+  retrace and authorizes no install.
 
 - **Live cob 0.2.1 dual-surface replace (2026-08-29):** tarball
   `codex-ollama-bridge-0.2.1.tgz` SHA-256

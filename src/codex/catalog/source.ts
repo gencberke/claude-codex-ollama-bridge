@@ -253,8 +253,30 @@ export function loadBundledCatalog(codexBin = process.env.COB_CODEX_BIN ?? "code
     }
   if (result.status !== 0) {
     throw new Error(
-      `codex debug models --bundled failed (${result.status}): ${result.stderr || result.stdout}`,
+      `codex debug models --bundled failed (${result.status}): ${sanitizeChildOutput(result.stderr || result.stdout)}`,
     );
   }
   return parseCatalogJson(result.stdout);
+}
+
+/**
+ * Producer child output: bounded to the first non-empty line, control chars
+ * stripped, credential-looking tokens redacted, and user home directories
+ * (`/Users`, `/home`, `/root`, `X:\Users`) shortened so a hostile producer
+ * line cannot leak secrets or usernames.
+ */
+function sanitizeChildOutput(text: string | undefined): string {
+  const firstLine = (text ?? "")
+    .split(/\r?\n/)
+    .find((line) => line.trim().length > 0);
+  const stripped = (firstLine ?? "").replace(/[\u0000-\u001f\u007f]/g, " ");
+  const redacted = stripped
+    .replace(
+      /\b(?:authorization\s*[:=]\s*\S+(?:\s+\S+)?|(?:basic|bearer|digest|negotiate)\s+\S+|(?:api[_-]?key|access[_-]?token|token|password|secret)\s*[:=]\s*\S+|sk-[A-Za-z0-9][A-Za-z0-9_-]{4,})/gi,
+      "<redacted>",
+    )
+    .replace(/\/((?:Users|home|root))\/[^/\s:;,)"' ]+/g, "/$1/<user>")
+    .replace(/([A-Za-z]):\\Users\\[^\\\s:;,)"' ]+/g, "$1:\\Users\\<user>");
+  const trimmed = redacted.trim();
+  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}...` : trimmed;
 }

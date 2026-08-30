@@ -720,13 +720,20 @@ export async function waitForLockAdopted(
   lockPath: string,
   parentToken: string,
   childPid: number,
+  timeoutMs = 10_000,
 ): Promise<void> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const rec = peekLockRecord(lockPath);
     if (!rec) {
-      if (isPidAlive(childPid)) return;
-      throw new Error("lock handoff failed: lock disappeared and child is dead");
+      // A vanished record is an externally corrupted handoff, never an
+      // adoption. Fail closed: keep waiting only until the child dies or the
+      // deadline expires; a live child alone is not success.
+      if (!isPidAlive(childPid)) {
+        throw new Error("lock handoff failed: lock disappeared and child is dead");
+      }
+      await sleep(20);
+      continue;
     }
     if (rec.pid === childPid && rec.token && rec.token !== parentToken) return;
     if (!isPidAlive(childPid)) {

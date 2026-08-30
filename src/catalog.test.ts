@@ -14,7 +14,7 @@ import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "./co
 import { loadBundledCatalog } from "./codex/catalog/source.js";
 import { loadOllamaTags } from "./core/ollama/tags.js";
 import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./codex/constants.js";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogFile } from "./codex/types.js";
@@ -109,7 +109,7 @@ describe("catalog merge", () => {
     assert.equal(ollama.display_name, "ollama/deepseek-v4-flash:0731-cloud");
     assert.equal(ollama.supports_parallel_tool_calls, false);
     assert.equal(ollama.supports_search_tool, false);
-    assert.equal(ollama.shell_type, "disabled");
+    assert.equal(ollama.shell_type, "unified_exec");
     assert.equal("apply_patch_tool_type" in ollama, false);
     assert.equal("tool_mode" in ollama, false);
     assert.equal(ollama.support_verbosity, false);
@@ -330,6 +330,42 @@ describe("catalog merge", () => {
     );
   });
 
+  it("advertises unified_exec shell only on fresh exact tools evidence", () => {
+    const entry = buildOllamaEntry(tags[0]!, bundled().models[2]!, 20);
+    assert.equal(entry.shell_type, "unified_exec");
+    const noTools = buildOllamaEntry(
+      { name: "qwen2.5:7b", capabilities: ["completion"], details: { context_length: 8192 } },
+      bundled().models[2]!,
+      20,
+    );
+    assert.equal(noTools.shell_type, "disabled");
+    const variant = buildOllamaEntry(
+      { name: "qwen2.5:7b", capabilities: ["completion", "Tools"], details: { context_length: 8192 } },
+      bundled().models[2]!,
+      20,
+    );
+    assert.equal(variant.shell_type, "disabled");
+  });
+
+  it("accepts exactly unified_exec and disabled shell types on Ollama rows", () => {
+    const row = {
+      slug: "ollama/deepseek-v4-flash:0731-cloud",
+      base_instructions: OLLAMA_BASE_INSTRUCTIONS,
+      supports_parallel_tool_calls: false,
+      supports_search_tool: false,
+      multi_agent_version: "v1",
+      shell_type: "unified_exec",
+    };
+    assert.doesNotThrow(() => assertOllamaRowsSafe({ models: [row] }));
+    for (const invalid of ["shell_command", "unified", "", 7]) {
+      assert.throws(
+        () => assertOllamaRowsSafe({ models: [{ ...row, shell_type: invalid }] }),
+        /exactly disabled or unified_exec/,
+        String(invalid),
+      );
+    }
+  });
+
   it("does not pad the picker with gpt-5.5 when gpt-5.6 is absent", () => {
     const priorities = assignFeaturedPriorities(
       bundled().models,
@@ -375,6 +411,7 @@ describe("catalog merge", () => {
     assert.ok(leaked);
     leaked.apply_patch_tool_type = "freeform";
     leaked.tool_mode = "code_mode_only";
+    leaked.shell_type = "unified_exec";
     leaked.supported_reasoning_levels = [
       { effort: "high", description: "leaked" },
       { effort: "medium", description: "ok" },
@@ -385,6 +422,8 @@ describe("catalog merge", () => {
     assert.ok(rebuilt);
     assert.equal("apply_patch_tool_type" in rebuilt, false);
     assert.equal("tool_mode" in rebuilt, false);
+    // Discovery fallback evidence cannot keep a previous positive unified_exec.
+    assert.equal(rebuilt.shell_type, "disabled");
     assert.deepEqual(
       (rebuilt.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
       ["none", "low", "high", "max"],
@@ -460,7 +499,7 @@ describe("catalog merge", () => {
     assert.equal(spawn?.apply_patch_tool_type, "freeform");
     assert.equal("apply_patch_tool_type" in (nonSpawn ?? {}), false);
     assert.equal(nativeSol?.apply_patch_tool_type, "freeform");
-    assert.equal(spawn?.shell_type, "disabled");
+    assert.equal(spawn?.shell_type, "unified_exec");
     assert.equal(spawn?.multi_agent_version, "v1");
     assertOllamaRowsSafe(on, {
       allowApplyPatch: true,
@@ -521,6 +560,43 @@ describe("Desktop and PATH catalog schemas", () => {
         false,
         `${bin} advertised auto_compact_token_limit`,
       );
+    }
+  });
+});
+
+describe("producer failure sanitization", () => {
+  it("reports producer failures with bounded, sanitized child output", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-producer-fail-"));
+    const bin = join(dir, "codex");
+    writeFileSync(
+      bin,
+      [
+        "#!/bin/sh",
+        "printf 'Bearer sk-first-line-secret Authorization: Basic dXNlcjpwYXNz at /Users/alice/.codex/auth.json and /root/.codex/auth.json and C:\\\\Users\\\\alice\\\\.codex\\\\auth.json missing\\nsecond line topsecret-marker\\n' >&2",
+        "exit 7",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(bin, 0o755);
+    try {
+      loadBundledCatalog(bin);
+      assert.fail("expected the producer to fail");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.match(message, /failed \(7\)/);
+      assert.ok(!message.includes("sk-first-line-secret"), "credential-looking tokens must be redacted");
+      assert.ok(!message.includes("dXNlcjpwYXNz"), "basic-auth credentials must be redacted");
+      assert.ok(!message.includes("/Users/alice"), "user home paths must be redacted");
+      assert.match(message, /\/Users\/<user>\//, "the Users redaction branch must be exercised");
+      assert.ok(!message.includes("/root/.codex"), "root home paths must be redacted");
+      assert.match(message, /\/root\/<user>\//, "the root redaction branch must be exercised");
+      assert.ok(!message.includes("C:\\Users\\alice"), "Windows user paths must be redacted");
+      assert.match(message, /C:\\Users\\<user>/, "the Windows redaction branch must be exercised");
+      assert.ok(!message.includes("second line"), "only the first output line may be reported");
+      assert.ok(!message.includes("topsecret-marker"), "beyond-the-cap producer output must not leak");
+      assert.match(message, /auth\.json/, "harmless context stays for diagnosis");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

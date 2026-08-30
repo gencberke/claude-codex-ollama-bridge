@@ -304,7 +304,8 @@ export async function handleResponsesPost(
 
   if (target === "ollama") {
     const expanded = await expandOllamaCompactionPayload(payload, stateStore(options), model);
-    const prepared = prepareOllamaPayload(expanded, { applyPatch: options.applyPatch });
+    const applyPatch = options.applyPatch === true && catalogRowSupportsApplyPatch(catalogSnapshot, model);
+    const prepared = prepareOllamaPayload(expanded, { applyPatch });
     if (isOllamaReject(prepared)) {
       json(res, prepared.status, prepared.body);
       return;
@@ -317,7 +318,7 @@ export async function handleResponsesPost(
       fetchImpl: options.ollamaFetch,
       signal: abort.signal,
       headersMs: resolveOllamaHeadersMs(options),
-      applyPatch: options.applyPatch,
+      applyPatch,
       // Checkpoints currently retain the raw provider function-call alias.
       // The original client payload was validated before this replay is
       // assembled, so only a resolved previous_response_id may authorize the
@@ -443,7 +444,11 @@ async function handleOllamaCompactionTrigger(
     stateStore(options),
     threadModel,
   );
-  const prepared = prepareOllamaPayload(triggerlessPayload, { applyPatch: options.applyPatch });
+  // Compaction authorization follows the conversation's own thread row, never
+  // the summarizer or compaction model.
+  const threadApplyPatch =
+    options.applyPatch === true && catalogRowSupportsApplyPatch(catalogSnapshot, threadModel);
+  const prepared = prepareOllamaPayload(triggerlessPayload, { applyPatch: threadApplyPatch });
   if (isOllamaReject(prepared)) {
     json(res, prepared.status, prepared.body);
     return;
@@ -549,7 +554,9 @@ async function handleOllamaSummaryCompact(
     history,
     effort: options.compaction?.ollamaEffort,
   });
-  const preparedSummarizer = prepareOllamaPayload(summarizerPayload, { applyPatch: options.applyPatch });
+  // The summarizer's own tools-less request keeps the patch bridge closed;
+  // the thread row's capability never elevates the compact model.
+  const preparedSummarizer = prepareOllamaPayload(summarizerPayload);
   if (isOllamaReject(preparedSummarizer)) {
     json(res, preparedSummarizer.status, preparedSummarizer.body);
     return;
@@ -574,7 +581,6 @@ async function handleOllamaSummaryCompact(
     fetchImpl: options.ollamaFetch,
     signal: abort.signal,
     headersMs: resolveOllamaHeadersMs(options),
-    applyPatch: options.applyPatch,
     supportsReasoning,
   });
   if (isOllamaReject(forwarded)) {
@@ -923,6 +929,25 @@ function createStreamCapture(): StreamCapture {
   };
 }
 
+/**
+ * Compose two passive SSE observers over the same parsed events. The tracker
+ * observer must be the stream's only terminal-feeding point; the capture
+ * observer never feeds it.
+ */
+function composedSseObserver(primary: SseObserver, secondary: SseObserver): SseObserver {
+  return {
+    suppressDone: primary.suppressDone === true,
+    onChunk(chunk) {
+      primary.onChunk?.(chunk);
+      secondary.onChunk?.(chunk);
+    },
+    onData(event) {
+      secondary.onData?.(event);
+      primary.onData?.(event);
+    },
+  };
+}
+
 function captureObserver(capture: StreamCapture, suppressDone = false): SseObserver {
   return {
     suppressDone,
@@ -1032,16 +1057,20 @@ async function relayNativeOllamaCompaction(
   let validationError: string | undefined;
   if (isSse) {
     const capture = createStreamCapture();
+    // The native compaction SSE path honors the same terminal-order
+    // transaction as the normal Ollama relay: exactly one terminal is fed
+    // into the tracker, a contradictory/later frame taints success, and a
+    // [DONE] is optional but never early and never doubled. Separated
+    // compaction-envelope validation still gates the candidate.
+    const track = createOllamaTerminalTrack();
+    const observer = composedSseObserver(captureObserver(capture), ollamaTerminalTrackObserver(track));
     try {
-      await collectSseTransform(
-        raw,
-        sseRewriteTransform((value) => value, undefined, captureObserver(capture)),
-      );
+      await collectSseTransform(raw, sseRewriteTransform((value) => value, undefined, observer));
     } catch (error) {
       validationError = error instanceof Error ? error.message : String(error);
     }
-    if (!validationError && (!capture.sawCompletedEvent || capture.malformed)) {
-      validationError = "native compaction SSE did not end with response.completed";
+    if (!validationError && (track.phase !== "held-completed" || track.completedCandidate === undefined)) {
+      validationError = "native compaction SSE did not end with a single valid response.completed terminal";
     }
     candidate = capture.candidate;
   } else {
@@ -1674,6 +1703,16 @@ function resolveOllamaHeadersMs(options: GatewayOptions): number {
 function catalogRowSupportsReasoning(catalog: CatalogFile | undefined, model: string): boolean {
   const row = catalog?.models.find((item) => String(item.slug) === model);
   return Array.isArray(row?.supported_reasoning_levels) && row.supported_reasoning_levels.length > 0;
+}
+
+/**
+ * Gate 5 authorization is the exact catalog row capability, not the global
+ * boolean: a missing catalog, a missing row, or any capability other than
+ * `freeform` leaves the patch bridge fail-closed for that request.
+ */
+function catalogRowSupportsApplyPatch(catalog: CatalogFile | undefined, model: string): boolean {
+  const row = catalog?.models.find((item) => String(item.slug) === model);
+  return Boolean(row) && row?.apply_patch_tool_type === "freeform";
 }
 
 export function resolveCatalog(options: GatewayOptions): CatalogFile | undefined {

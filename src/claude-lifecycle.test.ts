@@ -80,6 +80,9 @@ const mode = process.env.COB_FAKE_CLAUDE_MODE ?? "";
 if (mode !== "unpublish" && mode !== "skip-adopt") {
   adoptLock(paths.lock, process.env.COB_LOCK_TOKEN ?? "");
   writeFileSync(join(markers, "adopted"), "");
+  // The launcher's handoff watch polls the adopted lock record; hold the
+  // window open like a real serve boot so the poll can observe it.
+  await new Promise((resolve) => setTimeout(resolve, 120));
   releaseLock(paths.lock);
 }
 const nonce = randomBytes(8).toString("hex");

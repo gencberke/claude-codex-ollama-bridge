@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { closePrivateLogFd, openPrivateLogFd } from "./runtime/log-fd.js";
 import type { CliFlags } from "../cli-session.js";
 import { readFileBufferOrNull } from "../core/atomic.js";
 import { formatInstallLine } from "../core/install-detection.js";
@@ -29,75 +30,75 @@ export async function runCodexCli(flags: CliFlags): Promise<void> {
         });
         return;
       }
-      mkdirSync(paths.codexHome, { recursive: true });
+      mkdirSync(paths.codexHome, { recursive: true, mode: 0o700 });
       const catalogBefore = readFileBufferOrNull(paths.catalog);
-      const logFd = openSync(paths.log, "a", 0o600);
+      // The launcher keeps the log fd open only long enough to hand it to the
+      // detached child; close it on every success and error path afterwards.
+      const logFd = openPrivateLogFd(paths.log);
       try {
-        chmodSync(paths.log, 0o600);
-      } catch {
-        // best-effort on filesystems that ignore mode
-      }
-      const started = await startGatewayDetached({
-        paths,
-        port,
-        ollamaUrl: flags.ollamaUrl,
-        spawnServe: ({ token, nonce }) => {
-          const args = [
-            process.argv[1] ?? "",
-            "serve",
-            "--port",
-            String(port),
-            "--ollama-url",
-            flags.ollamaUrl,
-          ];
-          if (flags.compactionProvider) {
-            args.push("--compaction-provider", flags.compactionProvider);
-          }
-          if (flags.compactionModel) {
-            args.push("--compaction-model", flags.compactionModel);
-          }
-          if (flags.liveHome) args.push("--live-home");
-          return spawn(process.execPath, args, {
-            detached: true,
-            stdio: ["ignore", logFd, logFd],
-            env: {
-              ...process.env,
-              COB_CODEX_HOME: paths.codexHome,
-              COB_LOCK_TOKEN: token,
-              COB_RUNTIME_NONCE: nonce,
-              ...(flags.liveHome ? { COB_ALLOW_LIVE_HOME: "1" } : {}),
-              ...(flags.compactionProvider ? { COB_COMPACTION_PROVIDER: flags.compactionProvider } : {}),
-              ...(flags.compactionModel ? { COB_COMPACTION_MODEL: flags.compactionModel } : {}),
-            },
-          });
-        },
-      });
-      const runtime = started.runtime;
-      if (started.alreadyRunning) {
-        console.log(`cob already running on 127.0.0.1:${runtime.port} (pid ${runtime.pid})`);
-        printLaunchHint(isolated, paths.codexHome);
-        return;
-      }
-      const catalog = (() => {
-        try {
-          return parseCatalogJson(readFileSync(paths.catalog, "utf8"));
-        } catch {
-          return { models: [] };
+        const started = await startGatewayDetached({
+          paths,
+          port,
+          ollamaUrl: flags.ollamaUrl,
+          spawnServe: ({ token, nonce }) => {
+            const args = [
+              process.argv[1] ?? "",
+              "serve",
+              "--port",
+              String(port),
+              "--ollama-url",
+              flags.ollamaUrl,
+            ];
+            if (flags.compactionProvider) {
+              args.push("--compaction-provider", flags.compactionProvider);
+            }
+            if (flags.compactionModel) {
+              args.push("--compaction-model", flags.compactionModel);
+            }
+            if (flags.liveHome) args.push("--live-home");
+            return spawn(process.execPath, args, {
+              detached: true,
+              stdio: ["ignore", logFd, logFd],
+              env: {
+                ...process.env,
+                COB_CODEX_HOME: paths.codexHome,
+                COB_LOCK_TOKEN: token,
+                COB_RUNTIME_NONCE: nonce,
+                ...(flags.liveHome ? { COB_ALLOW_LIVE_HOME: "1" } : {}),
+                ...(flags.compactionProvider ? { COB_COMPACTION_PROVIDER: flags.compactionProvider } : {}),
+                ...(flags.compactionModel ? { COB_COMPACTION_MODEL: flags.compactionModel } : {}),
+              },
+            });
+          },
+        });
+        const runtime = started.runtime;
+        if (started.alreadyRunning) {
+          console.log(`cob already running on 127.0.0.1:${runtime.port} (pid ${runtime.pid})`);
+          printLaunchHint(isolated, paths.codexHome);
+          return;
         }
-      })();
-      const top = listVisibleTopSlugs(catalog.models);
-      printStarted(port, isolated, paths.codexHome, install, runtime.pid);
-      console.log(
-        `compaction: provider=${runtime.compaction?.provider ?? "native"}${runtime.compaction?.model ? ` model=${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction?.ollamaThreads ?? "summarize"}`,
-      );
-      console.log(`featured picker: ${top.join(", ")}`);
-      if (
-        !started.alreadyRunning &&
-        shouldPrintDesktopRestartHint(!isolated, catalogBytesChanged(catalogBefore, readFileBufferOrNull(paths.catalog)))
-      ) {
-        console.log(LIVE_DESKTOP_RESTART_HINT);
+        const catalog = (() => {
+          try {
+            return parseCatalogJson(readFileSync(paths.catalog, "utf8"));
+          } catch {
+            return { models: [] };
+          }
+        })();
+        const top = listVisibleTopSlugs(catalog.models);
+        printStarted(port, isolated, paths.codexHome, install, runtime.pid);
+        console.log(
+          `compaction: provider=${runtime.compaction?.provider ?? "native"}${runtime.compaction?.model ? ` model=${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction?.ollamaThreads ?? "summarize"}`,
+        );
+        console.log(`featured picker: ${top.join(", ")}`);
+        if (
+          shouldPrintDesktopRestartHint(!isolated, catalogBytesChanged(catalogBefore, readFileBufferOrNull(paths.catalog)))
+        ) {
+          console.log(LIVE_DESKTOP_RESTART_HINT);
+        }
+        printLaunchHint(isolated, paths.codexHome);
+      } finally {
+        closePrivateLogFd(logFd);
       }
-      printLaunchHint(isolated, paths.codexHome);
       return;
     }
     case "serve":

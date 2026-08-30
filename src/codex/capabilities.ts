@@ -17,7 +17,7 @@ export type OllamaChildProfile = {
   supportsReasoning: boolean;
   supportsVision: boolean;
   supportsApplyPatch: boolean;
-  supportsShell: false;
+  supportsShell: boolean;
   supportsSearch: false;
   previousResponseState: "unsupported";
 };
@@ -90,7 +90,7 @@ export function ollamaChildProfile(
     supportsReasoning: evidence.thinking,
     supportsVision: evidence.vision,
     supportsApplyPatch,
-    supportsShell: false,
+    supportsShell: evidence.tools,
     supportsSearch: false,
     previousResponseState: "unsupported",
   };
@@ -136,8 +136,9 @@ export function ollamaChildCatalogFields(opts: {
     supports_image_detail_original: profile.supportsVision,
     supports_search_tool: opts.supportsSearchTool === true,
     ...(profile.supportsApplyPatch ? { apply_patch_tool_type: "freeform" } : {}),
-    // Parser-required. `disabled` is the schema-safe value that does not advertise shell.
-    shell_type: "disabled",
+    // Only the exact fresh lowercase `tools` capability advertises unified_exec
+    // shell; no-tools, unknown, or fallback evidence stays disabled.
+    shell_type: profile.supportsShell ? "unified_exec" : "disabled",
     // Parser-required shape. Not copied from a native GPT row.
     truncation_policy: { mode: "tokens", limit: 10000 },
     experimental_supported_tools: [],

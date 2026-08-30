@@ -25,7 +25,7 @@ export type CliFlags = {
   compactionModel?: string;
 };
 
-const FLAG_WITH_VALUE = new Set([
+const VALUE_FLAGS = new Set([
   "--home",
   "--dir",
   "--port",
@@ -34,64 +34,119 @@ const FLAG_WITH_VALUE = new Set([
   "--compaction-model",
 ]);
 
+const BOOLEAN_FLAGS = new Set(["--foreground", "--live", "--dev", "--live-home", "--desktop"]);
+
+const SESSION_COMMANDS = new Set(["start", "serve", "stop", "restore", "status", "sync", "smoke", "agents"]);
+
+function flagApplies(flag: string, surface: CobSurface, command: string): boolean {
+  if (command === "version" || command === "pack" || command === "help") return false;
+  switch (flag) {
+    case "--dev":
+    case "--live-home":
+    case "--home":
+    case "--port":
+      return SESSION_COMMANDS.has(command);
+    case "--foreground":
+      return command === "start";
+    case "--live":
+      return surface === "codex" && command === "smoke";
+    case "--ollama-url":
+      if (surface === "codex") {
+        return command === "start" || command === "serve" || command === "sync" || command === "smoke";
+      }
+      return command === "start" || command === "serve";
+    case "--desktop":
+      return surface === "claude" && (command === "start" || command === "serve");
+    case "--dir":
+      return surface === "claude" && command === "agents";
+    case "--compaction-provider":
+    case "--compaction-model":
+      return surface === "codex" && (command === "start" || command === "serve");
+    default:
+      return false;
+  }
+}
+
+/**
+ * Single-pass CLI grammar: every token is either a known positional, a known
+ * boolean flag, or a known value flag with an adjacent value. Anything else —
+ * unknown flags, missing values, extra positionals, or flags that do not
+ * apply to the resolved command — fails closed here instead of being skipped.
+ */
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliFlags {
   const args = argv.slice(2);
-  if (args.includes("--version") || args.includes("-V")) {
+  // `--version` short-circuits only as the sole argument; any other token goes
+  // through the single-pass grammar and fails on unknown flags.
+  if (args.length === 1 && (args[0] === "--version" || args[0] === "-V")) {
     return baseFlags("version", env);
   }
-  const positionals = positionalArgs(args);
+  const positionals: string[] = [];
+  const booleans = new Set<string>();
+  const values = new Map<string, string>();
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (!arg.startsWith("-")) {
+      positionals.push(arg);
+      continue;
+    }
+    const canonical = arg === "-f" ? "--foreground" : arg;
+    if (canonical === "--native-url") {
+      throw new Error("native ChatGPT URL is pinned; --native-url is not accepted");
+    }
+    if (!VALUE_FLAGS.has(canonical) && !BOOLEAN_FLAGS.has(canonical)) {
+      throw new Error(`unknown flag: ${arg}`);
+    }
+    if (VALUE_FLAGS.has(canonical)) {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("-")) {
+        throw new Error(`flag ${arg} requires a value`);
+      }
+      values.set(canonical, value);
+      i += 1;
+      continue;
+    }
+    booleans.add(canonical);
+  }
+  const surfaceArg = positionals[0];
+  const surfacePrefix = surfaceArg !== undefined && isCobSurface(surfaceArg);
   let surface: CobSurface = DEFAULT_SURFACE;
   let command = "help";
-  if (positionals[0] && isCobSurface(positionals[0])) {
-    surface = positionals[0];
+  if (surfacePrefix && surfaceArg) {
+    surface = surfaceArg;
     command = positionals[1] ?? "help";
-  } else if (positionals[0]) {
-    command = positionals[0];
+  } else if (surfaceArg !== undefined) {
+    command = surfaceArg;
+  }
+  const maxPositionals = surfacePrefix ? 2 : 1;
+  if (positionals.length > maxPositionals) {
+    throw new Error(`unexpected positional argument: ${positionals[maxPositionals]}`);
   }
   const flags = baseFlags(command, env, surface);
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === "--foreground" || arg === "-f") flags.foreground = true;
-    if (arg === "--live") flags.live = true;
-    if (arg === "--dev") flags.dev = true;
-    if (arg === "--live-home") flags.liveHome = true;
-    if (arg === "--desktop") flags.desktop = true;
-    if (arg === "--home" && args[i + 1]) {
-      flags.home = args[i + 1];
-      i += 1;
-    }
-    if (arg === "--dir" && args[i + 1]) {
-      flags.dir = args[i + 1];
-      i += 1;
-    }
-    if (arg === "--port" && args[i + 1]) {
-      flags.port = Number(args[i + 1]);
-      flags.portExplicit = true;
-      i += 1;
-    }
-    if (arg === "--ollama-url" && args[i + 1]) {
-      flags.ollamaUrl = args[i + 1] ?? flags.ollamaUrl;
-      i += 1;
-    }
-    if (arg === "--compaction-provider" && args[i + 1]) {
-      flags.compactionProvider = args[i + 1];
-      i += 1;
-    }
-    if (arg === "--compaction-model" && args[i + 1]) {
-      flags.compactionModel = args[i + 1];
-      i += 1;
-    }
-    if (arg === "--native-url") {
-      throw new Error(
-        surface === "claude"
-          ? "native Anthropic URL is pinned; --native-url is not accepted"
-          : "native ChatGPT URL is pinned; --native-url is not accepted",
-      );
-    }
-  }
-  if (flags.portExplicit && (flags.port === undefined || !Number.isInteger(flags.port) || flags.port <= 0)) {
-    throw new Error("invalid --port");
-  }
+  const applyBoolean = (flag: string, set: () => void): void => {
+    if (!booleans.has(flag)) return;
+    assertFlagApplicable(flag, surface, command);
+    set();
+  };
+  applyBoolean("--foreground", () => (flags.foreground = true));
+  applyBoolean("--live", () => (flags.live = true));
+  applyBoolean("--dev", () => (flags.dev = true));
+  applyBoolean("--live-home", () => (flags.liveHome = true));
+  applyBoolean("--desktop", () => (flags.desktop = true));
+  const applyValue = (flag: string, set: (value: string) => void): void => {
+    const value = values.get(flag);
+    if (value === undefined) return;
+    assertFlagApplicable(flag, surface, command);
+    set(value);
+  };
+  applyValue("--home", (value) => (flags.home = value));
+  applyValue("--dir", (value) => (flags.dir = value));
+  applyValue("--port", (value) => {
+    flags.port = parsePortNumber(value, "--port");
+    flags.portExplicit = true;
+  });
+  applyValue("--ollama-url", (value) => (flags.ollamaUrl = value));
+  applyValue("--compaction-provider", (value) => (flags.compactionProvider = value));
+  applyValue("--compaction-model", (value) => (flags.compactionModel = value));
   if (flags.compactionProvider) {
     parseCompactionProvider(flags.compactionProvider);
   }
@@ -99,18 +154,27 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   return flags;
 }
 
-function positionalArgs(args: string[]): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === undefined) continue;
-    if (arg.startsWith("-")) {
-      if (FLAG_WITH_VALUE.has(arg)) i += 1;
-      continue;
-    }
-    out.push(arg);
+function assertFlagApplicable(flag: string, surface: CobSurface, command: string): void {
+  if (!flagApplies(flag, surface, command)) {
+    throw new Error(`flag ${flag} does not apply to cob ${surface === "codex" ? "" : `${surface} `}${command}`);
   }
-  return out;
+}
+
+/** Ports are strictly decimal digit strings in the 1..65535 range; shared by --port and COB_PORT. */
+export function parsePortNumber(value: string, field: string): number {
+  if (!/^[0-9]+$/.test(value) || value.length > 5 || Number(value) < 1 || Number(value) > 65535) {
+    throw new Error(`${field} must be a decimal port between 1 and 65535`);
+  }
+  return Number(value);
+}
+
+/**
+ * The Codex surface relies on POSIX-only lifecycle pieces (fork/uid checks,
+ * detached spawn, symlinks); the Claude surface runs on Windows too.
+ */
+export function isSurfaceSupportedOn(surface: CobSurface, platform: NodeJS.Platform): boolean {
+  if (surface === "codex") return platform !== "win32";
+  return true;
 }
 
 function baseFlags(command: string, env: NodeJS.ProcessEnv, surface: CobSurface = DEFAULT_SURFACE): CliFlags {
@@ -135,9 +199,8 @@ export function resolveListenPort(opts: {
   surface?: CobSurface;
 }): number {
   if (opts.portExplicit && opts.port !== undefined) return opts.port;
-  if (opts.envPort !== undefined && opts.envPort.length > 0) {
-    const parsed = Number(opts.envPort);
-    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  if (opts.envPort !== undefined) {
+    return parsePortNumber(opts.envPort, opts.surface === "claude" ? "COB_CLAUDE_PORT" : "COB_PORT");
   }
   if (opts.surface === "claude") {
     return opts.isolated ? CLAUDE_DEFAULT_DEV_PORT : CLAUDE_DEFAULT_PORT;

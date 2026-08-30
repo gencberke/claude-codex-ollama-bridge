@@ -8,8 +8,9 @@ Isolation rule for every live run: a temporary `CODEX_HOME` / `COB_CODEX_HOME`
 gateway at the real `~/.codex` unless the goal is an explicit
 restore/config-byte check, and then snapshot `config.toml` first. The globally
 installed cob on port 18790 is the ChatGPT Desktop path. Cut that install with
-[RELEASE.md](./RELEASE.md). Current live is cob **0.2.1**; the workspace
-stabilization diff is not installed there. G12/G14/G17 traces remain
+[RELEASE.md](./RELEASE.md). Current live is global cob **0.2.2** (installed
+2026-08-29, pre-hardening bytes); the `master` hardening at `e6a3449` is not
+installed there. G12/G14/G17 traces remain
 historical **0.1.13** evidence and are not credited to the current live
 artifact.
 
@@ -65,10 +66,16 @@ inferred from Codex UI text.
 | G21 (Gate 6) | One isolated 0731 child receives two `send_message` payloads while still active, then two `followup_task` turns after idle/completed, all in one session/id with nonce order preserved | Second spawn, send after the child already completed, wait between the two active sends, duplicate/lost/wrong-id delivery, or Sol `GATE6_PASS` without those child-session rows |
 | G21-H (Gate 6-H) | Workspace `npm run gate6h` watches parent/child rollout JSONL; two same-turn `send_message` calls with no wait/list/final between them, then two idle `followup_task` rows on one 0731 child | `controller_sequencing_fail` (wait/list/interrupt/final/exec before send2); three such fails record `controller_sequencing_observed` and `transport_unmeasured`. Do not add a cob queue or open Gate 7–10 |
 
-Ollama child catalog rows advertise `shell_type=disabled` and no
-`apply_patch_tool_type` by default. The isolated Gate 5 opt-in may add the
-cob-owned `freeform` alias only to configured spawn rows; it does not enable
-shell writes or change the V1 child contract. G20 passed in the isolated
+Ollama child catalog rows carry no `apply_patch_tool_type` by default, and
+`shell_type` follows fresh `/api/tags` tools evidence: an exact lowercase
+`tools` capability advertises `unified_exec` (declared `exec_command`/
+`write_stdin` function tools only); no-tools, unknown, or fallback evidence
+keeps `disabled`. The isolated Gate 5 opt-in may add the cob-owned `freeform`
+alias only to configured spawn rows; it does not enable shell writes or change
+the V1 child contract. The historical G20 record reflects frozen canary
+evidence: when the 2026-08-24 canary ran, Ollama rows were still
+`shell_type=disabled`, and that live record is kept as measured, not rewritten.
+G20 passed in the isolated
 2026-08-24 canary: the child session contains one native custom patch
 call/output pair and only read-only shell checks; the live gateway, root
 overlay, and live catalog were unchanged.
@@ -534,8 +541,9 @@ record the root-config and live-catalog SHA values; after stopping, prove they
 are unchanged and restore the dev policy bytes.
 
 The configured Ollama spawn row must advertise
-`apply_patch_tool_type="freeform"`, `shell_type="disabled"`, and
-`multi_agent_version="v1"`. Other Ollama rows receive no patch field and
+`apply_patch_tool_type="freeform"` and `multi_agent_version="v1"`; its
+`shell_type` must match the row's fresh tools evidence (`unified_exec` on an
+exact lowercase `tools` capability, otherwise `disabled`). Other Ollama rows receive no patch field and
 native rows remain byte-for-byte native. On the wire, Ollama sees only cob's
 declared function alias. Codex sees a custom `apply_patch` call and matching
 custom output. Malformed/undeclared calls, alias collisions, encrypted fields,

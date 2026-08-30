@@ -48,7 +48,10 @@ export function writeCatalogIfChanged(
   try {
     const previous = readFileSync(path, "utf8");
     if (previous === next) return false;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`catalog file at ${path} exists but is unreadable; refusing first-write overwrite`);
+    }
     // first write
   }
   writeFileAtomic(path, next, 0o600);

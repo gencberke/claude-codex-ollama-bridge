@@ -255,6 +255,115 @@ supports_search_tool = true
   });
 });
 
+describe("strict cob.toml grammar", () => {
+  it("keeps # inside quotes and strips unquoted comments", () => {
+    const parsed = parseCobToml('[compaction] # section comment\nmodel = "codex-#mini" # value comment\n');
+    assert.equal(parsed.compaction.model, "codex-#mini");
+    assert.throws(
+      () => parseCobToml('[subagents]\nmodels = ["ollama/a", ollama/b] # trailing\n'),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_cob_toml",
+    );
+  });
+
+  it("keeps a multiline string array and parses escaped quotes", () => {
+    const parsed = parseCobToml('[subagents]\nmodels = [\n  "ollama/say-\\"hi\\":cloud",\n]\n');
+    assert.deepEqual(parsed.subagents.models, ['ollama/say-"hi":cloud']);
+    assert.throws(
+      () => parseCobToml('[compaction]\nmodel = "unterminated\n'),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_cob_toml",
+    );
+  });
+
+  it("fails closed on duplicate keys, malformed headers, unknown keys, and stray lines", () => {
+    const cases: [string, RegExp][] = [
+      ['[catalog]\napply_patch = true\napply_patch = false\n', /duplicate key/],
+      ['[compaction\nprovider = "native"\n', /malformed table header/],
+      ['[nonsense]\nnope = true\n', /unknown section/],
+      ['[catalog]\nnope = true\n', /unknown key/],
+      ['just some text\n', /key = value/],
+      ['model = "codex-mini"\n', /before any table header/],
+      ['[catalog]\napply_patch = notbool\n', /must be a quoted string, boolean, or integer/],
+      ['[catalog]\napply_patch = "true"\n', /apply_patch must be a bare true or false/],
+      ['[catalog]\napply_patch = 1\n', /apply_patch must be a bare true or false/],
+      ['[catalog]\nactive_context_window = "123"\n', /active_context_window must be a bare positive integer/],
+      ['[compaction]\nmodel = true\n', /compaction.model must be a quoted string/],
+      ['[subagents]\nmodels = "ollama/deepseek-v4-flash:cloud"\n', /must be an array/],
+      ['[catalog]\napply_patch = ["true"]\n', /must not be an array/],
+      ['[catalog]\napply_patch = [\n  "true",\n]\n', /must not be an array/],
+      ['[subagents]\nmodels = [\n  "ollama/a"\n]\n', /must end with a comma/],
+      ['[subagents]\nmodels = ["ollama/a",, "ollama/b"]\n', /empty item/],
+    ];
+    for (const [text, pattern] of cases) {
+      assert.throws(
+        () => parseCobToml(text),
+        (error: unknown) => error instanceof CobConfigError && pattern.test(error.message),
+        text,
+      );
+    }
+  });
+});
+
+describe("shared ollama slug validator", () => {
+  it("rejects non-ollama slugs from the file config", () => {
+    const cases: [string, RegExp][] = [
+      ['[subagents]\nmodels = ["ollama/"]\n', /model id after ollama\//],
+      ['[subagents]\nmodels = ["codex-mini"]\n', /not the native slug/],
+      ['[subagents]\nmodels = [" ollama/deepseek-v4-flash:cloud "]\n', /surrounding whitespace/],
+      ['[subagents]\nmodels = ["ollama/a\\u0007"]\n', /whitespace or control characters/],
+      ['[subagents]\nmodels = ["ollama/a", "ollama/a"]\n', /duplicate spawn model/],
+    ];
+    for (const [text, pattern] of cases) {
+      assert.throws(
+        () => parseCobToml(text),
+        (error: unknown) => error instanceof CobConfigError && pattern.test(error.message),
+        text,
+      );
+    }
+    assert.throws(
+      () => parseCobToml('[compaction]\nollama_model = "codex-mini"\n'),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_compaction_ollama_model",
+    );
+    assert.throws(
+      () => parseCobToml('[compaction]\nollama_model = " ollama/a "\n'),
+      (error: unknown) =>
+        error instanceof CobConfigError &&
+        error.code === "invalid_compaction_ollama_model" &&
+        /surrounding whitespace/.test(error.message),
+    );
+  });
+
+  it("validates COB_SUBAGENT_MODELS the same way as the file config", () => {
+    assert.throws(
+      () => resolveCobConfig({ env: { COB_SUBAGENT_MODELS: "codex-mini,ollama/deepseek-v4-flash:cloud" } }),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_ollama_slug",
+    );
+    assert.throws(
+      () => resolveCobConfig({ env: { COB_SUBAGENT_MODELS: "ollama/a,ollama/a" } }),
+      (error: unknown) => error instanceof CobConfigError && /duplicate spawn model/.test(error.message),
+    );
+    assert.throws(
+      () => resolveCobConfig({ env: { COB_SUBAGENT_MODELS: " ollama/a" } }),
+      (error: unknown) =>
+        error instanceof CobConfigError &&
+        error.code === "invalid_ollama_slug" &&
+        /surrounding whitespace/.test(error.message),
+    );
+    assert.throws(
+      () => resolveCobConfig({ env: { COB_SUBAGENT_MODELS: "ollama/a,,ollama/b" } }),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_ollama_slug",
+    );
+    assert.throws(
+      () => resolveCobConfig({ env: { COB_COMPACTION_OLLAMA_MODEL: " ollama/a " } }),
+      (error: unknown) =>
+        error instanceof CobConfigError &&
+        error.code === "invalid_compaction_ollama_model" &&
+        /surrounding whitespace/.test(error.message),
+    );
+    const ok = resolveCobConfig({ env: { COB_SUBAGENT_MODELS: "ollama/a,ollama/b" } });
+    assert.deepEqual(ok.subagents.models, ["ollama/a", "ollama/b"]);
+  });
+});
+
 describe("readCobToml fail-closed I/O", () => {
   it("treats a missing file as the default-config case", () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-toml-missing-"));

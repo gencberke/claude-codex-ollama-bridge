@@ -38,7 +38,7 @@ export function assertWorkspaceMayTouchHome(opts: {
 }
 
 export function seedIsolatedCodexHome(devHome: string, liveHome = defaultLiveHome()): { copiedAuth: boolean } {
-  mkdirSync(devHome, { recursive: true });
+  mkdirSync(devHome, { recursive: true, mode: 0o700 });
   const src = join(liveHome, "auth.json");
   const dest = join(devHome, "auth.json");
   if (!existsSync(src) || existsSync(dest)) return { copiedAuth: false };

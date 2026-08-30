@@ -32,7 +32,12 @@ const TEST_CATALOG: CatalogFile = {
     { slug: "o3", visibility: "list", priority: 6 },
     { slug: "codex-mini", visibility: "list", priority: 7 },
     { slug: "ollama/deepseek-v4-flash:cloud", visibility: "list", priority: 3 },
-    { slug: "ollama/deepseek-v4-flash:0731-cloud", visibility: "list", priority: 3 },
+    {
+      slug: "ollama/deepseek-v4-flash:0731-cloud",
+      visibility: "list",
+      priority: 3,
+      apply_patch_tool_type: "freeform",
+    },
     { slug: "ollama/library%2Fqwen2.5:7b", visibility: "list", priority: 20 },
   ],
 };
@@ -338,13 +343,16 @@ describe("gateway", () => {
         status: 200,
         headers: { "content-type": "text/event-stream" },
       }),
+      nativeFetch: async () => {
+        throw new Error("native must not see an Ollama patch request");
+      },
     });
     try {
       const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "ollama/deepseek-v4-flash:cloud",
+          model: "ollama/deepseek-v4-flash:0731-cloud",
           input: "hi",
           tools: [{
             type: "custom",
@@ -3396,6 +3404,94 @@ describe("WP8 Ollama response integrity", () => {
     }
   });
 
+  it("rejects a Gate 5 custom patch on an uncataloged capability row before upstream", async () => {
+    const patchTool = {
+      type: "custom",
+      name: APPLY_PATCH_TOOL_NAME,
+      format: { type: "grammar", syntax: "lark", definition: "start: /[^\\n]*/" },
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-g5-row-guard-"));
+    let upstreamHits = 0;
+    let nativeHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      applyPatch: true,
+      ollamaFetch: async () => {
+        upstreamHits += 1;
+        return new Response(JSON.stringify(ollamaCompletedBody()), { status: 200, headers: { "content-type": "application/json" } });
+      },
+      nativeFetch: async () => {
+        nativeHits += 1;
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          tools: [patchTool],
+          input: "patch this",
+        }),
+      });
+      const text = await response.text();
+      const body = JSON.parse(text) as { error?: { type?: string; code?: string; message?: string } };
+      assert.equal(response.status, 400);
+      assert.equal(body.error?.code, "ollama_custom_tool_unsupported");
+      assert.equal(String(body.error?.message).includes(APPLY_PATCH_TOOL_NAME), false);
+      assert.equal(upstreamHits, 0);
+      assert.equal(nativeHits, 0);
+      assert.deepEqual(checkpointNames(stateDir), []);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("fails an apply_patch declaration closed for a slug missing from the catalog", async () => {
+    const patchTool = {
+      type: "custom",
+      name: APPLY_PATCH_TOOL_NAME,
+      format: { type: "grammar", syntax: "lark", definition: "start: /[^\\n]*/" },
+    };
+    let upstreamHits = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir: TEST_STATE_DIR,
+      applyPatch: true,
+      ollamaFetch: async () => {
+        upstreamHits += 1;
+        return new Response(JSON.stringify(ollamaCompletedBody()), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/not-in-catalog",
+          tools: [patchTool],
+          input: "patch this",
+        }),
+      });
+      const body = JSON.parse(await response.text()) as { error?: { code?: string } };
+      assert.equal(response.status, 400);
+      assert.equal(body.error?.code, "ollama_custom_tool_unsupported");
+      assert.equal(upstreamHits, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("replays a raw apply_patch alias checkpoint and pairs the next custom output", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "cob-g5-continuation-"));
     const patchInput = "*** Begin Patch\n*** End Patch\n";
@@ -3448,7 +3544,7 @@ describe("WP8 Ollama response integrity", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "ollama/deepseek-v4-flash:cloud",
+          model: "ollama/deepseek-v4-flash:0731-cloud",
           tools: [patchTool],
           input: "patch this",
         }),
@@ -3462,7 +3558,7 @@ describe("WP8 Ollama response integrity", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "ollama/deepseek-v4-flash:cloud",
+          model: "ollama/deepseek-v4-flash:0731-cloud",
           previous_response_id: "resp_patch",
           tools: [patchTool],
           input: [{
@@ -3526,7 +3622,7 @@ describe("WP8 Ollama response integrity", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "ollama/deepseek-v4-flash:cloud",
+          model: "ollama/deepseek-v4-flash:0731-cloud",
           tools: [patchTool],
           input: "patch this",
         }),

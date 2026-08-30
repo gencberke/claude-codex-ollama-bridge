@@ -15,7 +15,9 @@ default.
 As of 2026-08-30, active product development is **cob Codex only**. cob Claude
 remains an existing surface, but its feature work, hardening, canaries, and
 release-gate work are frozen until the user explicitly reopens that scope.
-Preserve the current Claude source and live `:18792` surface; do not refactor or
+Preserve the current Claude source and its recorded `:18792` state (the
+listener was not running at the 2026-08-30 check; do not restart it without
+authorization); do not refactor or
 fix `src/claude/`, replace its listener, or broaden its claims merely because a
 Codex release is being prepared. Deferred Claude findings do not block a
 clearly Codex-scoped decision, but they still prevent a new whole-product
@@ -56,8 +58,11 @@ production-readiness claim.
   existing explicit false.
 - Gate 5 `catalog.apply_patch` is default-off and isolated `--dev` only. When
   explicitly true, advertise cob-owned `apply_patch_tool_type = "freeform"`
-  only on configured Ollama spawn rows; native GPT rows remain verbatim,
-  `shell_type` stays `disabled`, and `multi_agent_version` stays `v1`. Live
+  only on configured Ollama spawn rows; native GPT rows remain verbatim and
+  `multi_agent_version` stays `v1`. The opt-in does not change `shell_type`,
+  which follows fresh `/api/tags` tools evidence: an exact lowercase `tools`
+  capability advertises `unified_exec`; no-tools, unknown, or fallback
+  evidence keeps `disabled`. Live
   `:18790` keeps `apply_patch = false`; do not advertise it on the live
   catalog. The bridge is strict Codex custom tool ↔ fixed Ollama function
   alias; undeclared or malformed calls fail closed and diagnostics must not
@@ -164,22 +169,31 @@ implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
 The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Both live global surfaces remain cob **0.2.1** from the
-authorized 2026-08-29 cut: Codex `:18790` pid **77805** and cob Claude
-`:18792` pid **78004**. Source on `master` is cob **0.2.2**; it is not the
-live install until an explicitly authorized replacement. The earlier 0.2.0
-and 0.1.x listeners and tarballs are historical and must not be repacked.
+child on cob 0.1.6). Live Codex `:18790` is global cob **0.2.2** (pid
+**24581**, installed 2026-08-29 14:21 local from pre-hardening 0.2.2
+bytes; originating tarball SHA/tag unrecorded — the installed bytes are
+burned, so the next cut is **0.2.3**, never a repack of 0.2.2). The cob
+Claude `:18792` listener (last live: cob **0.2.1**, pid 78004) was **not
+running** at the 2026-08-30 read-only check; restarting or changing it
+needs explicit user authorization. Source on `master` is cob **0.2.2** at
+`e6a3449` (the WP hardening plus GitHub Actions CI, `.github/workflows/
+ci.yml`); it is not the live install until an explicitly authorized
+replacement. The earlier 0.2.1/0.2.0 and 0.1.x listeners and tarballs are
+historical and must not be repacked.
 Fail-closed JSON/encrypted-wire is live; `apply_patch` and
 `native_plaintext_spawn` stay off on `~/.codex`. Pack excludes `gate6h` and
-`eval-*`. PATH Codex 0.149.0 and Desktop 0.149.0-alpha.4.3 validate catalog
-`9748309e…` (bytes unchanged at install). Host-network `cob status` is `ok`.
-Current root SHA baseline is `e8694a47…` (Desktop/user; cob did not write it).
+`eval-*`. PATH Codex 0.149.0 validates the live catalog; Desktop producer
+identity changed again at the 2026-08-30 check, so `cob status` reports
+provenance `stale` until `cob sync` / `cob start` regenerates the catalog.
+Current root SHA baseline is `1ecbc836…` (Desktop/user; cob did not write
+it).
 G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
 G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
 change. Do not credit the 0.1.14 install with those gates. Do not repack
-0.1.11–0.1.16, 0.2.0, or 0.2.1. Source on `master` is cob **0.2.2** (public
-GitHub source, not an npm publish). Do not restart the Codex `:18790` listener
-to pick up 0.2.2
+0.1.11–0.1.16, 0.2.0, 0.2.1, or the installed 0.2.2 bytes. Source on
+`master` is cob **0.2.2** (public GitHub source, not an npm publish). Do not
+restart the Codex `:18790` listener
+to pick up source changes
 unless the user authorizes a Codex gateway replace. Future app updates can still drop overlay or hide
 `ollama/...`; then `cob status` must say why. Do not patch the app binary or
 use `nativeAlias` to paper over an update. Reboot is not cob autostart;

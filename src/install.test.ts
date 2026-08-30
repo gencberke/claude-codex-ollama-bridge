@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { packReleaseTarball, parseCliArgs, resolveListenPort } from "./cli-session.js";
+import { isSurfaceSupportedOn, packReleaseTarball, parseCliArgs, resolveListenPort } from "./cli-session.js";
 import { resolveClaudeCliSession } from "./claude/session.js";
 import { resolveCliSession } from "./codex/session.js";
 import { LIVE_HOME_REFUSAL, assertWorkspaceMayTouchHome, seedIsolatedCodexHome } from "./codex/home.js";
@@ -155,6 +155,22 @@ describe("dev home seed and ports", () => {
     }
   });
 
+  it("seeds a fresh isolated home with mode 0700 and leaves an existing home's mode untouched", () => {
+    const live = tempDir("cob-home-mode-live-");
+    const fresh = join(live, "fresh-home");
+    const existing = tempDir("cob-home-mode-existing-");
+    try {
+      seedIsolatedCodexHome(fresh, live);
+      assert.equal(statSync(fresh).mode & 0o7777, 0o700);
+      chmodSync(existing, 0o755);
+      seedIsolatedCodexHome(existing, live);
+      assert.equal(statSync(existing).mode & 0o7777, 0o755);
+    } finally {
+      rmSync(live, { recursive: true, force: true });
+      rmSync(existing, { recursive: true, force: true });
+    }
+  });
+
   it("uses 18791 for --dev unless --port or COB_PORT is set", () => {
     assert.equal(resolveListenPort({ isolated: true, portExplicit: false }), 18791);
     assert.equal(resolveListenPort({ isolated: true, portExplicit: true, port: 19000 }), 19000);
@@ -208,7 +224,7 @@ describe("cli session", () => {
     const home = tempDir("cob-claude-dev-");
     try {
       const flags = parseCliArgs(["node", "cob", "claude", "status", "--dev", "--home", home]);
-      const session = resolveClaudeCliSession(flags, { ...process.env, COB_CLAUDE_HOME: "", COB_CLAUDE_PORT: "" });
+      const session = resolveClaudeCliSession(flags, { ...process.env, COB_CLAUDE_HOME: "", COB_CLAUDE_PORT: undefined });
       assert.equal(session.paths.claudeHome, home);
       assert.equal(session.port, 18793);
       assert.equal(session.isolated, true);
@@ -296,6 +312,72 @@ describe("cli session", () => {
       /tsc failed/,
     );
     assert.deepEqual(ran, ["run build"]);
+  });
+});
+
+describe("strict cli grammar", () => {
+  it("rejects unknown flags, missing values, and extra positionals", () => {
+    assert.throws(() => parseCliArgs(["node", "cob", "start", "--portt", "18790"]), /unknown flag/);
+    assert.throws(() => parseCliArgs(["node", "cob", "start", "--home"]), /requires a value/);
+    assert.throws(() => parseCliArgs(["node", "cob", "start", "extra"]), /unexpected positional/);
+    assert.throws(() => parseCliArgs(["node", "cob", "claude", "start", "extra"]), /unexpected positional/);
+  });
+
+  it("rejects flags that do not apply to the resolved command", () => {
+    assert.throws(() => parseCliArgs(["node", "cob", "start", "--desktop"]), /does not apply/);
+    assert.throws(() => parseCliArgs(["node", "cob", "claude", "start", "--dir", "/tmp/x"]), /does not apply/);
+    assert.throws(() => parseCliArgs(["node", "cob", "claude", "start", "--compaction-model", "codex-mini"]), /does not apply/);
+    assert.throws(
+      () => parseCliArgs(["node", "cob", "claude", "sync", "--ollama-url", "http://127.0.0.1:11434"]),
+      /does not apply/,
+    );
+    assert.throws(() => parseCliArgs(["node", "cob", "start", "--foreground", "--live"]), /does not apply/);
+  });
+
+  it("accepts decimal ports 1 and 65535 and rejects non-decimal and out-of-range forms", () => {
+    assert.equal(parseCliArgs(["node", "cob", "start", "--port", "1"]).port, 1);
+    assert.equal(parseCliArgs(["node", "cob", "start", "--port", "65535"]).port, 65535);
+    for (const bad of ["0", "65536", "1e3", "0x10", " 22", ""]) {
+      assert.throws(
+        () => parseCliArgs(["node", "cob", "start", "--port", bad]),
+        /--port must be a decimal port/,
+        bad,
+      );
+    }
+    // "-1" parses as a flag-shaped token, so --port reports a missing value instead.
+    assert.throws(() => parseCliArgs(["node", "cob", "start", "--port", "-1"]), /--port/);
+  });
+
+  it("rejects malformed COB_PORT without silently falling back to a default", () => {
+    for (const bad of ["1e3", "0", "65536", "abc"]) {
+      assert.throws(
+        () => resolveListenPort({ isolated: true, portExplicit: false, envPort: bad }),
+        /COB_PORT must be a decimal port/,
+        bad,
+      );
+    }
+  });
+
+  it("treats an empty env port as malformed, not unset", () => {
+    assert.throws(
+      () => resolveListenPort({ isolated: true, portExplicit: false, envPort: "" }),
+      /COB_PORT must be a decimal port/,
+    );
+  });
+
+  it("does not fast-path version past flag validation", () => {
+    assert.throws(
+      () => parseCliArgs(["node", "cob", "start", "--version", "--bogus"]),
+      /unknown flag/,
+    );
+    assert.equal(parseCliArgs(["node", "cob", "--version"]).command, "version");
+  });
+
+  it("scopes the Windows guard to the Codex surface and keeps Claude available", () => {
+    assert.equal(isSurfaceSupportedOn("codex", "win32"), false);
+    assert.equal(isSurfaceSupportedOn("codex", "darwin"), true);
+    assert.equal(isSurfaceSupportedOn("claude", "win32"), true);
+    assert.equal(isSurfaceSupportedOn("claude", "darwin"), true);
   });
 });
 

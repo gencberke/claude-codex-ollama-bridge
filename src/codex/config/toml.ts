@@ -12,6 +12,7 @@ import {
   experimentalPolicy,
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
+  parseOllamaSlugList,
   parseOllamaThreadCompaction,
   parsePositiveInt,
   parseCompactionProvider,
@@ -22,6 +23,66 @@ import {
   type OllamaCompactEffort,
   type OllamaThreadCompaction,
 } from "./schema.js";
+
+const KNOWN_COB_TOML_KEYS: Record<string, Set<string>> = {
+  compaction: new Set(["provider", "model", "ollama_threads", "ollama_model", "ollama_effort"]),
+  subagents: new Set(["models"]),
+  catalog: new Set([
+    "supports_search_tool",
+    "advertise_cloud_max_context",
+    "active_context_window",
+    "auto_compact_token_limit",
+    "apply_patch",
+  ]),
+  experimental: new Set(["native_plaintext_spawn", "native_plaintext_spawn_schema_sha256"]),
+};
+
+function assertKnownCobTomlKey(section: string, key: string): void {
+  const allowed = KNOWN_COB_TOML_KEYS[section];
+  if (allowed === undefined || !allowed.has(key)) {
+    throw new CobConfigError("invalid_cob_toml", `unknown key "${key}" in [${section}] of cob.toml`);
+  }
+}
+
+/** Token type each known scalar key demands; security booleans must never be quoted. */
+const SCALAR_TOKEN_KINDS: Record<string, "string" | "boolean" | "integer"> = {
+  "compaction.provider": "string",
+  "compaction.model": "string",
+  "compaction.ollama_threads": "string",
+  "compaction.ollama_model": "string",
+  "compaction.ollama_effort": "string",
+  "catalog.supports_search_tool": "boolean",
+  "catalog.advertise_cloud_max_context": "boolean",
+  "catalog.active_context_window": "integer",
+  "catalog.auto_compact_token_limit": "integer",
+  "catalog.apply_patch": "boolean",
+  "experimental.native_plaintext_spawn": "boolean",
+  "experimental.native_plaintext_spawn_schema_sha256": "string",
+};
+
+function tomlScalarTokenKind(rawValue: string): "string" | "boolean" | "integer" | "invalid" {
+  const quote = rawValue[0];
+  if (quote === '"' || quote === "'") return "string";
+  if (rawValue === "true" || rawValue === "false") return "boolean";
+  if (/^[0-9]+$/.test(rawValue)) return "integer";
+  return "invalid";
+}
+
+function assertScalarTokenKind(rawValue: string, field: string): void {
+  const expected = SCALAR_TOKEN_KINDS[field];
+  if (expected === undefined) return;
+  const kind = tomlScalarTokenKind(rawValue);
+  if (kind === "invalid") return; // parseTomlScalar reports the malformed token
+  if (kind !== expected) {
+    const want =
+      expected === "boolean"
+        ? "a bare true or false"
+        : expected === "integer"
+          ? "a bare positive integer"
+          : "a quoted string";
+    throw new CobConfigError("invalid_cob_toml", `${field} must be ${want}`);
+  }
+}
 
 export function parseCobToml(text: string): CobFileConfig {
   let section = "";
@@ -40,6 +101,8 @@ export function parseCobToml(text: string): CobFileConfig {
   let nativePlaintextSpawnSchemaSha256: string | undefined;
   let arrayKey: string | undefined;
   let arrayItems: string[] = [];
+  const seenSections = new Set<string>();
+  const seenKeys = new Map<string, Set<string>>();
 
   const flushArray = (): void => {
     if (arrayKey === "models" && section === "subagents") {
@@ -48,49 +111,17 @@ export function parseCobToml(text: string): CobFileConfig {
     arrayKey = undefined;
     arrayItems = [];
   };
-
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.replace(/#.*$/, "").trim();
-    if (line.length === 0) continue;
-    if (arrayKey) {
-      if (line.startsWith("]")) {
-        flushArray();
-        continue;
-      }
-      const item = unquoteToml(line.replace(/,$/, "").trim());
-      if (item.length > 0) arrayItems.push(item);
-      continue;
+  const assignScalar = (key: string, value: string): void => {
+    if (section === "compaction") {
+      if (key === "provider") provider = parseCompactionProvider(value);
+      if (key === "model" && value.length > 0) model = value;
+      if (key === "ollama_threads") ollamaThreads = parseOllamaThreadCompaction(value);
+      if (key === "ollama_model") ollamaModel = parseOllamaCompactModel(value);
+      if (key === "ollama_effort") ollamaEffort = parseOllamaCompactEffort(value);
     }
-    if (line.startsWith("[")) {
-      section = line.replace(/^\[/, "").replace(/\]$/, "").trim();
-      continue;
+    if (section === "subagents" && key === "models") {
+      throw new CobConfigError("invalid_cob_toml", "subagents.models must be an array of quoted strings");
     }
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    const key = line.slice(0, eq).trim();
-    const rawValue = line.slice(eq + 1).trim();
-    if (rawValue === "[" || rawValue.startsWith("[") && !rawValue.endsWith("]")) {
-      arrayKey = key;
-      arrayItems = [];
-      if (rawValue.length > 1) {
-        const rest = rawValue.slice(1).trim();
-        if (rest.length > 0) arrayItems.push(unquoteToml(rest.replace(/,$/, "").trim()));
-      }
-      continue;
-    }
-    if (rawValue.startsWith("[") && rawValue.endsWith("]")) {
-      const inner = rawValue.slice(1, -1).trim();
-      const items = inner.length === 0 ? [] : splitTomlList(inner);
-      if (key === "models" && section === "subagents") subagentModels = items;
-      continue;
-    }
-    const value = unquoteToml(rawValue);
-    if (section === "compaction" && key === "provider") provider = parseCompactionProvider(value);
-    if (section === "compaction" && key === "model" && value.length > 0) model = value;
-    if (section === "compaction" && key === "ollama_threads") ollamaThreads = parseOllamaThreadCompaction(value);
-    if (section === "compaction" && key === "ollama_model") ollamaModel = parseOllamaCompactModel(value);
-    if (section === "compaction" && key === "ollama_effort") ollamaEffort = parseOllamaCompactEffort(value);
-    if (section === "subagents" && key === "models") subagentModels = [value];
     if (section === "catalog" && key === "supports_search_tool") {
       supportsSearchTool = parseTomlBool(value, "catalog.supports_search_tool");
     }
@@ -112,9 +143,90 @@ export function parseCobToml(text: string): CobFileConfig {
     if (section === "experimental" && key === "native_plaintext_spawn_schema_sha256") {
       nativePlaintextSpawnSchemaSha256 = parseSchemaSha256(value, "experimental.native_plaintext_spawn_schema_sha256");
     }
+  };
+  const assignList = (key: string, items: string[]): void => {
+    if (section === "subagents" && key === "models") {
+      subagentModels = items;
+      return;
+    }
+    throw new CobConfigError("invalid_cob_toml", `key "${section}.${key}" must not be an array`);
+  };
+  const trackKey = (key: string): void => {
+    const seen = seenKeys.get(section);
+    if (seen === undefined) {
+      throw new CobConfigError("invalid_cob_toml", `key "${key}" appears before any table header in cob.toml`);
+    }
+    assertKnownCobTomlKey(section, key);
+    if (seen.has(key)) {
+      throw new CobConfigError("invalid_cob_toml", `duplicate key "${key}" in [${section}] of cob.toml`);
+    }
+    seen.add(key);
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = stripTomlComment(rawLine).trim();
+    if (line.length === 0) continue;
+    if (arrayKey !== undefined) {
+      if (line === "]") {
+        flushArray();
+        continue;
+      }
+      arrayItems.push(parseTomlArrayItem(line));
+      continue;
+    }
+    const sectionMatch = /^\[([A-Za-z0-9_-]+)\]$/.exec(line);
+    if (sectionMatch) {
+      const name = sectionMatch[1]!;
+      if (!KNOWN_COB_TOML_KEYS[name]) {
+        throw new CobConfigError("invalid_cob_toml", `unknown section [${name}] in cob.toml`);
+      }
+      if (seenSections.has(name)) {
+        throw new CobConfigError("invalid_cob_toml", `duplicate section [${name}] in cob.toml`);
+      }
+      seenSections.add(name);
+      seenKeys.set(name, new Set());
+      section = name;
+      continue;
+    }
+    if (line.startsWith("[")) {
+      throw new CobConfigError("invalid_cob_toml", `malformed table header in cob.toml: ${line}`);
+    }
+    const eq = line.indexOf("=");
+    if (eq < 0) {
+      throw new CobConfigError("invalid_cob_toml", `expected key = value in cob.toml, got: ${line}`);
+    }
+    const key = line.slice(0, eq).trim();
+    const rawValue = line.slice(eq + 1).trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) {
+      throw new CobConfigError("invalid_cob_toml", `invalid key "${key}" in cob.toml`);
+    }
+    trackKey(key);
+    if (!rawValue.startsWith("[")) {
+      assertScalarTokenKind(rawValue, `${section}.${key}`);
+    }
+    if (rawValue === "[" || (rawValue.startsWith("[") && !rawValue.endsWith("]"))) {
+      if (!(section === "subagents" && key === "models")) {
+        throw new CobConfigError("invalid_cob_toml", `key "${section}.${key}" must not be an array`);
+      }
+      arrayKey = key;
+      arrayItems = [];
+      if (rawValue.length > 1) {
+        arrayItems.push(parseTomlArrayItem(rawValue.slice(1).trim()));
+      }
+      continue;
+    }
+    if (rawValue.startsWith("[") && rawValue.endsWith("]")) {
+      const inner = rawValue.slice(1, -1).trim();
+      assignList(key, inner.length === 0 ? [] : splitTomlList(inner));
+      continue;
+    }
+    assignScalar(key, parseTomlScalar(rawValue, `${section}.${key}`));
   }
-  if (arrayKey) {
+  if (arrayKey !== undefined) {
     throw new CobConfigError("invalid_cob_toml", "unterminated array in cob.toml");
+  }
+  if (subagentModels !== undefined) {
+    parseOllamaSlugList(subagentModels, "subagents.models");
   }
 
   return {
@@ -138,6 +250,109 @@ export function parseCobToml(text: string): CobFileConfig {
       schemaSha256: nativePlaintextSpawnSchemaSha256,
     }),
   };
+}
+
+/**
+ * `#` starts a comment only outside a quoted value; the quote state is tracked
+ * with escape awareness so quoted `#` characters survive.
+ */
+function stripTomlComment(line: string): string {
+  let quote: string | undefined;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i]!;
+    if (quote !== undefined) {
+      if (ch === "\\" && quote === '"') {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "#") return line.slice(0, i);
+  }
+  return line;
+}
+
+function parseTomlScalar(rawValue: string, field: string): string {
+  if (rawValue.length === 0) {
+    throw new CobConfigError("invalid_cob_toml", `${field} has an empty value`);
+  }
+  const quote = rawValue[0]!;
+  if (quote === '"') {
+    const close = findBasicStringEnd(rawValue);
+    if (close === undefined) {
+      throw new CobConfigError("invalid_cob_toml", `${field} has an unterminated quoted string`);
+    }
+    if (rawValue.slice(close + 1).trim().length > 0) {
+      throw new CobConfigError("invalid_cob_toml", `${field} has trailing content after the closing quote`);
+    }
+    return unescapeBasicString(rawValue.slice(1, close), field);
+  }
+  if (quote === "'") {
+    const close = rawValue.indexOf("'", 1);
+    if (close < 0) {
+      throw new CobConfigError("invalid_cob_toml", `${field} has an unterminated quoted string`);
+    }
+    if (rawValue.slice(close + 1).trim().length > 0) {
+      throw new CobConfigError("invalid_cob_toml", `${field} has trailing content after the closing quote`);
+    }
+    return rawValue.slice(1, close);
+  }
+  if (rawValue === "true" || rawValue === "false" || /^[0-9]+$/.test(rawValue)) {
+    return rawValue;
+  }
+  throw new CobConfigError("invalid_cob_toml", `${field} must be a quoted string, boolean, or integer`);
+}
+
+function findBasicStringEnd(value: string): number | undefined {
+  for (let i = 1; i < value.length; i += 1) {
+    const ch = value[i]!;
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === '"') return i;
+  }
+  return undefined;
+}
+
+function unescapeBasicString(raw: string, field: string): string {
+  return raw.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_match, escape: string) => {
+    if (escape.startsWith("u")) return String.fromCharCode(parseInt(escape.slice(1), 16));
+    switch (escape) {
+      case '"':
+        return '"';
+      case "\\":
+        return "\\";
+      case "n":
+        return "\n";
+      case "t":
+        return "\t";
+      case "r":
+        return "\r";
+      default:
+        throw new CobConfigError("invalid_cob_toml", `${field} uses unsupported escape sequence \\${escape}`);
+    }
+  });
+}
+
+function parseTomlArrayItem(line: string): string {
+  if (!line.endsWith(",")) {
+    throw new CobConfigError("invalid_cob_toml", "array items in cob.toml must end with a comma");
+  }
+  const inner = line.slice(0, -1).trim();
+  if (inner.length === 0) {
+    throw new CobConfigError("invalid_cob_toml", "empty item in a cob.toml array");
+  }
+  const quote = inner[0]!;
+  if (quote !== '"' && quote !== "'") {
+    throw new CobConfigError("invalid_cob_toml", `array items in cob.toml must be quoted strings, got: ${inner}`);
+  }
+  return parseTomlScalar(inner, "cob.toml array item");
 }
 
 export function renderCobToml(config: CobFileConfig): string {
@@ -222,9 +437,15 @@ function splitTomlList(inner: string): string[] {
   const items: string[] = [];
   let current = "";
   let quote: string | undefined;
-  for (const char of inner) {
+  for (let i = 0; i < inner.length; i += 1) {
+    const char = inner[i]!;
     if (quote) {
       current += char;
+      if (quote === '"' && char === "\\") {
+        current += inner[i + 1] ?? "";
+        i += 1;
+        continue;
+      }
       if (char === quote) quote = undefined;
       continue;
     }
@@ -234,26 +455,19 @@ function splitTomlList(inner: string): string[] {
       continue;
     }
     if (char === ",") {
-      const item = unquoteToml(current.trim());
-      if (item.length > 0) items.push(item);
+      const item = current.trim();
+      if (item.length === 0) {
+        throw new CobConfigError("invalid_cob_toml", "empty item in a cob.toml array");
+      }
+      items.push(parseTomlScalar(item, "cob.toml array item"));
       current = "";
       continue;
     }
     current += char;
   }
-  const last = unquoteToml(current.trim());
-  if (last.length > 0) items.push(last);
+  const last = current.trim();
+  if (last.length > 0) items.push(parseTomlScalar(last, "cob.toml array item"));
   return items;
-}
-
-function unquoteToml(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
 }
 
 function tomlString(value: string): string {

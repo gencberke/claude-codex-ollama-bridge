@@ -1,7 +1,7 @@
 # COB Codex Hardening Uygulama Planı
 
 - Tarih: 2026-08-30
-- Durum: Uygulamaya hazır plan; bu belge kod değişikliği veya release yetkisi değildir
+- Durum: **Uygulandı** — `e6a3449` (commit `Harden cob Codex: state transactions, Ollama SSE terminals, config I/O, CI`, origin/master'a push edildi); bu belge kendi başına release yetkisi değildir
 - Baseline: cob `94a0d9a473040b753192bf3cc8a978d14ec58a6d` / source `0.2.2`
 
 ## 1. Hedef ve tamamlanma tanımı

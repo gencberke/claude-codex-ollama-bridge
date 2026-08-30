@@ -138,6 +138,20 @@ export function isVerifiedCloudOllamaTag(tag: Pick<OllamaTag, "name" | "remote_h
   return Boolean(tag.remote_host) || /:cloud$|-cloud$/.test(tag.name);
 }
 
+/**
+ * A configured spawn row is admitted only on a fresh exact lowercase `tools`
+ * capability from this discovery round. A capability-less or unknown tag never
+ * silently takes over a configured spawn slot; the sync fails closed instead.
+ */
+export function assertSpawnRowsCarryTools(tags: readonly OllamaTag[], spawnable: readonly string[]): void {
+  for (const tag of tags) {
+    if (!spawnable.some((wanted) => isSpawnableMatch(tag.name, wanted))) continue;
+    if (!evidenceFromOllamaTag(tag).tools) {
+      throw new Error(`configured spawn row ${tag.name} does not carry a fresh tools capability`);
+    }
+  }
+}
+
 export function isVerifiedCloudOllamaSlug(slug: string): boolean {
   const name = slug.startsWith("ollama/") ? slug.slice("ollama/".length) : slug;
   return /:cloud$|-cloud$/.test(name);
@@ -429,8 +443,8 @@ export function assertOllamaRowsSafe(catalog: CatalogFile, options?: CatalogSafe
     if (model.multi_agent_version !== "v1") {
       throw new Error(`Ollama row ${slug} must stay on multi_agent_version v1`);
     }
-    if (model.shell_type !== "disabled") {
-      throw new Error(`Ollama row ${slug} must set shell_type to disabled`);
+    if (model.shell_type !== "disabled" && model.shell_type !== "unified_exec") {
+      throw new Error(`Ollama row ${slug} must set shell_type to exactly disabled or unified_exec`);
     }
     const hasApplyPatch = "apply_patch_tool_type" in model;
     const spawnable = spawnableOllamaSlugs.some((wanted) => isSpawnableMatch(slug, wanted));
@@ -495,6 +509,12 @@ function advertisedReasoningEfforts(model: JsonObject): string[] {
 function assertOllamaRowMatchesEvidence(model: JsonObject, evidence: OllamaCapabilityEvidence): void {
   const slug = asSlug(model);
   const efforts = advertisedReasoningEfforts(model);
+  const expectedShell = evidence.tools ? "unified_exec" : "disabled";
+  if (model.shell_type !== expectedShell) {
+    throw new Error(
+      `Ollama row ${slug} advertised shell_type ${JSON.stringify(model.shell_type)} but its fresh evidence ${evidence.tools ? "carries" : "does not carry"} a tools capability`,
+    );
+  }
   if (!evidence.thinking) {
     if (efforts.some((effort) => effort !== "none")) {
       throw new Error(`Ollama row ${slug} advertised reasoning without thinking evidence`);

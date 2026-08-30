@@ -10,6 +10,7 @@ import {
   parseCompactionProvider,
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
+  parseOllamaSlugList,
   parseOllamaThreadCompaction,
   parsePositiveInt,
   parseSchemaSha256,
@@ -49,7 +50,7 @@ export function resolveCobConfig(opts: {
     file?.compaction.ollamaThreads ??
     "summarize";
   const ollamaModel = parseOllamaCompactModel(
-    firstNonEmpty(opts.ollamaModel, env.COB_COMPACTION_OLLAMA_MODEL, file?.compaction.ollamaModel),
+    firstProvided(opts.ollamaModel, env.COB_COMPACTION_OLLAMA_MODEL, file?.compaction.ollamaModel),
   );
   const ollamaEffort =
     parseOllamaCompactEffort(opts.ollamaEffort) ??
@@ -133,11 +134,10 @@ export function catalogSupportsApplyPatch(config: CobFileConfig): boolean {
 }
 
 function parseSubagentEnv(value: string | undefined): string[] | undefined {
-  if (!value || value.trim().length === 0) return undefined;
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
+  if (value === undefined || value.length === 0) return undefined;
+  // Empty entries are passed through so the shared validator sees the raw
+  // env value; filtering them here would silently normalize malformed input.
+  return parseOllamaSlugList(value.split(","), "COB_SUBAGENT_MODELS");
 }
 
 function parseEnvBool(value: string | undefined, field = "COB_SUPPORTS_SEARCH_TOOL"): boolean | undefined {
@@ -151,6 +151,14 @@ function parseEnvBool(value: string | undefined, field = "COB_SUPPORTS_SEARCH_TO
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+/** Like firstNonEmpty, but never trims: padded values reach their validator verbatim. */
+function firstProvided(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
 }
