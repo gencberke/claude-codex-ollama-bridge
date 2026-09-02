@@ -45,7 +45,64 @@ export type ApplyPatchBridge = {
   readonly declared: boolean;
   /** Active Ollama argument streams, used only while rewriting one SSE turn. */
   readonly activeCalls: Map<string, ApplyPatchActiveCall>;
+  /** Content-free facts collected during one provider turn. */
+  readonly observation: ApplyPatchObservationState;
 };
+
+export type ApplyPatchObservationState = {
+  modelCallObserved: boolean;
+  restorationObserved: boolean;
+};
+
+export type ApplyPatchObservation = {
+  declarationPresent: boolean;
+  outboundAliasPresent: boolean;
+  modelCallObserved: boolean;
+  restorationObserved: boolean;
+  childCustomCallObserved?: boolean;
+  childCustomOutputObserved?: boolean;
+  /** Set only when the caller has independently checked the fixture bytes. */
+  executionEffectObserved?: boolean;
+};
+
+export type ApplyPatchClassification =
+  | "declaration_missing"
+  | "outbound_alias_missing"
+  | "model_declined"
+  | "restoration_missing"
+  | "execution_incomplete"
+  | "execution_no_effect"
+  | "complete"
+  | "inconclusive";
+
+/**
+ * Classify Gate 5 using only boolean protocol/fixture facts. No tool names,
+ * call ids, arguments, output, or filesystem contents belong in this result.
+ */
+export function classifyApplyPatchObservation(
+  observation: ApplyPatchObservation,
+): ApplyPatchClassification {
+  if (!observation.declarationPresent) return "declaration_missing";
+  if (!observation.outboundAliasPresent) return "outbound_alias_missing";
+  if (!observation.modelCallObserved) return "model_declined";
+  if (!observation.restorationObserved) return "restoration_missing";
+  if (observation.childCustomCallObserved === false) return "restoration_missing";
+  if (
+    observation.childCustomCallObserved === true &&
+    observation.childCustomOutputObserved !== true
+  ) return "execution_incomplete";
+  if (
+    observation.executionEffectObserved === true &&
+    observation.childCustomCallObserved === true &&
+    observation.childCustomOutputObserved === true
+  ) return "complete";
+  if (
+    observation.executionEffectObserved === false &&
+    observation.childCustomCallObserved === true &&
+    observation.childCustomOutputObserved === true
+  ) return "execution_no_effect";
+  return "inconclusive";
+}
 
 export type ApplyPatchActiveCall = {
   readonly itemId?: string;
@@ -191,6 +248,7 @@ export function emptyApplyPatchBridge(enabled = false, declared = false): ApplyP
     alias: COB_APPLY_PATCH_ALIAS,
     declared,
     activeCalls: new Map(),
+    observation: { modelCallObserved: false, restorationObserved: false },
   };
 }
 
@@ -285,6 +343,7 @@ export function rewriteApplyPatchFromOllama(
     }
   }
   if (isAliasFunctionCall(value, bridge)) {
+    bridge.observation.modelCallObserved = true;
     return rewriteFunctionCall(value, bridge, false);
   }
   let changed = false;
@@ -543,6 +602,7 @@ function inspectCallItem(item: unknown, bridge: ApplyPatchBridge, allowIncomplet
 }
 
 function inspectAliasCall(item: JsonObject, bridge: ApplyPatchBridge, allowIncomplete: boolean): ApplyPatchGuardIssue | undefined {
+  bridge.observation.modelCallObserved = true;
   if (!hasOnlyKeys(item, FUNCTION_CALL_KEYS) || item.type !== "function_call" || item.name !== bridge.alias) {
     return { code: "ollama_tool_call_invalid", kind: "invalid_type", name: item.name };
   }
@@ -633,6 +693,7 @@ function rewriteFunctionCall(item: JsonObject, bridge: ApplyPatchBridge, allowIn
   if (rawArguments.length === 0 && active && active.deltas.length > 0) rawArguments = active.deltas.join("");
   const parsed = rawArguments.length === 0 && allowIncomplete ? "" : parsePatchInput(rawArguments);
   if (parsed === undefined) throw new Error("Ollama apply_patch arguments are not a valid string wrapper");
+  bridge.observation.restorationObserved = true;
   const next: JsonObject = {
     type: "custom_tool_call",
     call_id: item.call_id,

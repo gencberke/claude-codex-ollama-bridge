@@ -9,12 +9,13 @@ import {
   ollamaCatalogWindows,
   mergeCatalog,
   mergeCatalogWithFallback,
+  parseCatalogJson,
 } from "./codex/catalog/catalog.js";
 import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "./codex/catalog/validator.js";
 import { loadBundledCatalog } from "./codex/catalog/source.js";
 import { loadOllamaTags } from "./core/ollama/tags.js";
 import { GPT_IDENTITY_FIELDS, OLLAMA_BASE_INSTRUCTIONS, OLLAMA_ISOLATED_COMPACT_TOKEN_LIMIT } from "./codex/constants.js";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogFile } from "./codex/types.js";
@@ -646,6 +647,135 @@ describe("Ollama tag discovery", () => {
       await new Promise<void>((resolve, reject) => {
         hung.close((error) => (error ? reject(error) : resolve()));
       });
+    }
+  });
+});
+
+describe("catalog sync degraded Ollama discovery", () => {
+  const SPAWNABLE = ["ollama/deepseek-v4-flash:0731-cloud"];
+
+  function bundledFixture(dir: string): string {
+    const path = join(dir, "bundled.json");
+    writeFileSync(path, JSON.stringify({
+      models: [
+        { slug: "gpt-5.6-sol", visibility: "list", priority: 0, shell_type: "shell_command", multi_agent_version: "v1" },
+        { slug: "gpt-5.6-terra", visibility: "list", priority: 1, shell_type: "shell_command", multi_agent_version: "v1" },
+        { slug: "gpt-5.6-luna", visibility: "list", priority: 2, shell_type: "shell_command", multi_agent_version: "v1" },
+      ],
+    }));
+    return path;
+  }
+
+  function writeSyncCodex(dir: string, bundledPath: string): string {
+    const path = join(dir, "codex");
+    writeFileSync(
+      path,
+      `#!/bin/sh\nif [ "$3" = "--bundled" ]; then\n  cat "${bundledPath}"\nfi\nexit 0\n`,
+    );
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  async function tagsServer(body: object): Promise<{ close: () => Promise<void>; url: string }> {
+    const { createServer } = await import("node:http");
+    const server = createServer((req, res) => {
+      if (req.url?.endsWith("/api/tags")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      close: () => new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+    };
+  }
+
+  it("records degraded evidence as schema 3, keeps the fallback safe, then records recovery", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-ollama-"));
+    const home = join(dir, "home");
+    const { resolvePaths } = await import("./codex/paths.js");
+    const { resolveCobConfig } = await import("./codex/config/resolve.js");
+    const { syncCatalogControlPlane } = await import("./codex/catalog/sync.js");
+    const paths = resolvePaths(home);
+    const codexPath = writeSyncCodex(dir, bundledFixture(dir));
+    const discovery = { liveHome: false, platform: "darwin" as const, pathBin: codexPath };
+    const inspect = { readVersion: () => "codex-cli sync" };
+    const cob = resolveCobConfig({});
+    const sync = (ollamaUrl: string) =>
+      syncCatalogControlPlane({
+        paths,
+        ollamaUrl,
+        cob,
+        spawnableOllamaSlugs: SPAWNABLE,
+        discovery,
+        inspect,
+        resolveRuntimePort: () => undefined,
+      });
+
+    const sidecar = () => JSON.parse(readFileSync(paths.catalogMeta, "utf8")) as {
+      schema_version: number;
+      ollama_discovery?: { state: string; tag_count?: number; diagnostic?: { code?: string } };
+    };
+    let meta: ReturnType<typeof sidecar>;
+    const catalogRow = () => {
+      const catalog = parseCatalogJson(readFileSync(paths.catalog, "utf8"));
+      const row = catalog.models.find((model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud");
+      assert.ok(row);
+      return row;
+    };
+
+    const live = await tagsServer({
+      models: [{ name: "deepseek-v4-flash:0731-cloud", capabilities: ["tools"] }],
+    });
+    try {
+      const first = await sync(live.url);
+      assert.equal(first.ollamaError, undefined);
+      assert.equal(first.catalog.models.some((m) => m.slug === "ollama/deepseek-v4-flash:0731-cloud"), true);
+      meta = sidecar();
+      assert.equal(meta.schema_version, 1);
+      assert.equal(meta.ollama_discovery?.state, "success");
+      assert.equal(meta.ollama_discovery?.tag_count, 1);
+      assert.equal(catalogRow().shell_type, "unified_exec");
+    } finally {
+      await live.close();
+    }
+
+    // Discovery degraded: the sidecar persists stable evidence, never raw text,
+    // and the rebuilt fallback row strips the stale unified_exec shell.
+    try {
+      await sync("http://127.0.0.1:1");
+      const raw = readFileSync(paths.catalogMeta, "utf8");
+      meta = sidecar();
+      assert.equal(meta.schema_version, 3);
+      assert.equal(meta.ollama_discovery?.state, "degraded");
+      assert.equal(meta.ollama_discovery?.diagnostic?.code, "tags_unreachable");
+      assert.doesNotMatch(raw, /ECONNREFUSED/);
+      assert.equal(catalogRow().shell_type, "disabled");
+    } finally {
+      // recovery: fresh tags record success evidence again
+      const recovered = await tagsServer({
+        models: [{ name: "deepseek-v4-flash:0731-cloud", capabilities: ["tools"] }],
+      });
+      try {
+        const third = await sync(recovered.url);
+        assert.equal(third.ollamaError, undefined);
+        meta = sidecar();
+        assert.equal(meta.schema_version, 1);
+        assert.equal(meta.ollama_discovery?.state, "success");
+        assert.equal(catalogRow().shell_type, "unified_exec");
+      } finally {
+        await recovered.close();
+      }
     }
   });
 });

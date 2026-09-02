@@ -1,785 +1,449 @@
-# Status — 2026-08-30
+# Status — 2026-09-02 (as of 16:30 +03)
 
-Maintainer live checkpoint for one lab machine (pids, tarball SHAs, overlay
-bytes). New installs follow [README.md](./README.md), not these process ids.
-Product contract: [README.md](./README.md). Live gold:
-[LIVE-TESTING.md](./LIVE-TESTING.md). Agents: [AGENTS.md](./AGENTS.md).
-Release cut: [RELEASE.md](./RELEASE.md). History: [CHANGELOG.md](./CHANGELOG.md).
+This file is the current maintainer checkpoint: what is live, what exists only
+in the workspace, what is blocked, and what may happen next. It is not a
+chronological test log.
 
-Priority: **stability and throughput** of the working Desktop+cob **V1** path.
-Native GPT parent → Ollama V1 child is the product. Native Multi-Agent V2
-mailbox (two in-flight `send_message`, cob queue, Ollama V2 catalog) is not
-productized; see [UPSTREAM-U1.md](./UPSTREAM-U1.md).
+Canonical documents:
 
-Development scope (2026-08-30): **cob Codex only**. cob Claude keeps its
-0.2.1 source and behavior (last live pid 78004 on `:18792`), but the
-`:18792` listener was **not running** at the 2026-08-30 read-only check;
-Claude feature work, hardening, canaries, and release-gate work stay frozen
-until explicitly reopened. Deferred Claude review findings are outside the
-active Codex gate; they still rule out a new whole-product
-production-readiness claim. No Claude listener replacement or source change
-is authorized by this scope decision.
+- Product contract: [README.md](./README.md)
+- Active implementation plan: [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md)
+- Live-gate definitions and evidence: [LIVE-TESTING.md](./docs/LIVE-TESTING.md)
+- Release procedure and artifact rules: [RELEASE.md](./docs/RELEASE.md)
+- Version history: [CHANGELOG.md](./CHANGELOG.md)
+- Gate 6 upstream proposal: [UPSTREAM-U1.md](./docs/UPSTREAM-U1.md)
+- Agent constraints: [AGENTS.md](./AGENTS.md)
 
-Live global CLI and the Codex `:18790` gateway are cob **0.2.2** (pid
-**24581**, installed 2026-08-29 14:21 local; `cob version` →
-`cob 0.2.2 (global)`). The install predates the source hardening at
-`e6a3449`, and its originating tarball SHA/tag were not recorded, so the
-installed bytes are burned — the next cut is **0.2.3**, never a repack of
-0.2.2. `apply_patch` and `native_plaintext_spawn` remain off. Ollama is
-**0.33.2**. Root `config.toml` is user/Desktop-owned; its SHA-256 was
-`1ecbc836392d9fa71acb5cc1fdcf9ab8…` at the 2026-08-30 read-only check
-(changed by the Desktop/user side after the 0.2.1 record — cob did not write
-it). At that check `cob status` reported health `ok` but the overall verdict
-`stale` because catalog provenance was stale: the Desktop producer binary
-identity changed again (Desktop update), so `cob sync` / `cob start` is
-owed before the next judged picker or catalog change. Historical
-G12/G14/G17 evidence still belongs to the recorded 0.1.x/DeepSeek runs; the
-0.2.2 install is not a G-gate retrace.
+Those documents define the product, procedures, and history; this file is the
+authority for the current live/workspace snapshot.
 
-**This Desktop hop is proven** (26.810.52044 → **26.818.22352**, bundled
-`codex-cli` 0.148.0-alpha.9 → **alpha.21**, 2026-08-20 evening). Picker still
-lists 0731, native parent and V1 child still hit cob. A later update can still
-drop overlay or hide `ollama/...` (19694-class); then `cob status` must say
-why. Reboot recovery stays `cob start` — no launchd. Do not patch ChatGPT.app
-or steal native slugs to “survive” an update.
+## Current snapshot
 
-## Surfaces
+This is the sole current live/workspace snapshot authority. The facts below
+are from the latest **real-environment** probe at 2026-09-02 16:30 +03 after
+the authorized instrumented G26-A/G26-B canary. A sandboxed
+loopback probe can falsely report the gateway as unreachable; live health
+claims require a real-environment `cob status` probe.
 
-| Surface | Version / note |
+| Surface | Current state as of 2026-09-02 16:30 +03 |
 | --- | --- |
-| cob gateway | global **CLI/gateway 0.2.2**, pid **24581**, `127.0.0.1:18790` (installed 2026-08-29 14:21 local, pre-hardening 0.2.2 bytes; supersedes the 2026-08-29 0.2.1 pid 77805 cut). |
-| Packed live | The running install's originating tarball SHA/tag were **not recorded**; the installed 0.2.2 bytes are burned and must not be repacked. Last fully recorded pack: **0.2.1** tarball SHA-256 `efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69` (85 files, 79 production JS) from commit `7899077` / tag `v0.2.1` — historical, no longer the listener's provenance. |
-| Prior live | 2026-08-29 **0.2.1** pid 77805 and 2026-08-28 source-artifact **0.2.0** (SHA `48e05519…`, pid 61263) are superseded and must not be repacked; historical **0.1.14** `0395b5df…` pid 54105 is no longer a listener. |
-| Source | `master` cob **0.2.2** at commit `e6a3449`: reserved `functions` namespace compatibility plus the WP hardening series (state publish transactions, Ollama SSE terminal gates, config I/O boundaries) and the GitHub Actions CI workflow. The live `:18790` gateway runs the earlier 0.2.2 install; source evidence is not live evidence. Active development is Codex-only. Pack excludes tests, harnesses (`*.harness.js`), `gate6h`, and `eval-*`. |
-| Codex CLI | **0.149.0** — `codex --profile cob` loads `~/.codex/cob.config.toml` |
-| ChatGPT Desktop | bundled `codex-cli` **0.150.0-alpha.12.2** is the last recorded catalog producer, but `cob status` on 2026-08-30 flagged producer identity changed (Desktop update); provenance is stale until `cob sync` / `cob start`. Earlier gold hops remain historical evidence. |
-| Ollama | **0.33.2** client and daemon (2026-08-30 observation); tags include `deepseek-v4-flash:0731-cloud`, `deepseek-v4-flash:cloud`, `glm-5.3-flash:cloud`, and `kimi-k3:cloud`. |
-| Spawn slot | `cob.toml` keeps DeepSeek 0731 first, GLM-5.3 Flash second, and Kimi K3 third. The five-row V1 window exposes DeepSeek + GLM; Kimi remains catalogued/routable but is the expected V1 overflow. Live `apply_patch = false`, `native_plaintext_spawn = false`. |
-| cob Claude | **stopped** at the 2026-08-30 read-only check (no listener on `:18792`). Last live state: cob **0.2.1** pid **78004** with per-install Desktop-token auth (C-01), nonce-bound health, authenticated shutdown, and single-lock restore; picker pinned Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6); overlay `7429a97e…`. Restarting or changing this surface needs explicit user authorization. `~/.claude/settings.json` untouched. |
+| Product scope | **cob Codex only.** Direct Ollama main and native GPT parent → Ollama V1 child are the validated product paths. |
+| Live Codex gateway | Global cob **0.2.4-preview.1**, pid **5952**, `127.0.0.1:18790`; real-environment `cob status --json`: health `ok`, overlay `ok`, catalog provenance `fresh`. |
+| Live artifact | Exact 0.2.4-preview.1 preview tarball, 91 entries, 184,558 bytes, SHA-256 `4345c4a5c0de2467aa96f475e3ee7777d63ae77eaca65718220543f727265ed5`. Installed globally on 2026-09-02 11:36 +03; the installed `dist/cli.js` matched the tarball member. Do not repack these bytes. |
+| Prior live artifact | Burned 0.2.4-preview.0 preview tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. All 0.2.4-preview.0 G26 evidence remains attributed to these bytes; history only. |
+| Rollback artifact | Burned 0.2.3 tarball, SHA-256 `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`; history/rollback only. |
+| Source checkout | Product code on `master`; release metadata is **0.3.0**. The commit containing this checkpoint is the exact source authority; no 0.3.0 artifact is installed yet. |
+| Codex | PATH Codex **0.149.0**; current Desktop catalog producer **0.152.1**. |
+| Ollama | Client/daemon **0.33.2**, re-probed at this checkpoint. Spawn preference remains DeepSeek 0731, GLM-5.3 Flash, then Kimi K3 overflow. |
+| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned. Current real-environment SHA-256: `1a4ae0ea10a93cbb5ee7c5478f565227aabee08fba86159b1f89dcfa49f4b16c`; byte-identical before and after the instrumented G26 runs. Its change from the P3-era `f0e87913…` predates this canary and is not attributed to cob. |
+| Live catalog | Current SHA-256 `2c603684a3866fbec396f09779e11e185b81fdca104aa27d2cec1b62c5bdcdfb`; meta SHA-256 `b6b2e680bd3e77576122aba53b202564d1d5c5a2a3e86fec5fd2e2523312d7d0`. Provenance is fresh from bundled Codex **0.152.1**, validators 2, Ollama discovery success. The new identities supersede the P3-era catalog snapshot after the Desktop producer update; the burned artifact identity is unchanged. |
+| Diagnostic sidecar | Explicitly enabled for the canary at `~/.codex/cob-diagnostics.jsonl`, mode 0600. It remains bounded, content-free, and diagnostic-only; current live behavior otherwise remains unchanged. |
+| Live experiments | `apply_patch = false`; `native_plaintext_spawn = false`. Ollama rows remain Multi-Agent V1. |
+| Isolated dev port | No `:18791` listener after the authorized 2026-09-02 P1 cleanup. The temporary workspace gateway was stopped and its diagnostic JSONL removed. |
+| cob Claude | No `:18792` listener at the 2026-09-01 23:36 read-only check. Claude feature work and live restart remain frozen pending explicit authorization. |
 
-Live 0.1.9 contains the exact native-only `POST /v1/alpha/search`
-compatibility route required by Codex `web.run` when `openai_base_url` points
-at cob. G18 passed after the packed global install; `supports_search_tool`
-remains the separate deferred-tool mechanism.
+## Active scope and invariants
 
-Desktop starts `codex app-server` **without** `--profile cob`. Named-profile
-activation is CLI/TUI only. There is no `CODEX_CONFIG_PROFILE` (see
-[openai/codex#38104](https://github.com/openai/codex/issues/38104)).
+- `cob start` remains the Codex gateway. Do not steal that default for Claude.
+- The shipped orchestration path is V1. Do not advertise Ollama V2, add a cob
+  message queue, or implement `agentControl/*` inside cob.
+- Do not use `nativeAlias` to impersonate native GPT model ids.
+- cob does not write the user-owned root `~/.codex/config.toml`.
+- Keep 0.2.3 only as the exact rollback/history artifact; do not repack it or
+  any historical 0.1.11–0.2.2 artifact.
+- The installed preview is a validation cut, not a production promotion. Any
+  next version cut, live replacement, or touch to Claude requires separate
+  authorization.
+- Gate 5 `apply_patch` and native-plaintext collaboration remain isolated,
+  default-off experiments; neither is enabled on live 0.2.4-preview.1.
+- Source tests and workspace fixtures are evidence, not live gold.
 
-`cob` still does not write `~/.codex/config.toml`. `cob restore` does not
-revert a user-owned Desktop trial.
+## G26 canary history
 
-Current live root-config baseline is SHA-256
-`1ecbc836392d9fa71acb5cc1fdcf9ab8…` (read-only observation 2026-08-30;
-Desktop/user-owned — it moved after the recorded 0.2.1-era value
-`e8694a47…` by a change outside cob; the installed 0.2.2 gateway replace
-also did not write it).
-`cob.toml` keeps explicit `apply_patch = false` and
-`[experimental] native_plaintext_spawn = false`.
+The current 0.2.4-preview.1 real-environment run completed both supported
+surfaces: direct Ollama main and one native parent → one Ollama V1 child →
+same-child follow-up. Across 64 Ollama requests it recorded 64 successful
+proper-header SSE decodes, one provider attempt per request, zero gateway
+retries, zero invalid JSON, zero duplicate fingerprints, and one exact hosted
+tool drop per request. Functional routing, continuity, the A1 filter, and
+observable transport reliability are **PASS**. Authoritative controller
+retry/reconnect, no-progress, and agent-local retry counters remain
+unavailable, so strict G26 is **AUDIT INCOMPLETE / NOT GOLD**. The historical
+0.2.4-preview.0 G26-B remains immutable failed reliability evidence. Complete
+content-free receipts and interpretation boundaries are in the G26 section of
+[LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 
-## Locked disposition (Gate 6)
+## Workspace checkpoint
 
-- Gate 6 is **open/blocked**.
-- Blocker: `controller_sequencing_observed` (`transport_unmeasured`).
-- Historical isolated verdict name `codex_0_149_native_scheduler_blocked` is
-  stronger than the traces support and is no longer emitted.
-- cob transport queue: **not measured**.
-- cob product change: **must not** add a queue or a fourth Sol prompt canary.
-- Isolated Gate 7–10 canaries ran 2026-08-25 on `:18791` (see Proven). They
-  are not product gold. Gate 6-H remains pack-excluded (`npm run gate6h`).
-  Desktop hop stays separately authorized.
-- Workspace eval fixtures (pack-excluded) cover G2–G5 approval preflight,
-  G8-R completed-checkpoint replay, and G9 compact protocol scoring. They
-  are not isolated 0731 gold and do not authorize a live canary.
+The runtime portion of the current uncommitted batch was frozen and installed
+globally as 0.2.4-preview.1 for the bounded canary above. The later receipt
+evaluator and documentation checkpoint remain workspace-only until the next
+versioned cut. The canary result does not silently promote either artifact or
+the whole product.
 
-Next work is cob-external **Upstream U1**: find or design a Codex
-collaboration runtime driver that, without a model choosing tools, runs
-`spawn → send1 → send2 → wait → followup1 → wait → followup2 → wait`.
-PATH Codex 0.149.0 and current `openai/codex` `ClientRequest` still have no
-`agentControl/*` method. The portable V2 proposal is [UPSTREAM-U1.md](./UPSTREAM-U1.md).
-Do not implement that driver in cob. When Codex ships it, re-measure Gate 6
-on isolated `:18791`.
+### Post-preview workspace source: bounded diagnostic sidecar
 
-A 2026-08-24 read of PATH Codex 0.149.0 `codex app-server generate-json-schema
---experimental` listed 150 `ClientRequest` methods. None dispatches
-`collaboration.spawn_agent`, `send_message`, or `followup_task`. Nearby
-surfaces are the wrong layer: `codex queue` / `thread/queue/*` / `turn/steer`
-are user turns on a thread; `collabToolCall` items only observe
-model-initiated collab tools; `thread/inject_items` injects history, it does
-not live-dispatch a child. `codex exec-server` is a remote environment, not
-a collaboration driver.
+After the 0.2.4-preview.0 cut, workspace source added a new opt-in bounded
+diagnostic sidecar. Default human logging is unchanged. The sidecar provides
+private, bounded request start/end correlation only; it adds no model,
+provider, retry, or queue behavior. It is installed in burned
+0.2.4-preview.1 and supplied the new G26-A/G26-B receipt; it cannot
+retroactively alter the historical preview.0 result.
 
-## Proven
+Main outcomes:
 
-- **Read-only live check of the 0.2.2 install (2026-08-30):** no files
-  written, no listener restarted. Observed: global `cob 0.2.2 (global)`
-  serving Codex `:18790` (pid 24581, installed 2026-08-29 14:21 local from
-  pre-hardening 0.2.2 bytes; originating tarball SHA/tag unrecorded — the
-  installed bytes are burned, next cut is 0.2.3). No listener on `:18792`
-  (cob Claude last recorded live as 0.2.1 pid 78004). `cob status`:
-  gateway health `ok`, desktop overlay `ok`, overall verdict `stale` with
-  `catalog provenance: stale` — the Desktop producer binary identity
-  changed (Desktop update), so `cob sync` / `cob start` is owed before any
-  judged picker or catalog change. Root `config.toml` SHA-256 read as
-  `1ecbc836…` (moved from the recorded `e8694a47…` by a change outside
-  cob); Ollama `0.33.2`; PATH Codex `0.149.0`. Source `master` at `e6a3449`
-  (hardening + CI) is packed nowhere. This observation is not a G-gate
-  retrace and authorizes no install.
+- Ollama compaction uses transcript V2 with one untrusted user transcript,
+  deterministic settings, and no cloud JSON schema.
+- Cloud structured output is rejected before dispatch using the verified
+  catalog route, including `remote_host` evidence.
+- Request, decoded tool-search JSON, and upstream response traversal are
+  bounded at depth 128 / 100,000 nodes. Overflow fails closed.
+- SSE overflow emits exactly one `response.failed` terminal and one `[DONE]`,
+  including held-completed and held-non-success paths.
+- `cob status --json`, catalog provenance, and `cob state verify [--json]`
+  now share fail-closed, content-free evidence rules.
+- The Codex contract sentinel and G8/G9 scorers reject incomplete, duplicate,
+  caller-asserted, cyclic, or cross-run evidence.
+- G24, memory, WebSocket-fallback, and outage harnesses use bounded,
+  content-free receipts and cleanup proofs.
+- The eval run guard is concurrency-safe and fails closed if a child remains
+  alive after its bounded shutdown wait, even when it owns no port.
 
-- **Live cob 0.2.1 dual-surface replace (2026-08-29):** tarball
-  `codex-ollama-bridge-0.2.1.tgz` SHA-256
-  `efca05567eced642907707cc8c1f164e58361b03875aeeb9c5e2be1fab364d69`
-  (85 files, 79 production JS, no test/harness/gate6h/eval leakage) packed
-  from commit `7899077` / tag `v0.2.1`; extract smoke `cob 0.2.1` + help
-  passed before install. Merge gate on the packed tree: `npx tsc --noEmit`
-  PASS, `npm test` 505 tests / 502 pass / 0 fail / 3 skip, build PASS,
-  `git diff --check` PASS. Authorized replace moved both surfaces:
-  Codex `:18790` pid 61263 → **77805** and cob Claude `:18792` old-format
-  pid 36956 → **78004**. Invariants: root `config.toml` SHA
-  `e8694a47…` and catalog SHA `4aad5cca…` unchanged; `cob status` `ok`,
-  overlay `ok`, provenance `fresh` (Desktop `0.150.0-alpha.12.2` + PATH
-  `0.149.0`). Live C-01 matrix against `:18792`: missing auth, stale
-  64-hex token, and legacy `"cob"` each returned local **401** with the
-  fail-closed auth message; `/health` publishes `pid` + `nonce_ok` and
-  never the runtime nonce; `~/.claude-cob/desktop-gateway-token` is 0600
-  64-hex and the 3P profile key matches it (no static `"cob"`). Upgrade
-  edge recorded honestly: the old 0.2.0 runtime file has no nonce, so the
-  new state machine classified it present-but-invalid and refused
-  automated stop/restore (fail-closed as designed); the maintainer
-  manually verified the old listener's argv/home identity, stopped it,
-  and `cob claude restore` → `cob claude start --desktop` completed the
-  fresh-state transition. Claude Desktop requires one full quit/reopen to
-  send the new token; the first real Desktop spawn after that reopen is
-  still the user's visual confirmation, not a recorded claim. This
-  install is not G11/G12 gold and re-proves no G-gate.
+### Post-review correction batch (2026-09-01)
 
-- **Live cob Claude 0.1.16 (2026-08-27):** picker pin cut. `inferenceModels`
-  Opus 5 / Sonnet 5 / Haiku 4.5 / Fable 5 (no 4.6); `autoModeEnabled=true`.
-  1P model-Auto is not a 3P row. Tarball SHA-256
-  `3826127c96aef5d0016a9876018ec1a4287f9ce61ef3afc905300cdc88fa2560`
-  (57 files). `cob version` is `cob 0.1.16 (global)`. cob Claude pid
-  **81560** on `127.0.0.1:18792` health `ok`. Desktop overlay applied
-  sha256 `7429a97e…` gateway `:18792`; user agents overlay `n=1`. Live
-  profile: `autoModeEnabled=true`, `inferenceModels` Opus 5 / Sonnet 5 /
-  Haiku 4.5 / Fable 5 (no 4.6). Codex `:18790` pid **54105** unchanged
-  (still 0.1.14 JS). Isolated `:18793` restored then stopped. Merge gate:
-  449 tests, 443 passed, 6 skips. Live Claude Desktop spawn (0.1.15
-  trace, still gold): parent Opus `cob_route=0`; child
-  `client_model=deepseek-v4-flash:0731-cloud backend=ollama cob_route=1`.
-  Unmarked Haiku stayed Anthropic. Not ChatGPT Desktop gold and not a
-  Codex gateway replace. `~/.claude/settings.json` SHA-256 stayed
-  `450ff8a8582ae540068cd9c5f4f5fd5e2f69bc1c6f50bd3b9c42ef7e58419f2a`.
+Narrow eval-only corrections on top of the checkpoint above; no product
+runtime change and no live action.
 
-- **Live cob Claude 0.1.15 (2026-08-27):** tarball SHA-256
-  `6ca55eee23a53fd753d5a3565c4867b9be3979b223443230b75c417aeaa1be6d`
-  (57 files). `cob version` was `cob 0.1.15 (global)`. cob Claude pid
-  **75390** then **78078** on `127.0.0.1:18792`. Desktop overlay
-  sha256 `7429a97e…` gateway `:18792`; user agents overlay `n=1`.
-  Codex `:18790` pid **54105** unchanged. Not ChatGPT Desktop gold.
+- G24 live-SHA scorer plumbing: both G24 scorer snapshots now receive all
+  three live hashes (`configSha256`, `catalogSha256`, `catalogMetaSha256`).
+  The receipt snapshot type now requires `catalogMetaSha256: string`, so a
+  typed snapshot that omits metadata fails compilation. Runtime checks remain
+  fail-closed: missing/invalid hashes are still
+  `live_sha_snapshot_incomplete`, changed hashes are still
+  `post_run_sha_mutation`. The root cause of every otherwise-passing G24 run
+  degrading to `live_sha_snapshot_incomplete` was this plumbing gap, not a
+  live-observation defect. At the time of this correction batch, real G24 had
+  not yet run; the later fresh transcript-V2 result is the authoritative
+  disposition in the gate table below.
+- G24 retained success evidence no longer carries the raw model slug: the
+  receipt `run` object now keeps `modelSha8 = idSha8(model)` (8 lowercase hex
+  chars), matching the existing child/request identity-hash convention. The G9
+  scorer's raw `EvalRunIdentity.model` equality is unchanged.
+- WP14 outage canary and WP15 state-scan now use the repository's direct-entry
+  guard (`import.meta.url === pathToFileURL(process.argv[1]).href`), so
+  importing the compiled modules no longer starts the canary or benchmark.
+  Direct CLI execution is unchanged.
+- WS-fallback and memory eval CLIs fail closed on malformed arguments:
+  `parseWsArgs` supports only `--out <path>` and `--turns <csv>`, rejecting
+  unknown arguments, dangling flags, and explicitly empty `--turns`; the
+  `[1, 10, 20]` default applies only when `--turns` is absent. `parseLaneArgs`
+  now rejects a dangling `--out` (and a dangling `--lane`) instead of silently
+  ignoring them.
+- Contract evaluator child output is bounded: schema generation ignores both
+  stdout and stderr (no pipe that a noisy binary can fill and block on), and
+  `readVersion()` caps version output at 4096 bytes and settles with the
+  stable empty/unknown representation on overflow. The receipt field is
+  renamed `binary_path_sha256` → `binary_sha256` (it hashes binary file
+  bytes, not the path string); no compatibility alias was added and no
+  external consumer exists.
+- Run-lock documentation now states the actual invariant: guard-owned temp
+  homes are removed, while the exclusive run-ID lock remains as a tombstone so
+  duplicate run IDs stay rejected.
+- Benchmark behavior is unchanged. Read-only re-verification of the canonical
+  benchmark receipts at their exact recorded paths succeeds and the recorded
+  hashes are intact: memory `7a545f6c864b5c95e1c0075ee0acfd56978590194f48d753c3795e2220ff56f7`,
+  WebSocket `874fe4285e4b41c2a9146dfb15ea25911e56942bf2eec5f024c5cbb6a7ea09e1`.
+  Nothing was regenerated, moved, or overwritten.
 
-- **Isolated cob Claude CLI spawn (workspace, 2026-08-27):** Claude Code
-  2.1.220, `ANTHROPIC_BASE_URL=http://127.0.0.1:18793`, project-local
-  `.claude/agents/cob-deepseek-0731.md` (not `~/.claude/agents`). Parent
-  `claude-opus-5` hit cob `backend=anthropic cob_route=0`. Child
-  `claude-haiku-4-5-20251001` (Agent placeholder) hit cob-route
-  `backend=ollama upstream=deepseek-v4-flash:0731-cloud cob_route=1`. Parent
-  printed `PARENT_OK` and nonce `COB_CLAUDE_G1_20260827`. Live Codex `:18790`
-  pid **54105** unchanged. `CLAUDE_CONFIG_DIR=~/.claude-cob-dev/code` failed
-  first (`Not logged in`). Follow-up on `:18793` pid **69495**: cob-route
-  `count_tokens` is local (`200 input_tokens=21`, Ollama has no that path);
-  `<!-- cob-route: claude-opus-5 -->` stays Anthropic
-  (`cob_route_ignored=native_id`). This is not Desktop spawn gold.
+Second post-review batch (2026-09-01), same-day follow-up review findings:
 
-- **Live 0.1.14 scoped install (2026-08-25):** tarball SHA-256
-  `0395b5df04bd30e4cc825c17c1f6de6392a3a2fe17d82becb87a6a1426ad83ec`
-  (45 files; no tests/`gate6h`/`eval-*`) replaced global 0.1.13 after `cob
-  stop` closed pid 35004. `cob version` is `cob 0.1.14 (global)`. Gateway pid
-  **54105** on `127.0.0.1:18790` reports health `ok`; overlay `ok`; provenance
-  `fresh` (Desktop `0.149.0-alpha.4.3` + PATH 0.149.0). Root `config.toml`
-  SHA-256 stayed
-  `989c27f93c99574a1c4607766f0c5d731767735fe2991db27ce0a7f1a8d4c41b`.
-  Catalog SHA-256 stayed
-  `9748309ea0e42c278d9e07dc71eef9c7b1c4a2fb3cb4cff84c026aa1624a3de9`.
-  Live Ollama rows remain `multi_agent_version=v1` with no
-  `apply_patch_tool_type`. Merge gate: 409 tests, 403 passed, 6 skips.
-  Installation is not G6–G10 or a G12/G14/G17 retrace.
+- WP14 fixture server listen failures are now Promise-owned: `TagsServer`
+  binds the async `error` event to the listen promise (EPERM/EMFILE rejects
+  instead of an unhandled crash that could skip the cleanup proof), removes
+  the error listener on a successful listen, and leaves the server stopped and
+  safely stoppable after a failure. `stop()` stays idempotent. A fake-server
+  seam mirrors the run-guard `serverFactory` pattern.
+- WP15 lookup lane no longer converts every exception into a measured `miss`:
+  only `ConversationStateError` with `state_checkpoint_missing` is a
+  deterministic miss; conflicts, incompatible checkpoints, and I/O or
+  programming errors now fail the benchmark path. The empty-population miss is
+  preserved, and the conflict fixture is locked by a focused test. Production
+  `ConversationStateStore` behavior is unchanged.
+- WS-fallback and memory eval CLIs reject `--out` values that are empty or
+  option-shaped (`--out ""`, `--out --turns`, `--out --lane`), so a receipt
+  can no longer be silently skipped or written to a flag-named file. Valid
+  paths still pass.
+- `readVersion()` now enforces the exact 4096-byte bound with a byte counter:
+  a chunk that would exceed the limit is not appended, the stdout stream is
+  destroyed, the child is terminated, and the stable `""` result settles
+  once; no post-settlement appends occur. Single settlement across
+  timeout/error/close is preserved, and the noisy-binary test locks the real
+  bound with an infinite version writer plus a wall-clock assertion.
 
-- **Isolated Gate 10 nested V2 FAIL (workspace only, 2026-08-25):** parent
-  `rollout-2026-08-25T00-17-38-01a035a2-d51d-7390-a45d-a240695284f2.jsonl`
-  spawned one 0731 child `/root/gate10_nested`
-  (`rollout-2026-08-25T00-17-49-01a035a2-ffab-7931-971d-469260aa7f97.jsonl`,
-  depth 1). Isolated catalog 0731 stayed `multi_agent_version=v1`. The child
-  issued two `tool_search` queries for collaboration spawn tools and received
-  only the GitHub namespace; it never called `spawn_agent`. No depth-2
-  session and no `LEAF_NONCE`. Sol ended `GATE10_FAIL`. This is fail-closed
-  nested V2, not an Ollama V2 catalog change. After the 7–10 ladder, dev
-  `:18791` was stopped, isolated `cob.toml` restored to `4e9992e6…`, and live
-  pid 35004 / catalog `9748309e…` / root config `b6ec9273…` were unchanged.
-- **Isolated Gate 9 compact+continuation FAIL (workspace only, 2026-08-25):**
-  isolated catalog 0731 window was lowered to 8192 for this drill only (live
-  catalog stayed 256k / `9748309e…`). Parent
-  `rollout-2026-08-25T00-15-31-01a035a0-e4a4-7d73-80d0-2595439e6547.jsonl`
-  spawned `/root/gate9_compact`
-  (`rollout-2026-08-25T00-15-40-01a035a1-0824-7870-9542-de871fad1ebc.jsonl`).
-  The child `cat` of an 81k filler produced a truncated 20250-token exec
-  output; Codex then sent `compaction_trigger`. cob routed it to the Ollama
-  summarizer (`tools_n=0`); the first three attempts failed closed
-  `compaction_summary_incomplete`. A later attempt logged `ollama compact ok`
-  (`latency_ms=6444`, `summary_bytes=2056`, `cob1.` replacement history) and
-  the follow-up `SECOND_NONCE` reached the same child, but the parent still
-  observed compact errors on both waits and ended `GATE9_FAIL`. Spawn nonce
-  `COB_GATE9_SPAWN_20260825_A1` never appeared in a child final. This is not
-  live G8 and not `replay_ratio << 1` gold. The 8k window was reverted before
-  Gate 10.
-- **Isolated Gate 8 mid-flight cob restart PASS (workspace only,
-  2026-08-25):** the valid canary is parent
-  `rollout-2026-08-25T00-10-47-01a0359c-8d7f-7fa1-841d-2ad0a8f226e2.jsonl`
-  and child
-  `rollout-2026-08-25T00-10-55-01a0359c-abd1-7ce0-a19f-38ca69bc52d0.jsonl`
-  (`/root/gate8b_replay`). After `wait_agent` and `/bin/sleep 55` were
-  in-flight, workspace `cob stop --dev` / `cob start --dev` moved `:18791`
-  from pid 24384 to 24903. The same child session then continued: sleep
-  finished, `/bin/pwd` ran, nonce `COB_GATE8_20260825_R2` returned, and
-  `wait_agent` completed `timed_out: false`. An earlier attempt restarted
-  cob before `wait_agent` (not this proof); a first harness invoked
-  `cli.js` with Python and never restarted cob. This is not L6
-  `previous_response_id` expand after a completed turn, and not compact
-  replay.
-- **Isolated Gate 7 worktree FAIL `worktree_not_distinct` (workspace only,
-  2026-08-25):** parent
-  `rollout-2026-08-25T00-04-08-01a03596-7565-7623-9b57-7219b1d1dc91.jsonl`
-  spawned one 0731 child
-  `rollout-2026-08-25T00-04-19-01a03596-a3a8-7b01-a583-5f568a98f92c.jsonl`
-  (`/root/gate7_worktree`). The child issued two native `apply_patch` calls
-  plus matching outputs; fixtures `.cob-gate7-a.txt` / `.cob-gate7-b.txt`
-  received the AFTER bytes at stable inodes. cwd stayed the parent repo
-  (parent git checkout); Codex 0.149
-  did not give the child a distinct git worktree. Sol ended `GATE7_FAIL
-  worktree_not_distinct`. Two child-native patches in the **shared** repo
-  are a weaker observation, not Gate 7 gold. Fixtures were deleted after
-  the ladder.
-- **Isolated Gate 6-H harness FAIL / scheduler blocked (workspace only,
-  2026-08-24):** `src/gate6h.ts` plus pack-excluded `src/gate6h.harness.ts`
-  (`npm run gate6h`) reduce parent/child rollout JSONL and kill an attempt on
-  `controller_sequencing_fail`. Three same-fixture isolated `:18791` attempts
-  all failed that check: attempts 1–2 called `wait_agent` after the first
-  `send_message` (parents
-  `rollout-2026-08-24T23-44-02-01a03584-0e97-73a3-b30f-49c2ad7fc553.jsonl` and
-  `rollout-2026-08-24T23-44-24-01a03584-65d6-7631-a423-957e87c43c8e.jsonl`);
-  attempt 3 called `list_agents` before send2
-  (`rollout-2026-08-24T23-44-46-01a03584-bdc1-73a0-817d-122badd02aae.jsonl`).
-  Verdict `codex_0_149_native_scheduler_blocked`. This separates Sol
-  controller sequencing from cob transport: cob was not asked to queue, and
-  the second in-flight send was never issued. Wait for upstream portable V2
-  or a direct collaboration driver. Do not add a cob queue. At that cut
-  Gate 7–10 were not opened. Dev `:18791` was stopped; isolated `cob.toml` restored to
-  `4e9992e6…`. Live pid 35004 and catalog `9748309e…` were unchanged. Root
-  config during this harness was SHA-256
-  `b6ec9273e7dc6bf6eed82d34b45a33a3b7bf4269cbd607bde1761f9ec67c752b` (a later
-  Desktop/user rewrite after the Gate 1-5 `b976c134…` baseline); cob did not
-  write it, and the harness pre/post hashes matched.
-- **Isolated Gate 6 queued messaging FAIL (workspace only, 2026-08-24):**
-  two isolated `:18791` canaries on PATH Codex 0.149.0 / `gpt-5.6-sol` /
-  `ollama/deepseek-v4-flash:0731-cloud` did not prove two `send_message`
-  deliveries while the same child stayed active, then two idle
-  `followup_task` turns on that id. First parent
-  `rollout-2026-08-24T22-05-06-01a03529-7d86-7d63-89f2-ae793696c96e.jsonl`
-  spawned `/root/gate6_queue` once and did call two `send_message` plus two
-  `followup_task` tools, but it inserted `wait_agent` after the first send;
-  the child
-  `rollout-2026-08-24T22-05-18-01a03529-abb7-7d41-9985-b0ff370d29ba.jsonl`
-  emitted `FINAL_ANSWER` after only `SEND1`, and `SEND2` landed as `MESSAGE`
-  at the same millisecond as `FOLLOW1` `NEW_TASK`. A stricter retry parent
-  `rollout-2026-08-24T22-08-35-01a0352c-abd5-72f3-9a13-5bee891adf81.jsonl`
-  called `wait_agent` after the first send instead of the second
-  `send_message`; child
-  `rollout-2026-08-24T22-08-47-01a0352c-da60-7552-8165-60bb888287a4.jsonl`
-  completed after `SEND1` only. Sol ended `GATE6_FAIL` both times. Same
-  child id, no second spawn, no nonce/alias leak in `cob-gateway.log`. This
-  is not a cob drop of a second in-flight send: the second send was either
-  issued after the child had already completed or never issued. Gate 2/3
-  one-shot send/follow-up still stand. Dev `:18791` was stopped; isolated
-  `cob.toml` restored to SHA-256 `4e9992e6…`; live pid 35004, root config
-  `b976c134…`, and catalog `9748309e…` were unchanged. Gate 7–10 were not
-  started.
-- **Isolated Gate 5 child-native `apply_patch` PASS (workspace only,
-  2026-08-24):** after an earlier negative control exposed a shell/temp-binary
-  bypass, the separately authorized default-off `[catalog] apply_patch = true`
-  lane advertised `apply_patch_tool_type=freeform` only on the configured 0731
-  spawn row. cob translated the declared Codex custom tool to the fixed Ollama
-  function alias and restored the custom call/output identity. Sol's real 0731
-  child session `rollout-2026-08-24T19-02-15-01a03482-1557-7823-9e46-42952a784afa.jsonl`
-  contains exactly one completed `custom_tool_call(name="apply_patch")` and
-  its matching `custom_tool_call_output`; its only two `exec_command` calls
-  were the exact read-only `sed` checks. The fixture inode stayed constant and
-  its nonce/Unicode content changed from the expected BEFORE bytes to the
-  expected AFTER SHA-256 `a020cf6b…`. The Sol root session
-  `rollout-2026-08-24T19-02-06-01a03481-f125-7bb0-990f-a52f371c577e.jsonl`
-  spawned once, waited once, verified once, and returned `GATE5_PASS`.
-  The clean gateway log slice contained zero nonce, patch body, alias,
-  heredoc, guard-error, or upstream-error matches. Dev `:18791` was stopped,
-  the fixture was deleted, and the dev policy was restored byte-for-byte
-  (`4e9992e6…`); live pid 35004, root config `b976c134…`, and catalog
-  `9748309e…` were unchanged. This proves one child-native edit, not worktree,
-  restart/replay, nested V2, or Desktop behavior.
-- **Isolated native V2 Gate 4 interrupt PASS (workspace only, 2026-08-24):**
-  no new shim or alias was needed; exact-fingerprint request preparation kept
-  canonical `collaboration.interrupt_agent` and `list_agents` in the native
-  namespace. Sol spawned one 0731 child with
-  `COB_GATE4_INTERRUPT_ACTIVE_20260824_F19C`, delayed five seconds, and
-  interrupted that same `/root/gate4_interrupt` identity exactly once. The
-  interrupt returned `previous_status: running`; the one roster check returned
-  `agent_status: interrupted`; Sol ended `GATE4_PASS`. The child session shows
-  `/bin/sleep 60` beginning before the interrupt and returning `aborted by
-  user`; `/bin/pwd` and `UNEXPECTED_CHILD_COMPLETION` never occurred. A
-  host-process check found no matching orphan sleep. Dev `:18791` was stopped
-  afterward; no catalog, live gateway, root overlay, package, or commit changed.
-  This proves one active-child interrupt, not repeated/racing interrupts or
-  restart/replay recovery.
-- **Isolated native-plaintext V2 Gate 3 PASS (workspace only, 2026-08-24):**
-  the exact Gate 1 fingerprint additionally exposed only
-  `collaboration.followup_task` as a third non-reserved plaintext alias. Sol
-  spawned one real 0731 child, waited for its first task to complete, then
-  called `followup_task` exactly once on the same `/root/gate3_child` identity.
-  The completed child resumed with
-  `COB_GATE3_FOLLOWUP_SECOND_20260824_D82F`, preserved
-  `Uyandır — İğüş 😀`, and ran a second `/bin/pwd`; both completed turns
-  returned the repository path and Sol ended `GATE3_PASS`. The child session
-  contains two plaintext `agent_message` inputs and the gateway trace grows to
-  `agent_message:2`; no second spawn or active-child `send_message` occurred.
-  Post-review hardening rejects a drifted `send_message` target schema and
-  bare JSON mislabeled as SSE or malformed streaming `data:` before an alias or
-  upstream snippet can leak. Final `npm test`
-  reported 361 tests, 358 passed, 3 intentional skips, and 0 failures. The dev
-  listener was stopped; live 0.1.13 pid 35004 stayed healthy and untouched,
-  and root `config.toml` remained SHA-256
-  `b976c13447c729fef9d984d9e64825debfe0729c46db0a89b52471626bd2654a`.
-  This proves one completed-child follow-up, not repeated/queued follow-ups or
-  the remaining lifecycle matrix.
-- **Isolated native-plaintext V2 Gate 2 PASS (workspace only, 2026-08-24):**
-  the same default-off policy and exact Gate 1 fingerprint additionally
-  exposed only `collaboration.send_message` as a second non-reserved
-  plaintext alias; `followup_task` and the other collaboration leaves stayed
-  canonical/encrypted. Sol spawned exactly one real 0731 child and sent
-  exactly one second message to that returned child id. The child opened an
-  eight-second `/bin/sleep` tool window from its initial task, then received
-  `COB_GATE2_SECOND_20260824_B73E` plus the exact Unicode line, ran
-  `/bin/pwd`, returned both first/second marker sets and the repository path,
-  and Sol ended `GATE2_PASS`. Structural traces show the same child history
-  growing from `agent_message:1` to `agent_message:2`, then completing both
-  tool-output turns without an Ollama guard/upstream rejection. `npm test`
-  reported 359 tests, 356 passed, 3 intentional skips, and 0 failures. The
-  dev listener was stopped afterward. Live `:18790` remained global 0.1.13
-  pid 35004; root `config.toml` stayed at pre/post-trial SHA-256
-  `b976c13447c729fef9d984d9e64825debfe0729c46db0a89b52471626bd2654a`.
-  This proves one active-child second message, not idle/completed-child
-  follow-up or the remaining lifecycle matrix.
-- **Isolated native-plaintext V2 Gate 1 PASS (workspace only, 2026-08-24):**
-  PATH Codex 0.149.0 ran a real `gpt-5.6-sol` root through
-  `~/.codex-cob-dev` / `:18791`. The captured full `collaboration` namespace
-  fingerprint was
-  `5c58ad23b9b5d932368394cea56b157451a33226c0b6018971bebd146fc9b6f3`.
-  With the default-off experiment enabled for that exact fingerprint, cob
-  exposed only `spawn_agent` as a non-reserved plaintext alias, restored the
-  native V2 identity plus `encrypted_function_args: []`, and projected the
-  resulting plaintext `agent_message` to Ollama-safe `user` / `input_text`.
-  Sol spawned one real `ollama/deepseek-v4-flash:0731-cloud` Codex child. The
-  child received multiline nonce `COB_GATE1_20260824_E7B4A91C` plus Unicode
-  fidelity text, executed the `/bin/pwd` harness tool, returned the exact
-  markers/path, and Sol ended `GATE1_PASS`. The child also completed its
-  tool-output continuation; no `agent_message` or non-empty
-  `encrypted_content` reached Ollama. `npm test` reported 358 tests, 355
-  passed, 3 intentional skips, and 0 failures. The dev listener was stopped
-  afterward. Live `:18790` stayed global 0.1.13 pid 35004; root
-  `config.toml` stayed at the pre/post-trial SHA-256
-  `b976c13447c729fef9d984d9e64825debfe0729c46db0a89b52471626bd2654a`.
-  This proves only the narrow spawn boundary. Ollama catalog rows remain V1;
-  long-lived `send_message` / idle `followup_task`, interrupt, restart,
-  replay/compact, worktree, nested V2, and Desktop activation are not claimed.
-- **Live 0.1.13 install-only (2026-08-24):** exact tarball SHA-256
-  `81a99bad0f645bffcb0bb2551dae3a86dc5cb4dd8869d8a713fe210823fd1c72`
-  (43 files, 37 production JS) replaced global 0.1.12 after `cob stop`
-  closed pid 21099. `cob version` is `cob 0.1.13 (global)`. Gateway pid
-  **35004** on `127.0.0.1:18790` reports health `ok`; Desktop overlay is `ok`;
-  provenance is fresh (Desktop `0.149.0-alpha.4.1` + PATH 0.149.0); `:18791`
-  stayed down. At install time root `config.toml` SHA-256 remained
-  `70b109578a83de533fa40e433efb5a4a08892cd675e62a18adbda8f2cf22e776`.
-  Catalog SHA-256 remained
-  `9748309ea0e42c278d9e07dc71eef9c7b1c4a2fb3cb4cff84c026aa1624a3de9`.
-  Installation alone was not G12/G14/G17 evidence. Before those later tests,
-  Desktop/user activity changed the root file to current baseline
-  `d24f79f474efab36f1f9d4120d276f6e064875120a50de17db5fef1dcf24fc2e`;
-  no cob live-home operation made that change, and those closeout gates
-  preserved it. Later Desktop/user activity established the Gate 1-5 baseline
-  `b976c13447c729fef9d984d9e64825debfe0729c46db0a89b52471626bd2654a`;
-  every isolated research gate preserved that newer value.
-- **0.1.12 source/catalog/Desktop recovery (2026-08-24 ~04:05 +03):** source
-  checkpoint `e932eb19c551fbda96dc83fe7fe34840afff2371`; production JS matched
-  tarball `684db47f…` byte-for-byte. Homebrew Codex moved 0.147.0→0.149.0.
-  Global `cob sync` wrote 11 rows (3 Ollama) from Desktop producer
-  `0.149.0-alpha.4.1` and validators Desktop plus PATH 0.149.0. Catalog SHA is
-  `9748309ea0e42c278d9e07dc71eef9c7b1c4a2fb3cb4cff84c026aa1624a3de9`;
-  provenance is fresh without native-row repair. After a full Desktop
-  quit/reopen the user confirmed native + `ollama/...` picker visibility.
-  Host-network `cob status` is `ok`; pid 21099 health and overlay are `ok`.
-  Root config SHA baseline is now
-  `70b109578a83de533fa40e433efb5a4a08892cd675e62a18adbda8f2cf22e776`;
-  this rewrite was Desktop/user-owned, not cob.
-- **Post-release artifact audit (2026-08-24):** exact tarballs 0.1.9 through
-  0.1.12 are present locally and match the recorded hashes; the claim that
-  later tarballs were absent was false. The source risk found by this audit is
-  resolved by checkpoint `e932eb1` above. A sandboxed localhost probe can
-  report the live listener unreachable; only the subsequent host-network
-  `cob status` is operational evidence, and it reports health `ok`.
+Final workspace gates:
 
-- **G11 live PASS (0.1.12, 2026-08-24):** the fresh sidecar names Desktop
-  `0.149.0-alpha.4.1` as producer and Desktop plus PATH 0.149.0 as validators;
-  the fully reopened picker lists native and `ollama/...` rows. A real luna
-  request logged `target=native`; a real 0731 request logged `target=ollama`,
-  `tools_n=11`, and Ollama wire `declared_n=10`. In an isolated sidecar copy,
-  changing only one validator `mtime_ms` moved baseline `cob: ok` to
-  `cob: stale`, exit 1. A marker binary proved status did not spawn Codex.
-  Live catalog SHA `9748309e…` and root config SHA `70b10957…` stayed unchanged.
-- **G12 live PASS (0.1.12 default-on + 0.1.13 rollback, 2026-08-24):** live 0.1.12
-  completed a real deferred GitHub MCP leaf and one V1 0731 child across
-  continued parent turns. The discovery turn grew `tools_n` 11→25,
-  `promoted_n=14`, `alias_added=14`, `alias_sha=8904ffcc`, with zero removed,
-  replaced, or missing used aliases; later turns kept the same catalog hash.
-  An isolated explicit-false replay correctly advertised false on all three
-  Ollama rows but exposed 0.1.12's WP8 mismatch: Ollama 0.32.15 qualified the
-  declared namespace leaf as `namespace.function`, while cob guarded the bare
-  leaf, producing `ollama_undeclared_tool_call`. Candidate 0.1.13 now snapshots
-  the dot-qualified wire name and restores Codex name/namespace separately.
-  The corrected real rollback completed GitHub MCP plus a V1 child and returned
-  `G12_FALSE_OK`; `promoted_n=0`, `alias_sha=-`, and
-  `used_alias_missing=0`. The same rollback was then retraced through exact
-  global 0.1.13 on isolated `:18791`: one read-only GitHub MCP leaf and one V1
-  0731 child completed with `G12_FALSE_OK`; every parent/child wire reported
-  `promoted_n=0`, zero alias mutations, and no guard/upstream error. The final
-  43-file tarball SHA-256 is `81a99bad…`; its 37
-  production JS files match the built workspace byte-for-byte and it contains
-  no test/harness JS. Root `d24f79…` and live catalog `9748309e…` remained
-  unchanged; `:18791` was stopped afterward.
-- **G14 live PASS (global 0.1.13, 2026-08-24):** the prior controlled header,
-  idle, backpressure, and disconnect lanes remain green. A finite 20-check
-  0731 cloud reasoning stream completed in 10.731s with headers/first event at
-  961/962ms, max inter-event gap 270ms, one `response.completed`, one client
-  `[DONE]`, and usage 582 input / 2981 output. Its continuation completed in
-  710ms (600/22 tokens). A separate client abort received a first chunk, left
-  the gateway healthy, and kept state-file count 21→21. Earlier 59.2s
-  output-limited traffic also terminated as `response.incomplete`, not a false
-  success or hung gateway.
-- **G17 same-corpus PASS (isolated global 0.1.13, 2026-08-24):** all executed
-  variants used corpus SHA-256 `554c6ece4cdd13fba93e28be323fdc4ba89f23fe51b97ba90060ab41426361a9`
-  (134 items, 51,671-byte compact request), produced all seven required
-  handoff sections, and retained both constraint/pending-work continuations.
-  Baseline high was 3297ms, 830 summary bytes, 13,896/561 compact tokens.
-  `low` regressed to 4703ms and 13,817/1131, so it is rejected. `none` passed
-  at 1488ms, 780 bytes, and 13,817/225 and is the only Stage-3 opt-in candidate;
-  0.1.13 defaults do not change. Cloud-max advertisement passed both Desktop
-  0.149-alpha and PATH 0.149 parsers with active 256,000 and max 1,048,576,
-  but remains off by default. The current native skeletons omit
-  `auto_compact_token_limit`, so candidate D was correctly not emitted and is
-  not claimed as a run.
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm test` | PASS — **791 total, 787 pass, 4 skip, 0 fail** (rerun against the 0.3.0 source cut on 2026-09-02; no live mutation) |
+| `npm run build` | PASS |
+| `node dist/cli.js version` | PASS — `cob 0.3.0 (workspace)` |
+| `git diff --check` | PASS |
+| `npm pack --dry-run --json` | PASS — 91 production entries; no test, harness, `gate6h`, `eval-*`, or receipt. Dry-run only; no 0.3.0 tarball or release yet. |
 
-- **Live 0.1.12 install + two-turn Ollama smoke (2026-08-24):** exact tarball
-  SHA-256 `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`
-  (43 files, 37 production JS) replaced global cob after the 0.1.11 listener
-  was already down. `cob version` is `cob 0.1.12 (global)`. Gateway pid
-  **21099** on `127.0.0.1:18790` reports health `ok`; Desktop overlay is `ok`;
-  `:18791` stayed down. Root `config.toml` SHA-256 remained
-  `6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
-  Before the later PATH alignment, `cob status` was fail-closed `unknown`
-  (PATH 0.147 vs Desktop 0.149 near `supports_parallel_tool_calls`); the
-  last-good catalog was retained and not repaired. The current status is the
-  fresh/`ok` recovery recorded above. Live smoke through `:18790` to
-  `ollama/deepseek-v4-flash:0731-cloud`: streamed first turn HTTP 200 with
-  `response.completed` and exactly one client `[DONE]`, no
-  `upstream_stream_error`; JSON continuation HTTP 200 with no
-  `cannot unmarshal string`; checkpoints 6→8; Ollama access-log
-  `POST "/v1/responses"` 295→297. This is not G11–G17 closeout and not a
-  Desktop reopen.
-- **Packed 0.1.12 real-Ollama compatibility gate (2026-08-24):** exact
-  43-file tarball SHA-256
-  `684db47f34cdafd246699639d1996c79b91a5fd8b048833b7aaa9d15f507dbb6`;
-  `npx tsc --noEmit` passed and `npm test` reported 340 tests, 337 passed,
-  3 intentional skips, 0 failures. The extracted packed runtime ran on an
-  isolated random loopback port and private state directory against real
-  Ollama 0.32.15 / `deepseek-v4-flash:0731-cloud`. The upstream closed the
-  valid SSE after `response.completed` with no `[DONE]`; cob produced no
-  `upstream_stream_error`, published one checkpoint before emitting exactly
-  one client `[DONE]`, promoted archived string shorthand to a typed user item,
-  and completed the real `previous_response_id` follow-up with HTTP 200. The
-  Ollama access-log counter increased by 2 and the checkpoint count by 1→2.
-  Live `:18790` stayed cob 0.1.11 pid 7869, `:18791` stayed down, and root
-  config SHA remained
-  `6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
+### G26 Track A Phase P1 isolated smoke (2026-09-02)
 
-- **Live 0.1.11 install-only cut (2026-08-24):** exact tarball SHA-256
-  `71b4e3f1963182d73097e5bac0e3ac67cd536e9f7ad5f4301dbca510fdc458db`
-  (43 files) replaced global cob after the previous 0.1.9 listener was already
-  down. `cob version` was `cob 0.1.11 (global)`. Gateway pid **7869** on
-  `127.0.0.1:18790` reported health `ok`; Desktop overlay was `ok`; `:18791`
-  stayed down. Root `config.toml` SHA-256 remained
-  `6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
-  `cob status` was fail-closed `unknown` (PATH 0.147 vs Desktop
-  0.149 near `supports_parallel_tool_calls`); last-good catalog was retained.
-  This is not G11–G17, not a Desktop reopen, and not a new G19 live claim.
-- **Packed WP8/G19 (2026-08-24):** cob **0.1.11** passed
-  `npx tsc --noEmit`; `npm test` reported 337 tests, 334 passed, 3 intentional
-  skips, and 0 failures. The inspected 43-file tarball SHA-256 is
-  `71b4e3f1963182d73097e5bac0e3ac67cd536e9f7ad5f4301dbca510fdc458db`.
-  G19 passed 21 protocol-conformance lanes, 3 packed live-route lanes, and 1
-  real Codex task-effectiveness lane: declared direct/search/V1/MCP aliases
-  continued, every undeclared or malformed lane failed closed without state,
-  success `[DONE]` followed durable publication, and logs disclosed no tool
-  name/schema/arguments/content/auth. The dev evidence manifest SHA-256 is
-  `50f5e240fed1dfaac68a02cddbea6ffd84370d842df5345e0ca8bc57b7b78d7a`;
-  port 18791 was stopped afterward. Root `config.toml` stayed
-  `6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`.
-  Candidate **0.1.10** was rejected when G19 found clear tool names in standard
-  request/wire diagnostics; it was never installed. 0.1.11 retains aggregate
-  byte/count/SHA metrics but exposes only sorted tool-definition byte sizes.
-- **CLI overlay:** `codex exec --profile cob` against real `$CODEX_HOME` hits
-  `http://127.0.0.1:18790/v1` (`gpt-5.6-sol` logged `target=native`).
-- **Standalone hosted search (G18, 2026-08-23 22:44–22:50 release window):** global cob
-  **0.1.9** pid **86967** served a narrow native `web__run` docs search and
-  opened the usable official OpenAI web-search page. The live log recorded
-  only content-free `POST /v1/alpha/search ... target=native-search` metrics;
-  no query, result body, authorization, or account ID. `/alpha/search`,
-  `/v1/alpha/search/`, and `/v1/alpha/search/child` each returned 404 with a
-  fake local credential and did not increment the native-search counter.
-  Search never routed to Ollama. Root `config.toml` SHA-256 remained
-  `6ae7ff46867ae81073af18106b49a82f3d19aafc642e80eb263764dd03a9b418`
-  across stop/install/start, G18, and the live smoke set. This proves G18,
-  not G12 or G11–G17 generally.
-- **Desktop picker:** after a **user-owned** copy of cob keys into root
-  `config.toml` (`model_provider = "openai"`, `openai_base_url`,
-  `model_catalog_json`), Desktop listed `ollama/deepseek-v4-flash:0731-cloud`.
-  [openai/codex#19694](https://github.com/openai/codex/issues/19694) did **not**
-  hide that slug on 26.810.52044 or on **26.818.22352**. OpenCodex
-  `nativeAlias` (stealing a bare `gpt-5.6-*` id) is **not** the picker fix
-  here and must not become cob default.
-- **Desktop update hop (2026-08-20 evening):** ChatGPT **26.818.22352** /
-  bundled `codex-cli 0.148.0-alpha.21` on live cob **0.1.6**. `cob: ok`,
-  overlay still `openai_base_url` + `model_catalog_json`, `[agents]`
-  `default_subagent_model` / `default_subagent_reasoning_effort` still
-  present, `multi_agent_v2 = false`. Desktop rewrote `config.toml` (SHA
-  changed; persisted `model = ollama/deepseek-v4-flash:0731-cloud` and
-  `model_reasoning_effort = "high"`). User: main chat, picker, and subagent
-  create still work. Wire: luna parent `target=native`; 0731 child
-  `target=ollama` first turn `input_n=3` `effort=high` `tools_n=15`
-  `instr_sha=a46b8e00`. Gateway pid **39122** unchanged across the app
-  update.
-- **Desktop native GPT (luna high, 2026-08-20 afternoon):** after ChatGPT
-  credits returned, a `gpt-5.6-luna` `effort=high` thread hit cob
-  `target=native` (`tools_n=0`, `b_tools=0`). Native body is byte-forwarded
-  (cob does not force `store: false`). Desktop tools on that path show up as
-  `custom_tool_call` in `input_by`, not cob `tools[]`. Isolated CLI `exec` is
-  still a separate trace. Picker success alone remains insufficient; this
-  wire trace is the native gold that quota had blocked.
-- **Desktop GPT parent → 0731 V1 child (luna xhigh, 2026-08-20 evening):**
-  parent `gpt-5.6-luna` `effort=xhigh` `target=native` (stable zstd magic
-  `…80c37`, `tools_n=0`, `custom_tool_call` growing ~16→27 while decoded
-  ~220k→293k). Child `ollama/deepseek-v4-flash:0731-cloud` `target=ollama`,
-  `b_instr=17947` / `instr_sha=a46b8e00` / `tools_n=14` / `tools_sha=1d7fd3c9`
-  (Direct set, no 168-tool flatten). First child turn `input_n=3`; later
-  child turns used `function_call`. `[cob] ollama wire` published
-  (`promoted_n=0`); no `encrypted_content_unsupported`. Child `effort` was
-  `high` then `max` (spawn thinking, not cob mapping of parent `xhigh`).
-  Child `prev_id=0` (Desktop sent full child `input`, cob DAG unused).
-  Codex sidebar `threadId` is the luna parent; the child is an `agent_id`
-  observed via parent `send_input` / `wait_agent`, not `list_threads`.
-  Closing then reopening the same `agent_id` 404 is Codex lifecycle, not
-  cob. `agents/*.toml` was not required. Isolated L3 harness and G3 packet
-  dump of Ollama headers remain separate traces; cob still allowlists
-  Ollama headers in code.
-- **Desktop Ollama parent:** DeepSeek 0731 turns reach cob `target=ollama`.
-  Simple chat ≈ one Ollama `/v1/responses`; a web-search turn ≈ two model
-  calls plus a separate Codex `web search` meter. Codex Cloud usage attributes
-  the slug (e.g. 68→72 on 0731). That is Codex request counting under provider
-  `openai`, not proof of Ollama GPU/token billing.
-- **Desktop `/compact` on 0731 (G7):** 2026-08-19 17:26 local. Log
-  `compaction provider: ollama/deepseek-v4-flash:0731-cloud` (not native).
-  Checkpoint `provenance.source = "ollama-summary"`, `isCompactionReplacement`,
-  history length 1, Codex-facing `encrypted_content` starts `cob1.1.`. Archive
-  under `cob-state/compact-archive/`. Post-compact 0731 turns ran (same
-  thread, ~17:29). The stored handoff on that 2026-08-19 run started as
-  source-like text, not a conversation recap — summarizer quality, not
-  envelope transport. `@thread` / `read_thread` is a Codex tool gap on the
-  Ollama parent; cob compact does not load other Desktop threads.
-- **Desktop auto-compact follow-up shrink (G8):** 2026-08-23 20:29 local,
-  live cob **0.1.7** pid **49194**, 0731, checkpoint
-  `cob_cmp_6bebd81b54f9377ddb3de5bcac3647ff`. Last pre-compact turn
-  `b_input=1152853` / `input_n=360` / `wire_bytes=1167851`. Trigger inbound
-  `b_input=1121805` / `input_n=365` / 146 tool pairs. 0.1.6 same-thread
-  retries still logged `wire_bytes=1121005` `tools_n=0` then fail-closed.
-  0.1.7 flatten summarizer `wire_bytes=266304` `tools_n=0`. Codex-facing
-  archive is SSE with `cob1.` on `output_item.added` / `done` /
-  `response.completed`; no Fernet / `ocx1`. Checkpoint
-  `provenance.source=ollama-summary`, `isCompactionReplacement`, replacement
-  history length 1, `requestInput` ~1.12MB (archive only; not replayed).
-  First continuation inbound `b_input=32885` / `input_n=7` /
-  `input_by=compaction:1,message:developer:1,message:user:5`. Next Ollama
-  wire `wire_bytes=48206` `tools_n=17`, then later turns kept `compaction:1`
-  and grew new tool pairs. `replay_ratio` `32885/1121805 ≈ 0.029` (inbound
-  input) and `48206/1167851 ≈ 0.041` (first logged follow-up wire). Upstream
-  exact tokens were omitted (`ollama usage` line absent). User continued
-  after compact. Isolated L5 harness still unrun. G17 quality is not this
-  gate.
-- **Catalog without `--profile`:** once root `model_catalog_json` is set,
-  `codex debug models` lists the Ollama rows.
-- **0.1.3 live gateway (this machine):** global `cob 0.1.3` on `:18790`.
-  Desktop 0731 ping thread (2026-08-20 02:37, `ping` then `second half: ping`,
-  no web search): decoded **239324** bytes, **`b_tools=205709` (190 tools)**,
-  `b_input=32200`, `b_instr=209`, `effort=high`, `prev_id=0`. Desktop
-  `last_in` **60269** then **60300** (window 243200). `tools_sha=f9d25928`
-  unchanged on the second turn. User-owned plugin trim (sites + office
-  connectors off): new chat `ping 2` (02:43) **`last_in=52927`**,
-  `b_tools=178642` / **168 tools**, `tools_sha=fd100211`. Same-minute native
-  luna posts: `tools_n=0`, decoded ~42–43 KB. Ollama `usage` line did not
-  appear. No body dump. `desktop overlay: ok`.
-- **0731 `supports_search_tool` lever (2026-08-20 09:26):** hand-flipped only
-  the 0731 catalog row to `true` (no `cob start`/`sync`). New Desktop ping
-  thread: `tools_n=17`, `b_tools=15368`, `tools_sha=770cfd26`, Desktop
-  `last_in=11819` (~12k / 243200). Direct set included `tool_search` (3306 B)
-  and `exec_command`; `spawn_agent` was deferred.   Catalog restored to `false`
-  afterward. 0.1.4 shipped the opt-in catalog flag + wire shim. **0.1.5 live
-  gold (2026-08-20 11:05, new 0731 thread
-  `rollout-2026-08-20T11-05-52-…`):** ping `last_in=11316` (~11k);
-  Direct `ls` on `light-work-doc-viewer` `last_in=12332` (~13k); unaided
-  `spawn_agent` (`namespace=multi_agent_v1`) opened child Pasteur
-  (`11-08-12`, child `last_in` 10860→11535, ~12k), parent ended ~24k
-  (`last_in=24279`), no `echo ok` loop. Gateway `promoted_n=8` then 16
-  (`tools_n` 17→25→33, not 168); `multi_agent_v1__spawn_agent` on the
-  Ollama wire. GitHub: first issue-list turn used `gh` CLI; after an
-  explicit `_search_issues` / MCP prompt, `mcp__codex_apps__github/_search_issues`
-  ran (twice). Spawn + MCP **dispatch** are gold. Unprompted MCP-over-`gh`
-  preference is not.
+The authorized workspace build ran only on `~/.codex-cob-dev` / `:18791` with
+the opt-in diagnostic sidecar. One buffered JSON request and one streaming SSE
+request both completed with HTTP 200, one provider attempt, zero cob retries,
+and one exact hosted-tool drop. Their final diagnostic tuples were respectively
+`false/json/json/1` and `true/sse/sse_header/1` for outbound stream,
+content-type class, decoder, and hosted-drop count. The two start/end pairs
+matched; the mode-0600 sidecar contained no retained prompt/output/tool/model
+content. Cleanup stopped `:18791` and removed the sidecar. Live `:18790`
+remained global 0.2.4-preview.0, healthy on pid 98662; root config, catalog, and
+catalog-meta SHA values were byte-identical before and after. This is isolated
+workspace evidence, not preview or live G26 gold.
 
-Desktop may persist picker choice back into root `config.toml` (`model =`,
-`model_reasoning_effort`). That is ChatGPT rewriting user config, not cob.
+The 0.2.4-preview.0 global install and real-environment G26 canary occurred
+after the pre-preview checkpoint above and before the opt-in logging source
+change. No Claude mutation, commit, push, tag, or production promotion
+occurred. The exact preview, rollback, root-config, catalog, and catalog-meta
+hashes are recorded in the current snapshot above.
 
-## Not proven / blocked
+### G26 Track A Phase P2 immutable preview cut (2026-09-02)
 
-- **Native-plaintext V2 expansion / Upstream U1:** Gate 6 remains
-  open/blocked on `controller_sequencing_observed` (`transport_unmeasured`).
-  cob transport queue was not measured; do not add a cob queue or a fourth Sol canary.
-  Isolated Gate 7–10 canaries are recorded in Proven; they are not product
-  and do not reopen a cob queue. Next Gate 6 work is a Codex-side driver for
-  `spawn → send1 → send2 → wait → followup1 → wait → followup2 → wait`
-  without model scheduling. 0.149 experimental app-server `ClientRequest`
-  has no such method. The portable proposal is
-  [UPSTREAM-U1.md](./UPSTREAM-U1.md). Do not implement `agentControl/*` in cob.
-  Recovery-hop transcription remains consent-only and was not implemented.
-- **G13:** cloud low/high/max and the deterministic request/error boundary
-  passed; the Ollama daemon access log independently confirms the three real
-  `/v1/responses` calls. The local-model lane is unavailable because this
-  machine has cloud tags only.
-- **G15:** WP5A catalog cache showed identical output and a repeatable win;
-  WP5B metrics was ~9% slower and WP5C SSE was equal in the measured fixture.
-  No blanket G15 performance pass is claimed.
-- **G16:** isolated three-turn/compact continuation and value/provenance/
-  identity tamper matrix passed; each tamper failed closed without a new
-  checkpoint and valid restore continued. This is isolated evidence, not a
-  Desktop live claim.
-- **G17 default promotion:** the gate passed, but one synthetic corpus is not
-  authority to change the shipped default. `none` remains an explicit
-  experiment candidate; `low` is rejected, cloud max remains presentation-only
-  opt-in, and auto-limit remains capability-gated/omitted.
-- **Isolated L3 harness** and a header dump of the Ollama upstream request
-  (LIVE-TESTING G3) for this same GPT→0731 topology. Desktop cob logs already
-  show G1 + G2 + child tools and no encrypted Ollama reject. G7–G8 on the
-  **child** thread were not this run.
-- **G8 follow-up shrink** is recorded on live cob **0.1.7** (see Proven). The
-  earlier **2026-08-23 20:15** 0.1.6 auto-compact on 0731 is a named
-  extract failure (`tools_n=0`, `wire_bytes=1121005`, tool call, no
-  envelope). Isolated L5 harness still unrun. Native GPT compact stays
-  ChatGPT passthrough.
-- **Ollama parent → GPT child** — out of product; still unsupported.
+The user-authorized cut followed `docs/RELEASE.md`: version bumped to
+`0.2.4-preview.1` in `package.json`/`package-lock.json` (no tag, no commit),
+the `0.2.4-preview.1` CHANGELOG entry added, and the four workspace gates
+re-run before packing.
 
-## Desktop trial (this machine)
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm test` | PASS — 788 total, 784 pass, 4 skip, 0 fail |
+| `npm run build` | PASS |
+| `git diff --check` | PASS |
+| `npm run pack` | PASS — one 91-entry tarball, 184,558 bytes |
 
-User-owned, reversible, **not** a cob product path:
+Artifact: repo-root `codex-ollama-bridge-0.2.4-preview.1.tgz`, SHA-256
+`4345c4a5c0de2467aa96f475e3ee7777d63ae77eaca65718220543f727265ed5`. Tarball
+verification: 91 entries = 85 production `dist` files plus `package.json`,
+`README.md`, `CHANGELOG.md`, `docs/RELEASE.md`, `LICENSE`, `NOTICE`; zero
+test, harness, `gate6h`, or `eval-*` entries and no IDE files.
 
-- Overlay keys live in `~/.codex/config.toml` (before the first TOML table).
-- Backup: `~/.codex/config.toml.pre-cob-desktop-20260819`
-- Revert: copy the backup over `config.toml`, fully quit and reopen ChatGPT.
-- Gateway must stay up on the port in `openai_base_url`.
+Live isolation proof across the cut: global install stayed 0.2.4-preview.0
+(`cob version`, `cob status` health `ok`), `:18790` stayed pid 98662, and
+SHA-256 values were byte-identical before and after for root `config.toml`
+(`f0e87913…`), `cob-catalog.json` (`f2ba2980…`), `cob-catalog.meta.json`
+(`74de0180…`), and the burned 0.2.3 rollback tarball. No `cob
+stop/start/sync/restore`, no global install, no Claude mutation, and no
+commit, push, or tag occurred. This cut is not a live-gold claim; G26-A
+remains PENDING / UNPROVEN and Phase P3 is separately authorization-gated.
 
-## Durability
+### G26 Track A Phase P3 live gateway replacement (2026-09-02)
 
-**26.810.52044 → 26.818.22352 is done** on this machine (picker, native
-parent, 0731 V1 child, overlay keys kept). Pin/re-verify the **current**
-ChatGPT build after the next upgrade.
+The user-authorized replacement followed `docs/RELEASE.md` exactly. Preflight
+proved the exact tarball (name, package version, 91 entries, SHA-256
+`4345c4a5…`) and rollback tarball (`6152d1a5…`, package 0.2.3) matched their
+recorded identities, and that the `:18790` listener (pid 98662) was owned by
+global cob (`/opt/homebrew/bin/cob serve --port 18790`, correlated by global
+`cob status --json`).
 
-Still true:
+Sequence: global `cob stop` → `:18790` closed and pid 98662 exited →
+`npm install -g <exact preview.1 tarball path>` → `cob version` reported
+`0.2.4-preview.1 (global)` → global `cob start`.
 
-1. **ChatGPT / Codex fully quit and reopen** (without an update) — cob is
-   not the app; this hop already relaunched Desktop while cob pid **39122**
-   stayed. A later cold quit is optional confirmation, not a blocker.
-2. **The next `codex update` / Desktop auto-update** — new bundled
-   `app-server` must keep listing `ollama/...` from `model_catalog_json`. A
-   19694-style allowlist regression is a compatibility break, not a cob
-   spawn-window bug.
-3. **Desktop config rewrite** — this hop persisted `model` /
-   `model_reasoning_effort` and **did not** drop `openai_base_url` /
-   `model_catalog_json` or the user-owned `[agents]` spawn defaults. If a
-   later rewrite drops those keys, that is the durability bug (detect +
-   user-owned restore), not cob writing `config.toml` as a product default.
+| Check | Result |
+| --- | --- |
+| `:18790` listener | PASS — pid **2121** listening |
+| `cob status --json` | PASS — `kind ok`, `needs_action false` |
+| Install kind / version | PASS — `global` / `0.2.4-preview.1` |
+| Health / overlay | PASS — `ok` / `ok` |
+| Catalog provenance | PASS — `fresh`, producer desktop `0.151.0-alpha.7.2`, Ollama discovery success (4 tags) |
+| Root `config.toml` SHA | PASS — byte-identical `f0e87913…` |
+| `cob-catalog.json` SHA | Byte-identical `f2ba2980…` |
+| `cob-catalog.meta.json` SHA | Changed `74de0180…` → `2845aeee…`: start re-stamp (`generated_at`/`observed_at` 2026-09-02T08:36:06Z); identities and recorded catalog SHA unchanged |
+| Installed `dist/cli.js` | Byte-identical to the tarball member |
+| Rollback | Not needed; exact burned 0.2.3 tarball untouched |
 
-Reboot / a dead cob process is **not** an autostart product. Run `cob start`.
+The previous global 0.2.4-preview.0 gateway (pid 98662) was stopped by global
+`cob stop`; no process was signaled by hand. No root-config byte change, no
+Claude mutation, no Desktop canary, no commit, push, or tag occurred.
+At this P3 checkpoint, G26-A/G26-B (Phase P4) were **not** yet authorized and
+did not run; the later separately authorized Phase P4 result is recorded
+immediately below. Historical 0.2.4-preview.0 evidence remains attributed to
+the burned preview.0 bytes.
 
-`cob status` **detects** overlay rewrite and a stopped gateway: first line
-`cob: ok|ready|stale|unknown|broken|absent|unreadable`, exit 1 when this Codex
-home needs action. It read-only inspects root `model_provider`, `openai_base_url`, and
-`model_catalog_json` against the live gateway port and cob catalog. Missing
-or mismatched keys print `desktop overlay: broken` plus a user-owned restore
-hint. Gateway down with keys still pointing at cob prints
-`desktop overlay: ready` (`cob: ready`). Default `cob status` does not spawn
-Codex or probe Ollama.
+The workspace is still dirty and uncommitted. This document is a logical
+checkpoint, not a durable Git checkpoint.
 
-`cob restore` remaining overlay-only is still correct; durability is “the
-trial keeps working across app lifecycle,” not “cob owns root config.”
+### G26 Track A Phase P4 instrumented live canary (2026-09-02)
 
-## Catalog polish (live 0.1.2)
+After the user-authorized diagnostic restart, global 0.2.4-preview.1 remained
+the owner of `:18790`. The bounded mode-0600 sidecar captured the direct-main
+G26-A lane followed by the one-parent/one-child/same-child-follow-up G26-B
+lane. Account screenshot deltas exactly matched the content-free sidecar:
+45 Ollama requests in A and 19 in B.
 
-Picker **list** order is `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, then
-the spawnable Ollama slug (default `ollama/deepseek-v4-flash:0731-cloud`).
-`display_name` matches that slug. Other native and discovered Ollama rows stay
-in the catalog with `visibility=hide`. Thinking Ollama rows advertise `none` /
-`low` / `high` / `max` (default `high`); cob maps leftover Codex `medium` /
-`xhigh` to `high` on the Ollama wire. Advertised context is
-`min(tag context_length, 256000)` (Desktop effective window = that × 95% →
-243200 on 0731). `nativeAlias` remains out of product.
+| Check | G26-A | G26-B |
+| --- | ---: | ---: |
+| Ollama outcomes | 45/45 `200/200/completed` | 19/19 `200/200/completed` |
+| Provider attempts / gateway retry | 1 each / 0 | 1 each / 0 |
+| Decoder / hosted drop | 45× `true/sse/sse_header` / 45×1 | 19× `true/sse/sse_header` / 19×1 |
+| Invalid JSON / duplicate fingerprints | 0 / 0 | 0 / 0 |
+| Exact successful usage | 2,033,002 input; 68,837 output | 934,997 input; 77,725 output |
+| Continuity | direct initial + falsification continuation | 1 spawn, 1 child, 1 same-child follow-up, 0 fallback |
 
-Desktop context **bar** is `used / advertised`, not a cob transcript merge.
-Same ChatGPT Desktop 0.148.0-alpha.9 (pre-26.818), first short turn:
+Every start/end pair matched. Targeted privacy scans retained no workload
+terms, task label, raw model slug, or prompt/tool/output content. No GYMBLE
+repository file changed during either task window. The A main agent used
+temporary scratch storage outside the repository and exceeded its requested
+file budget by one; this is a task-policy deviation, not a gateway transport
+failure. The exact full matrix, timings, privacy boundary, and historical
+comparison live only in `docs/LIVE-TESTING.md`.
 
-| Path | `input_tokens` | Advertised window | Bar |
-| --- | --- | --- | --- |
-| Native `gpt-5.6-luna` / `sol` | ~17–20k (ChatGPT usage; often some cache) | 258400 | ~7% |
-| 0731 (2026-08-19, 1M catalog) | ~61557 | 996147 | ~6% |
-| 0731 (2026-08-20, 256k cap) | ~61612 | 243200 | ~26% |
+Disposition: **OBSERVABLE TRANSPORT PASS / FILTER CONFIRMED / FUNCTIONAL
+CONTINUITY PASS / AUDIT INCOMPLETE / NOT GOLD**. No A2 response sniff is
+opened because D5 was not observed. No further cob runtime fix is indicated
+by this canary. The new pack-excluded `src/eval-g26.ts` freezes the dynamic,
+content-free aggregation method without hard-coding this run or claiming
+controller-owned counters. It accepts the active and rotated sidecars under a
+single bounded input budget; replaying both official windows reproduced the
+checked-in receipt bytes exactly.
 
-The ~61k 0731 first-turn meter was already there on 1M; 0.1.2 only shrank the
-denominator. Gateway zstd bodies match the split (~17–19 KB native vs ~50 KB
-0731). cob `base_instructions` on 0731 is cob-owned
-(`OLLAMA_BASE_INSTRUCTIONS`, 290 characters). Do not treat the
-26% bar as previous-chat leakage.
+### Safe-lane benchmark measurements (2026-08-31)
 
-## Next live work
+Safe local fixture runs only: in-process gateway, fake upstream, dynamic
+loopback ports, temp homes. These are **workspace measurements, not G-gates,
+not canaries, not live gold** — and they authorize no runtime policy change.
 
-0. **0.1.14 scoped live cut is complete** — fail-closed JSON/encrypted-wire
-   plus live experimental lock. Product remains V1. Do not pack again unless
-   a new authorized cut. Do not repack 0.1.11–0.1.14.
-1. **Retain the proven defaults** — compact effort omitted (wire `high`),
-   active context 256k, cloud-max off, auto-limit omitted. `none` is an
-   isolated opt-in candidate; `low` is rejected. G12/G14/G17 stay 0.1.13
-   evidence. G13 local remains unavailable; G15 WP5A-only; G16 isolated-pass.
-2. **V2 mailbox stays cob-external** — Gate 6 is `transport_unmeasured`. Use
-   [UPSTREAM-U1.md](./UPSTREAM-U1.md); do not add a cob queue.
-3. **The next Desktop/Codex update** — re-verify picker + 0731 + spawn, or
-   `cob status` explains the break. Fully quit and reopen ChatGPT Desktop
-   after a catalog *byte* change; this 0.1.14 start refreshed provenance
-   without changing catalog bytes.
+Memory (`node dist/eval-gateway-memory.js --lane default`, Node v26.7.0,
+fixture SHA `7322494a9d733636…`, 30 iterations/lane, 0 rejected):
+
+| Lane | RSS delta | Amplification ratio | Loop p50/p95 | Output hash (16) |
+| --- | --- | --- | --- | --- |
+| 1 MiB, c1, plain | 592,134,144 B | 564.7x | 111/199 ms | `e5c008f7502d5aa6` |
+| 1 MiB, c3, stream+tool+cont | 455,720,960 B | 144.9x | 635/1307 ms | `afb47269446e01a5` |
+
+Receipt SHA-256: `7a545f6c864b5c95e1c0075ee0acfd56978590194f48d753c3795e2220ff56f7`.
+
+WebSocket fallback (`node dist/eval-ws-fallback.js`, 0 failed turns). After the
+determinism fix, fallback and direct HTTP produce **identical output hashes**
+for the same turn count — 1 turn `0b612c4401b10cf2`, 10 turns
+`55d48c3593de5f2d`, 20 turns `0a492dedfdfa4407`. The 426-handshake tax is
+small: handshake p50 0.28–3.2 ms, 336 B per attempt (6,720 B over 20 turns).
+
+Receipt SHA-256: `874fe4285e4b41c2a9146dfb15ea25911e56942bf2eec5f024c5cbb6a7ea09e1`.
+
+## Gate disposition
+
+Detailed commands, fixtures, compact metrics, and historical traces live in
+[LIVE-TESTING.md](./docs/LIVE-TESTING.md). Historical PASS entries below belong to
+the artifact and environment where they were measured; G26 is the current
+preview-canary record and is not a production promotion.
+
+| Gate | Disposition | Meaning |
+| --- | --- | --- |
+| Gate 1–3 | Isolated PASS | Exact fingerprinted native-plaintext spawn/send/followup schemas worked in isolation. Not an Ollama V2 product claim. |
+| Gate 4 | Isolated PASS | Canonical interrupt leaf worked; no restart/replay claim. |
+| Gate 5 | **NOT GOLD (fresh isolated)** | The latest clean opt-in run created a real Ollama V1 child, but that child emitted no custom call/output and made no filesystem edit. The 2026-08-24 PASS is historical evidence only. Live catalog remains disabled. |
+| Gate 6 | **BLOCKED** | `controller_sequencing_observed`, `transport_unmeasured`. Next work is external Upstream U1, not a cob queue. |
+| Gate 7 | **FAIL** | `worktree_not_distinct`. |
+| Gate 8-M | Isolated PASS | Same-child continuation survived a mid-flight dev gateway restart. |
+| Gate 8-R | Fixture only | Completed-checkpoint replay scorer exists; no live replay gold. |
+| Gate 9 / G24 | **NOT GOLD / INCONCLUSIVE** | The latest transcript-V2 run produced valid seven-section handoffs, then repeated the same tool-heavy post-compact turn and re-entered compaction until bounded termination. The terminal `codex_exec_failed` was not root cause; no two-continuation gold. |
+| Gate 10 | **FAIL** | The Ollama child had no nested collaboration spawn leaf. |
+| G26 | **TRANSPORT PASS / FILTER CONFIRMED / AUDIT INCOMPLETE / NOT GOLD** | 0.2.4-preview.1 direct-main and native-parent→V1-child lanes completed 64/64 proper SSE requests with zero invalid JSON, duplicate fingerprints, or cob retries. Required controller/no-progress/agent-local counters remain unavailable. See [LIVE-TESTING.md](./docs/LIVE-TESTING.md). |
+| G11 | PASS | Catalog provenance gate passed on its recorded artifact. |
+| G12 | PASS | Search default and rollback passed on the recorded 0.1.13 artifact. |
+| G13 | Partial | Cloud lanes and request boundary passed; no local-model lane was available. |
+| G14 | PASS | Timeout/backpressure gate passed on its recorded artifact. |
+| G15 | Partial | Catalog cache improvement measured; no blanket performance pass. |
+| G16 | Isolated PASS | Checkpoint identity/tamper matrix failed closed correctly. Not Desktop-live proof. |
+| G17 | Same-corpus PASS | Quality comparison passed; shipped defaults did not change. |
+| G18 / G19 | Historical PASS | Search compatibility and response integrity belong to their recorded artifacts, not a current preview retrace. |
+
+## Known blockers and unproven claims
+
+- **Current Gate 5 gold:** the latest clean isolated run proved catalog opt-in
+  and real-child creation, but no child-native custom call/output or edit. New
+  content-safe observations distinguish declaration/alias/model/restoration/
+  execution boundaries; they have not yet been exercised by another canary.
+- **Real G24 gold:** the fresh transcript-V2 run compacted successfully but
+  entered a repeated tool-heavy post-compact/recompact cycle and never reached
+  two same-child continuations. The pack-excluded harness now uses an 8192
+  window, correlated compact episodes, exact-token window-floor evidence, and
+  an owned stop before a second post-compact summarizer reaches upstream. When
+  exact floor evidence is absent, that stop is reported neutrally as
+  `g24_postcompact_retrigger_before_completion`; these corrections have not
+  yet been exercised by another canary.
+- **Gate 6 control plane:** current Codex exposes no public deterministic
+  `agentControl/*` driver. Follow [UPSTREAM-U1.md](./docs/UPSTREAM-U1.md); do not
+  build the scheduler or queue in cob.
+- **Worktree isolation:** Gate 7 remains failed.
+- **Nested Ollama orchestration:** Gate 10 remains failed and out of the V1
+  product claim.
+- **Whole-product readiness:** cannot be newly claimed while cob Claude is
+  frozen and its listener is stopped.
+- **Desktop durability:** the next Desktop/Codex update can still remove the
+  overlay or hide `ollama/...`; that requires revalidation.
+- **G13 local lane:** unavailable on this machine because the observed Ollama
+  roster is cloud-only.
+- **G26 strict audit:** observable transport and continuity now pass on
+  0.2.4-preview.1, but the upstream controller still does not expose
+  authoritative retry/reconnect, no-progress, or agent-local retry counters.
+  Repeating the same canary cannot manufacture those fields; keep them
+  unavailable and keep strict G26 NOT GOLD.
+- **Production promotion:** the scoped Codex runtime has no new serious defect
+  from the instrumented canary, but a versioned production cut, clean install,
+  source/tag publication, and whole-product claim remain separate decisions.
+  Unrelated gate dispositions and the frozen Claude surface are unchanged.
+- **Active implementation plan:** [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md)
+  G26 Track A workspace package (WP1 exact hosted-tool filter, WP2 outbound/
+  decoder diagnostics, WP3 documentation reconciliation, WP4 verification) is
+  implemented and verified in the workspace. Phase P1 isolated smoke passed,
+  the Phase P2 immutable 0.2.4-preview.1 artifact is cut and recorded in
+  `docs/RELEASE.md`, and Phase P3 installed it globally on `:18790` with all
+  post-install checks passing. Phase P4 G26-A/G26-B canaries completed with
+  observable transport and continuity PASS, A2 closed, and the strict audit
+  incomplete because controller-owned counters were unavailable.
+
+## Next decisions
+
+1. **Checkpoint review:** the content-free, rotation-aware G26 evaluator,
+   canonical documentation, frozen receipts, and complete workspace gates are
+   finished. Review this checkpoint before changing release metadata. Do not
+   rewrite either burned preview artifact.
+2. **0.3.0 source cut:** package and changelog metadata are prepared. Run the
+   clean gates and create the exact source commit before packing. No unrelated
+   Claude or deferred-gate work enters the cut.
+3. **0.3.0 artifact and clean live install:** pack once from the clean source
+   checkpoint, record exact contents/size/SHA, replace global `:18790` using
+   `docs/RELEASE.md`, and verify health, overlay, catalog provenance, config
+   preservation, and a bounded post-install smoke before tagging.
+4. **Publish:** only after the exact artifact passes live verification, tag
+   the matching source commit `v0.3.0`, push commit and tag, and create the
+   GitHub release with the exact verified tarball. Never `npm publish` while
+   the package remains private.
+5. **Gate 5/G24 rerun:** each real isolated 0731 canary requires separate
+   explicit authorization. Results remain isolated evidence unless separately
+   promoted by the live-gate standard.
+6. **Gate 6:** wait for or contribute a Codex-side deterministic driver, then
+   remeasure on isolated `:18791` only.
+7. **Next Desktop update:** revalidate picker visibility, the 0731 route, and
+   native-parent → Ollama-V1-child spawn.
+
+## Ownership and recovery
+
+- Reboot or a dead gateway is not autostart failure: run `cob start`.
+- Desktop reads the root config, not the named CLI profile. The root overlay
+  remains user-owned; `cob restore` does not revert it.
+- Fully quit and reopen ChatGPT Desktop after a catalog byte change. Do not
+  claim hot reload.
+- `cob status` is read-only: it checks runtime, overlay, and catalog
+  provenance without spawning Codex or probing Ollama.
+- Restarting or changing the Claude `:18792` surface requires explicit user
+  authorization.
+- Historical evidence should be updated in `docs/LIVE-TESTING.md` or
+  `CHANGELOG.md`, not appended here as another long chronology.

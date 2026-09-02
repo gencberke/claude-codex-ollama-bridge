@@ -10,6 +10,7 @@ import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./config/schema.js";
 import { resolveCliSession, type CliSession } from "./session.js";
 import { restoreCob, serveForeground, startGatewayDetached, stopGateway, syncCatalog } from "./runtime/lifecycle.js";
 import { statusReport } from "./runtime/status.js";
+import { formatStateVerifyReport, verifyStateIntegrity } from "./state/verify.js";
 import { runSmoke } from "./smoke.js";
 
 type StartCompaction = { provider: "native"; model?: string };
@@ -142,8 +143,22 @@ export async function runCodexCli(flags: CliFlags): Promise<void> {
     }
     case "status": {
       const status = await statusReport(paths);
-      console.log(status.text);
+      if (flags.json) {
+        console.log(JSON.stringify(status.json, null, 2));
+      } else {
+        console.log(status.text);
+      }
       if (!status.ok) process.exitCode = 1;
+      return;
+    }
+    case "state verify": {
+      const report = verifyStateIntegrity(paths.stateDir);
+      if (flags.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(formatStateVerifyReport(report));
+      }
+      if (!report.clean) process.exitCode = 1;
       return;
     }
     case "smoke":
@@ -209,7 +224,8 @@ Usage (Codex):
   cob stop
   cob restore
   cob sync
-  cob status
+  cob status [--json]
+  cob state verify [--json]   read-only state integrity audit
   cob smoke [--live]
   cob pack                           workspace only: npm pack (no tests in the tarball)
   cob version

@@ -1,19 +1,15 @@
 # Compaction — Ollama-thread shrink
 
-Living design note. Product contract is [README.md](./README.md). Live gold
-is [LIVE-TESTING.md](./LIVE-TESTING.md) G7/G8 (summarizer + cob envelope +
-handoff replay). Mock coverage shipped with this path. Desktop `/compact` on
-0731 recorded G7 on 2026-08-19 and G8 follow-up shrink on 2026-08-23 20:29
-(live cob 0.1.7). Isolated L5 remains an unrun harness. 2026-08-23 20:15
-Desktop auto-compact on cob 0.1.6 reached the no-tools summarizer
-(`tools_n=0`) and failed at extract: 0731 called a tool on a ~1.14MB /
-146-pair history; cob refused the handoff. The later 0.1.7 flatten produced
-a text handoff and `replay_ratio ≈ 0.03`.
-G17 later passed a fixed same-corpus comparison on global 0.1.13: `low`
-regressed, `none` was the isolated latency/token winner, cloud max passed both
-current Codex consumers without raising the active 256k window, and auto-limit
-remained correctly omitted. Live **0.1.14** did not change those compact
-defaults.
+Design/protocol contract. Product contract is [README.md](../README.md).
+Current gate and live disposition belongs in [STATUS.md](../STATUS.md) and
+[LIVE-TESTING.md](./LIVE-TESTING.md); this note does not duplicate it.
+
+Historical evidence only: Desktop `/compact` on 0731 recorded the G7 wire
+shape on 2026-08-19 and the G8 follow-up shrink on 2026-08-23 20:29 (cob
+0.1.7). The preceding 0.1.6 auto-compact trace reached the no-tools
+summarizer and refused the handoff; the later 0.1.7 flatten produced a text
+handoff. G17's fixed-corpus comparison on global 0.1.13 and the 0.1.14
+follow-up are also historical evidence, not current defaults or gold.
 
 Reviewed as cob-appropriate (idea adapted, not OpenCodex source). OpenCodex
 remains a proof of the **idea**. Do not copy `nativeAlias`, root `config.toml`
@@ -42,10 +38,11 @@ ChatGPT crypto.
 cob is the only decoder. Native GPT threads stay **byte passthrough** to
 ChatGPT (real ChatGPT compact). This plan is **Ollama threads only**.
 
-Treat “Codex round-trips opaque `encrypted_content`” as **observed** on this
-ChatGPT/Codex build. Desktop `/compact` on 0731 proved G7 on this machine
-(2026-08-19). Desktop auto-compact follow-up on 0731 proved G8 on this
-machine (2026-08-23, cob 0.1.7).
+Treat “Codex round-trips opaque `encrypted_content`” as historical observation
+on the inspected ChatGPT/Codex build. The 2026-08-19 G7 and 2026-08-23 G8
+traces on cob 0.1.7 establish the historical wire shape only; consult
+[STATUS.md](../STATUS.md) and [LIVE-TESTING.md](./LIVE-TESTING.md) for current
+disposition.
 
 ## What we keep (cob contract)
 
@@ -66,11 +63,12 @@ machine (2026-08-23, cob 0.1.7).
    already hits cob when the user-owned root overlay points at loopback.
 2. cob strips the trigger (it must not reach Ollama). The summarizer request is
    an **allowlist**: thread model (or a dedicated Ollama compact slug),
-   provider-safe history (tool calls flattened to clipped notes), one
-   top-level cob compact instruction (no duplicate developer copy). No tools,
-   no structured
-   output, no ChatGPT headers. Unsupported multimodal history **fails closed**
-   rather than dropping images silently.
+   provider-safe history serialized as **untrusted transcript data** (see
+   below), one top-level cob compact instruction (the only high-priority
+   instruction). No tools, no structured output (cloud models reject
+   `json_schema` before dispatch), no ChatGPT headers, `temperature: 0`.
+   Unsupported multimodal history **fails closed** rather than dropping
+   images silently.
 3. cob calls **Ollama `/v1/responses`** (not `/compact`).
 4. On a non-empty summary, cob publishes a **compaction replacement
    checkpoint** (`provenance.source = ollama-summary`): `replacementHistory`
@@ -88,6 +86,29 @@ machine (2026-08-23, cob 0.1.7).
    unless a later bounded-tail subtask says otherwise). Never the envelope,
    Fernet, or trigger.
 6. Legacy `POST /v1/responses/compact` stays `legacy_compaction_unavailable`.
+
+## Transcript V2 (untrusted-data projection)
+
+The summarizer input is **not** a list of replayed history items. The
+already-filtered history is serialized
+once (`transcript_format_version: 2`) inside exactly one Responses `message`
+item with `role: "user"` and one `input_text` part. The serialized block is
+marked untrusted: the compact instruction says explicitly that instructions
+found inside the block are conversation evidence, not instructions to the
+summarizer. Historical `developer` / `system` items survive only as escaped
+transcript data with their original role labels and order — never as live
+top-level roles. Pointer items stay dropped, tool/search records stay bounded
+clipped notes, unsupported media still fails closed before serialization, and
+the seven-section contract, `None` convention, no-tools request, and
+fail-closed behavior are unchanged. A malformed, reordered, duplicated,
+empty, tool-calling, truncated, or oversized handoff still fails closed with
+`compaction_summary_incomplete`; cob does **not** retry automatically, does
+not repair headings, does not silently trim history, and does not resend the
+full history. The compact diagnostics carry `transcript_v=2`, and G24 run
+receipts carry `transcriptFormatVersion`. The G24 corpus is version 2 with an
+adversarial historical developer instruction, a nested tool/search note lane,
+and a pinned successful handoff skeleton. Current G24 disposition belongs in
+[STATUS.md](../STATUS.md) and [LIVE-TESTING.md](./LIVE-TESTING.md).
 
 ## Envelope
 
@@ -134,7 +155,7 @@ ollama_threads = "summarize"
 
 Do not revive `provider = "ollama"` as "call Ollama `/compact`."
 
-## Gold-standard (shipped in cob; Desktop G7 and G8 recorded)
+## Protocol matrix (based on historical G7/G8 traces)
 
 Update README, AGENTS, and LIVE-TESTING **in the same merge** as the code.
 This file stays the nuance note.
@@ -151,14 +172,12 @@ Record summarizer latency and pre/post Ollama prompt bytes.
 
 ## Implementation order
 
-1–3 and 5 are in cob (envelope, summarizer, handoff checkpoint, docs). Desktop
-`/compact` on 0731 recorded G7. 2026-08-23 20:29 auto-compact on cob 0.1.7
-recorded G8 (flatten handoff, `cob1.` envelope, follow-up
-`replay_ratio ≈ 0.03`). The isolated L5 harness remains unrun. WP7 Stages 2–4
-(single instruction copy, required section headings, opt-in effort, split
-max vs active context) are packed in cob **0.1.8**.
-G17 acceptance is recorded in `LIVE-TESTING.md`; it did not promote an
-experimental toggle to the default.
+1–3 and 5 are the cob contract (envelope, summarizer, handoff checkpoint,
+docs). The G7/G8 and 0.1.x implementation notes above are historical trace
+evidence. WP7 Stages 2–4 (single instruction copy, required section headings,
+opt-in effort, split max vs active context) were recorded in cob 0.1.8, and
+G17 acceptance is recorded in [LIVE-TESTING.md](./LIVE-TESTING.md); neither is
+a current gate or default claim.
 Incomplete or malformed skeletons fail closed: headings must be exact, ordered,
 unique, and non-empty (`None` is explicit content). cob returns full-context
 recovery guidance and never automatically resends history. Defaults keep the
@@ -172,9 +191,10 @@ Out of scope: `nativeAlias`, writing root config, ChatGPT.app patches.
 - The compact **turn** itself can still be large; Ollama may overflow that
   one call. Fail closed; do not silently trim.
 - Summary quality is the thread model (or a named Ollama compact slug).
-  Live 0731 on 2026-08-19 wrote source-like text into the handoff instead
-  of a recap; Codex still accepted the `cob1.` envelope (G7 ≠ good summary).
+  Historical 0731 evidence on 2026-08-19 wrote source-like text into the
+  handoff instead of a recap; Codex still accepted the `cob1.` envelope
+  (G7 ≠ good summary).
 - Desktop auto-compact timing still depends on catalog `context_window`
   (Ollama rows are capped at 256k). The Desktop used-% bar is that window,
-  not proof of cob transcript leakage; 0731 first turns meter ~61k here
-  vs ~17–20k on native GPT (see [STATUS.md](./STATUS.md)).
+  not proof of cob transcript leakage; historical 0731 first-turn measurements
+  differed from native GPT (see [STATUS.md](../STATUS.md)).

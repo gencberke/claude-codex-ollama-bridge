@@ -3,10 +3,25 @@
 Workspace proposal for [openai/codex](https://github.com/openai/codex). Not packed.
 Not a cob product change. Do not implement this inside cob.
 
-Checked 2026-08-25 against PATH Codex **0.149.0**
-`codex app-server generate-json-schema --experimental` and current
-`codex-rs/app-server-protocol` `ClientRequest` on `main`. Neither exposes
-`agentControl/*`. Live cob **0.1.14** does not implement this driver.
+Future source checks use `/Users/gencberke/Documents/github/opencodex`.
+Read-only verification on **2026-09-02** found package version **2.39.0** at
+commit **`af6113a0381d6fff2e4dce587652825c7eeb6423`**. The controller findings below
+remain the historical **2026-09-01** check against the previous Git-less
+package-version **2.34.0** snapshot, whose included hardening record named
+source commit **`2a72cc0173af36d4b8172b70ba0a3384db9e6047`**. Revalidate them against the
+current checkout before making a new current-version claim. That historical
+source search found no `agentControl/*` app-server methods; its collaboration
+code remained model-scheduled tool handling. OpenCodex is reference material,
+not upstream Codex, and does not establish a current upstream capability.
+
+Historical Codex evidence, checked **2026-08-25** against PATH Codex
+**0.149.0**, `codex app-server generate-json-schema --experimental`, and the
+then-current `codex-rs/app-server-protocol` `ClientRequest` on `main`, found no
+`agentControl/*`. That 0.149 observation is historical, not a current-version
+claim. Recheck a versioned upstream checkout before implementation. The
+historical live cob **0.2.3** artifact did not implement this driver; current
+workspace/live disposition belongs in [STATUS.md](../STATUS.md), and no
+`agentControl/*` implementation is claimed here.
 
 ## Why cob cannot close Gate 6
 
@@ -18,7 +33,7 @@ spawn → send_message × 2 (same child, in flight) → wait
 → followup_task → wait → followup_task → wait
 ```
 
-Isolated `npm run gate6h` on cob 0.1.13 / Codex 0.149 prompted `gpt-5.6-sol`
+Historical isolated `npm run gate6h` on cob 0.1.13 / Codex 0.149 prompted `gpt-5.6-sol`
 to issue those collaboration tools. Sol waited after the first
 `send_message`. The second send was never produced. The harness records
 `controller_sequencing_observed` + `transport_unmeasured`. That does not

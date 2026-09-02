@@ -1,12 +1,115 @@
 # Changelog
 
 Versions follow [semver](https://semver.org/) on the `0.x` line. The 26.818
-Desktop hop is in STATUS; do not jump to `1.0.0`. The git tag,
-`package.json` `version`, and `cob version` string must match. How to cut a
-release: [RELEASE.md](./RELEASE.md).
+Desktop hop is in STATUS; do not jump to `1.0.0`. When a git tag is cut, its
+version must match the `package.json` `version` and `cob version` string; an
+untagged preview is valid. How to cut a release: [RELEASE.md](./docs/RELEASE.md).
 
-Ship decisions still follow live traces in [LIVE-TESTING.md](./LIVE-TESTING.md),
+Ship decisions still follow live traces in [LIVE-TESTING.md](./docs/LIVE-TESTING.md),
 not this file.
+
+## 0.3.0 — 2026-09-02
+
+Codex-scoped stable cut of the instrumented preview runtime. The production
+code follows the exact behavior exercised by the 0.2.4-preview.1 G26 canary;
+cob Claude remains frozen and no experimental gate is promoted to live.
+
+- Record the first instrumented live G26-A direct-main and G26-B
+  native-parent→same-child receipts for 0.2.4-preview.1. Observable transport,
+  the exact hosted-tool filter, and functional continuity passed across all 64
+  Ollama requests; strict Gold remains audit-incomplete because the upstream
+  controller does not expose authoritative retry/reconnect, no-progress, or
+  agent-local retry counters.
+- Add a pack-excluded, bounded G26 sidecar evaluator that derives request-pair,
+  outcome, one-fetch/retry, decoder/drop, duplicate, exact-usage, and latency
+  aggregates from an explicit dynamic time window without retaining the raw
+  model, fingerprints, prompts, outputs, tools, or task/child identity. It
+  accepts the active and rotated sidecars under one combined byte budget,
+  reports observable transport only, and cannot manufacture controller-owned
+  counters or a Gold verdict.
+- Reconcile the live snapshot, implementation-plan completion, release
+  history, and A2 decision. The source cut changes package metadata to 0.3.0;
+  artifact installation, tag, push, and GitHub release remain later verified
+  steps and do not alter the historical preview receipts.
+
+## 0.2.4-preview.1 — 2026-09-02
+
+Codex-scoped, non-production preview cut of the workspace source. This is an
+immutable artifact record: it was later installed globally and exercised by
+the separately authorized instrumented live canary. cob Claude stayed frozen
+and stopped. The exact artifact/install identity is recorded in
+[docs/RELEASE.md](./docs/RELEASE.md), and the live receipt and disposition are
+recorded in [STATUS.md](./STATUS.md) and [docs/LIVE-TESTING.md](./docs/LIVE-TESTING.md).
+There is no tag for this preview.
+
+- Add the opt-in bounded diagnostic sidecar and synchronize its documentation.
+  Default logging and the hot path remain unchanged. The sidecar provides only
+  content-free bounded request correlation and preserves exact usage supplied
+  upstream; it adds no model/provider retry or queue behavior.
+- Move maintainer procedures, live evidence, design notes, the implementation
+  plan, and architectural review under `docs/`; keep only the product entry
+  points and current/version summaries at the repository root.
+- Remove exact hosted `web_search` definitions (`type === "web_search"`) from
+  Ollama request tools to prevent unsupported provider orchestration failures,
+  while preserving standalone native search and deferred `tool_search`.
+- Record content-free outbound stream mode (`outbound_stream`), response
+  content-type class (`response_content_type_class`), decoder mode
+  (`decoder_mode`), and dropped hosted tools count (`hosted_tools_dropped_n`)
+  on the diagnostic `request_end` event.
+- Validation verdict and current live evidence belong to [STATUS.md](./STATUS.md)
+  and [LIVE-TESTING.md](./docs/LIVE-TESTING.md), not this changelog. The later
+  canary confirmed observable transport and continuity but remained strict
+  NOT GOLD because required controller-owned counters were unavailable; it
+  does not promote the whole product.
+- Exact artifact (recorded after the cut, repo-side): 91-entry tarball
+  `codex-ollama-bridge-0.2.4-preview.1.tgz`, 184,558 bytes, SHA-256
+  `4345c4a5c0de2467aa96f475e3ee7777d63ae77eaca65718220543f727265ed5`. Never
+  repack these bytes.
+
+## 0.2.4-preview.0 — 2026-09-01
+
+Codex-scoped, non-production preview artifact/install completed on 2026-09-01
+for authorized ChatGPT Desktop validation. cob Claude remains frozen and
+stopped. The exact preview tarball SHA-256 is
+`5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`.
+
+- The preview installed the current bounded/fail-closed gateway, compaction,
+  state, diagnostics, and eval-readiness changes; this does not claim new live
+  gold or a production release decision.
+- Validation verdict and current live evidence belong to [STATUS.md](./STATUS.md)
+  and [LIVE-TESTING.md](./docs/LIVE-TESTING.md), not this changelog. This entry
+  intentionally does not copy current PIDs or canary metrics.
+- Rollback remains the exact burned 0.2.3 tarball with SHA-256
+  `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`.
+
+## 0.2.3 — 2026-08-30
+
+Codex-scoped hardening and capability-evidence release. cob Claude source and
+its stopped live surface remain frozen.
+
+- Harden config, CLI, lifecycle, catalog, state, logging, HTTP-body, loopback,
+  and producer-error boundaries with strict typed failures, bounded I/O,
+  descriptor-safe permissions, and atomic/fail-closed publication.
+- Derive Ollama `shell_type` only from fresh exact `/api/tags` evidence:
+  lowercase `tools` advertises `unified_exec`; missing, unknown, case-variant,
+  or fallback evidence stays `disabled` and cannot retain stale capability.
+- Keep Gate 5 `apply_patch` independent, default-off, and isolated; Ollama
+  children remain V1 with no parallel calls, `shell_call`, or
+  `local_shell_call` bridge.
+- Sanitize bounded catalog-producer diagnostics, including credential-looking
+  values and macOS, Linux, root, and Windows user paths.
+- Merge evidence: 596 tests (592 pass, 4 intentional skips), clean typecheck,
+  build, 87-entry pack, and GitHub Actions across Ubuntu/macOS with Node 22/24.
+- Isolated `:18791` evidence with bundled Codex `0.151.0-alpha.7.2`: the fresh
+  0731 row retained `unified_exec`, and one real declared `exec_command` /
+  `function_call_output` continuation completed with exit 0. This is not a
+  live `:18790` gold retrace.
+- Authorized global Codex replacement: exact 87-entry tarball SHA-256
+  `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`;
+  live `:18790` pid 25824 reports 0.2.3, health/overlay `ok`, and fresh catalog
+  provenance from bundled Codex `0.151.0-alpha.7.2`. Root `config.toml` stayed
+  byte-identical at `b262c000…`; Claude `:18792` remained stopped. Do not
+  repack 0.2.3 with different bytes.
 
 ## 0.2.2 — 2026-08-29
 
@@ -37,7 +140,7 @@ at `e6a3449` — stays unpacked and belongs to the next section.
 
 First packed cut of the post-0.2.0 hardening series: the cob Claude security
 package plus redacted compact observability. Live claims stay in
-[LIVE-TESTING.md](./LIVE-TESTING.md); installing this tarball is not G11/G12
+[LIVE-TESTING.md](./docs/LIVE-TESTING.md); installing this tarball is not G11/G12
 gold.
 
 - cob Claude auth boundary: the static `"cob"` Desktop key is gone. Start
@@ -75,7 +178,7 @@ gold.
   no-wire rejection is a separate fail-closed boundary canary, not G12
   evidence.
 - Workspace-only tooling stays pack-excluded: Gate 6-H harness, G2–G9 eval
-  fixtures, and [UPSTREAM-U1.md](./UPSTREAM-U1.md).
+  fixtures, and [UPSTREAM-U1.md](./docs/UPSTREAM-U1.md).
 
 ## 0.2.0 — 2026-08-27
 

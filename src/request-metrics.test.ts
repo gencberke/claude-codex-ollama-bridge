@@ -187,6 +187,7 @@ describe("request-metrics", () => {
     assert.match(line, /alias_sha=deadbeef/);
     assert.match(line, /alias_added=1/);
     assert.match(line, /used_alias_missing=0/);
+    assert.match(line, /hosted_tools_dropped_n=0/);
     assert.match(line, /tool_bytes_top=6800/);
     assert.equal(line.includes("multi_agent_v1__spawn_agent"), false);
     assert.equal(line.includes("Spawn a sub-agent"), false);

@@ -117,6 +117,7 @@ export type OllamaWireMetrics = {
   aliasesRemoved: number;
   aliasesReplaced: number;
   usedAliasMissing: number;
+  hostedToolsDroppedN?: number;
 };
 
 export function formatOllamaWireMetrics(metrics: OllamaWireMetrics): string {
@@ -141,6 +142,7 @@ export function formatOllamaWireMetrics(metrics: OllamaWireMetrics): string {
     `alias_removed=${metrics.aliasesRemoved}`,
     `alias_replaced=${metrics.aliasesReplaced}`,
     `used_alias_missing=${metrics.usedAliasMissing}`,
+    `hosted_tools_dropped_n=${metrics.hostedToolsDroppedN ?? 0}`,
   ].join(" ");
 }
 

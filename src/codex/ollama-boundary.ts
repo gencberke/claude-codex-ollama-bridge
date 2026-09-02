@@ -26,6 +26,11 @@ export type OllamaBoundaryResult = {
 export type OllamaBoundaryOptions = {
   supportsReasoning?: boolean;
   debug?: boolean;
+  /**
+   * Verified cloud-slug route. Ollama Cloud does not support structured
+   * outputs, so json_schema is rejected locally before upstream dispatch.
+   */
+  cloudRoute?: boolean;
 };
 
 export function applyOllamaRequestBoundary(
@@ -42,7 +47,7 @@ export function applyOllamaRequestBoundary(
     const toolChoiceError = unsupportedToolChoiceError(payload.tool_choice);
     if (toolChoiceError) return toolChoiceError;
   }
-  const formatError = structuredTextFormatError(payload.text);
+  const formatError = structuredTextFormatError(payload.text, options.cloudRoute === true);
   if (formatError) return formatError;
 
   const next: JsonObject = {};
@@ -140,7 +145,10 @@ export function mapOllamaReasoningEffort(effort: unknown, model?: unknown): stri
   return ladder.efforts.includes(mapped) ? mapped : ladder.defaultEffort;
 }
 
-export function structuredTextFormatError(text: unknown): OllamaReject | undefined {
+export function structuredTextFormatError(
+  text: unknown,
+  cloudRoute = false,
+): OllamaReject | undefined {
   if (text === undefined) return undefined;
   if (!isRecord(text)) {
     return rejectBoundary("ollama_text_unsupported", "Ollama text must be an object when present.");
@@ -149,7 +157,17 @@ export function structuredTextFormatError(text: unknown): OllamaReject | undefin
   if (!isRecord(text.format) || typeof text.format.type !== "string") {
     return rejectBoundary("ollama_text_format_unsupported", "Ollama text.format is missing a type.");
   }
-  if (text.format.type === "text" || text.format.type === "json_schema") return undefined;
+  if (text.format.type === "text") return undefined;
+  if (text.format.type === "json_schema") {
+    if (cloudRoute) {
+      // Content-free: never echo or log the supplied schema.
+      return rejectBoundary(
+        "ollama_text_format_cloud_unsupported",
+        "Ollama Cloud does not support structured outputs; text.format json_schema is refused on cloud routes and only the reviewed local route accepts it.",
+      );
+    }
+    return undefined;
+  }
   return rejectBoundary(
     "ollama_text_format_unsupported",
     `Ollama text.format type "${text.format.type}" is not implemented; cob will not downgrade structured output.`,

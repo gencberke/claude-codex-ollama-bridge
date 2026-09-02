@@ -10,9 +10,10 @@ import {
   OLLAMA_ADVISORY_FIELDS,
   OLLAMA_REQUEST_ALLOWLIST,
 } from "./codex/ollama-boundary.js";
-import { isOllamaReject, prepareOllamaWire, sanitizeOllamaPayload } from "./codex/ollama.js";
+import { forwardOllamaResponses, isOllamaReject, prepareOllamaPayload, prepareOllamaWire, sanitizeOllamaPayload } from "./codex/ollama.js";
+import { OLLAMA_DIALECT } from "./codex/ollama-dialect.js";
 import { buildOllamaSummarizerPayload } from "./codex/compaction/summary.js";
-import { extractOllamaUsage } from "./codex/request-metrics.js";
+import { extractOllamaUsage, sha256Hex8, summarizeRequest } from "./codex/request-metrics.js";
 import type { JsonObject } from "./core/json.js";
 import { isRecord } from "./core/json.js";
 
@@ -24,13 +25,13 @@ function wireKeys(payload: JsonObject, supportsReasoning = true): string[] {
 }
 
 describe("Ollama request boundary", () => {
-  it("partitions the pinned 0.33.1 ResponsesRequest fields without inventing extras", () => {
+  it("partitions the pinned 0.33.2 ResponsesRequest fields without inventing extras", () => {
     const allow = new Set<string>(OLLAMA_REQUEST_ALLOWLIST);
     const advisory = new Set<string>(OLLAMA_ADVISORY_FIELDS);
     const pinned = new Set<string>(OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS);
     assert.equal(pinned.has("tool_choice"), false);
     for (const field of OLLAMA_REQUEST_ALLOWLIST) {
-      assert.equal(pinned.has(field), true, `allowlisted ${field} is not on 0.33.1 ResponsesRequest`);
+      assert.equal(pinned.has(field), true, `allowlisted ${field} is not on 0.33.2 ResponsesRequest`);
     }
     for (const field of OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS) {
       if (field === "conversation") {
@@ -41,7 +42,7 @@ describe("Ollama request boundary", () => {
       assert.equal(
         allow.has(field) || advisory.has(field),
         true,
-        `0.33.1 field ${field} is neither allowlisted nor advisory`,
+        `0.33.2 field ${field} is neither allowlisted nor advisory`,
       );
     }
     const conversation = applyOllamaRequestBoundary({ model: "m", input: "hi", conversation: { id: "c1" } });
@@ -274,7 +275,7 @@ describe("Ollama request boundary", () => {
           history: [{ type: "message", role: "user", content: [{ type: "input_text", text: "old" }] }],
         }),
       ),
-      ["input", "instructions", "model", "reasoning", "stream"],
+      ["input", "instructions", "model", "reasoning", "stream", "temperature"],
     );
     assert.deepEqual(
       wireKeys({
@@ -385,5 +386,205 @@ describe("Ollama request boundary", () => {
     assert.match(String(quotaError.message), /replenish quota/);
     assert.equal(String(quotaError.message).includes("Alice"), false);
     assert.equal(quotaError.retry_after, "7");
+  });
+});
+
+describe("route-dependent structured output", () => {
+  const cloudModel = "ollama/deepseek-v4-flash:0731-cloud";
+  const localModel = "ollama/local-instruct";
+  const jsonSchemaText = {
+    format: {
+      type: "json_schema",
+      name: "x",
+      schema: { type: "object", properties: { secret_prop: { type: "string" } } },
+    },
+  };
+
+  it("rejects json_schema on a verified cloud route with a content-free message", () => {
+    const wire = prepareOllamaWire({ model: cloudModel, input: "hi", text: jsonSchemaText });
+    assert.equal(isOllamaReject(wire), true);
+    if (!isOllamaReject(wire)) return;
+    assert.equal(wire.status, 400);
+    assert.equal(wire.body.error.code, "ollama_text_format_cloud_unsupported");
+    const body = JSON.stringify(wire.body);
+    assert.equal(body.includes("secret_prop"), false);
+    assert.match(String(wire.body.error.message), /Ollama Cloud/);
+  });
+
+  it("never dispatches a rejected cloud json_schema request to the upstream", async () => {
+    let upstreamCalls = 0;
+    const forwarded = await forwardOllamaResponses({
+      payload: { model: cloudModel, input: "hi", text: jsonSchemaText },
+      fetchImpl: async () => {
+        upstreamCalls += 1;
+        throw new Error("upstream must not be called");
+      },
+    });
+    assert.equal(isOllamaReject(forwarded), true);
+    assert.equal(upstreamCalls, 0);
+  });
+
+  it("keeps json_schema forwarded unchanged on the reviewed local route", () => {
+    const wire = prepareOllamaWire({ model: localModel, input: "hi", text: jsonSchemaText });
+    assert.equal(isOllamaReject(wire), false);
+    if (isOllamaReject(wire)) return;
+    assert.deepEqual(wire.payload.text, jsonSchemaText);
+  });
+
+  it("keeps plain text format compatible on cloud and local routes", () => {
+    for (const model of [cloudModel, localModel]) {
+      const wire = prepareOllamaWire({ model, input: "hi", text: { format: { type: "text" } } });
+      assert.equal(isOllamaReject(wire), false, model);
+      if (isOllamaReject(wire)) continue;
+      assert.deepEqual(wire.payload.text, { format: { type: "text" } });
+    }
+  });
+
+  it("still rejects unknown text.format types and does not widen the allowlist", () => {
+    for (const model of [cloudModel, localModel]) {
+      const wire = prepareOllamaWire({ model, input: "hi", text: { format: { type: "json_object" } } });
+      assert.equal(isOllamaReject(wire), true, model);
+      if (!isOllamaReject(wire)) continue;
+      assert.equal(wire.body.error.code, "ollama_text_format_unsupported");
+    }
+    const dialectCapabilities = OLLAMA_DIALECT.capabilities;
+    assert.equal(dialectCapabilities.structuredTextJsonSchema, "route-dependent");
+    assert.equal(dialectCapabilities.structuredTextJsonSchemaLocal, "supported");
+    assert.equal(dialectCapabilities.structuredTextJsonSchemaCloud, "unsupported");
+    assert.equal(dialectCapabilities.structuredTextPlainText, "supported");
+  });
+});
+
+describe("request-side traversal budget", () => {
+  function deepRequest(depth: number): JsonObject {
+    let value: unknown = "leaf";
+    for (let index = 0; index < depth; index += 1) value = [value];
+    return { model: "ollama/m", input: value } as JsonObject;
+  }
+
+  it("rejects a 200-level request with a stable 400 before upstream dispatch", async () => {
+    const rejected = prepareOllamaWire(deepRequest(200));
+    assert.equal(isOllamaReject(rejected), true);
+    if (!isOllamaReject(rejected)) return;
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error.code, "ollama_json_traversal_overflow");
+    assert.equal(JSON.stringify(rejected.body).includes("leaf"), false);
+
+    let upstreamCalls = 0;
+    const forwarded = await forwardOllamaResponses({
+      payload: deepRequest(200),
+      fetchImpl: async () => {
+        upstreamCalls += 1;
+        throw new Error("upstream must not be called");
+      },
+    });
+    assert.equal(isOllamaReject(forwarded), true);
+    assert.equal(upstreamCalls, 0);
+  });
+
+  it("keeps a 120-level request valid", () => {
+    const wire = prepareOllamaWire(deepRequest(120));
+    assert.equal(isOllamaReject(wire), false);
+  });
+
+  it("stops a wide request at the node ceiling without fully rewriting it", () => {
+    const wide = {
+      model: "ollama/m",
+      input: Array.from({ length: 100_001 }, (_unused, index) => ({ index })),
+    } as JsonObject;
+    const rejected = prepareOllamaWire(wide);
+    assert.equal(isOllamaReject(rejected), true);
+    if (!isOllamaReject(rejected)) return;
+    assert.equal(rejected.body.error.code, "ollama_json_traversal_overflow");
+  });
+
+  it("rejects a deep encrypted/strip traversal with the stable 400, never a RangeError", () => {
+    const rejected = prepareOllamaPayload(deepRequest(5_000));
+    assert.equal(isOllamaReject(rejected), true);
+    if (!isOllamaReject(rejected)) return;
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error.code, "ollama_json_traversal_overflow");
+    assert.equal(JSON.stringify(rejected.body).includes("leaf"), false);
+  });
+});
+
+describe("hosted tool request filtering on final wire", () => {
+  it("omits hosted web_search from final serialized Ollama fetch body and calls upstream once", async () => {
+    let upstreamCalls = 0;
+    let interceptedBody: string | undefined;
+    let interceptedAccept: string | undefined;
+
+    const payload: JsonObject = {
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      stream: false,
+      tools: [
+        { type: "web_search" },
+        { type: "function", name: "lookup_item", parameters: { type: "object" } },
+      ],
+    };
+
+    const forwarded = await forwardOllamaResponses({
+      payload,
+      fetchImpl: async (_url, init) => {
+        upstreamCalls += 1;
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        interceptedAccept = headers.Accept ?? headers.accept;
+        interceptedBody = typeof init?.body === "string"
+          ? init.body
+          : Buffer.isBuffer(init?.body)
+            ? (init.body as Buffer).toString("utf8")
+            : undefined;
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
+    assert.equal(isOllamaReject(forwarded), false);
+    if (isOllamaReject(forwarded)) return;
+    assert.equal(upstreamCalls, 1);
+    assert.equal(forwarded.bridge.hostedToolsDroppedN, 1);
+    assert.equal(interceptedAccept, "application/json");
+    assert.ok(interceptedBody);
+
+    const parsed = JSON.parse(interceptedBody) as JsonObject;
+    assert.equal(Array.isArray(parsed.tools), true);
+    const wireTools = parsed.tools as JsonObject[];
+    assert.equal(wireTools.length, 1);
+    assert.equal(wireTools.some((t) => t.type === "web_search"), false);
+    assert.equal(wireTools[0]!.name, "lookup_item");
+
+    const summary = summarizeRequest(parsed, Buffer.byteLength(interceptedBody, "utf8"));
+    assert.equal(summary.toolsCount, 1);
+    assert.equal(summary.toolsSha, sha256Hex8(parsed.tools));
+    assert.equal(forwarded.declaration.count, 1);
+    assert.equal(forwarded.declaration.names.has("lookup_item"), true);
+    assert.equal(forwarded.declaration.names.has("web_search"), false);
+  });
+
+  it("derives the streaming Accept header from stream:true on the final wire", async () => {
+    let upstreamCalls = 0;
+    let interceptedAccept: string | undefined;
+    const forwarded = await forwardOllamaResponses({
+      payload: {
+        model: "ollama/deepseek-v4-flash:0731-cloud",
+        stream: true,
+      },
+      fetchImpl: async (_url, init) => {
+        upstreamCalls += 1;
+        interceptedAccept = init.headers.accept;
+        return new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    assert.equal(isOllamaReject(forwarded), false);
+    if (isOllamaReject(forwarded)) return;
+    assert.equal(upstreamCalls, 1);
+    assert.equal(forwarded.stream, true);
+    assert.equal(interceptedAccept, "text/event-stream");
   });
 });

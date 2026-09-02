@@ -11,7 +11,7 @@ import type { CobPaths } from "../paths.js";
 import type { CatalogFile } from "../types.js";
 import { assertSpawnRowsCarryTools, mergeCatalogWithFallback, parseCatalogJson, serializeCatalog } from "./catalog.js";
 import { writeCatalogIfChanged } from "./file.js";
-import { writeCatalogProvenance, writeCatalogValidationFailure } from "./provenance.js";
+import { ollamaDiscoveryEvidence, writeCatalogProvenance, writeCatalogValidationFailure } from "./provenance.js";
 import { discoverCodexBins, loadBundledCatalog, resolveCatalogSources, type CatalogDiscovery, type InspectCodexIo } from "./source.js";
 import { assertConsumersAcceptCatalog, CatalogConsumerRejectedError } from "./validator.js";
 
@@ -113,6 +113,11 @@ export async function syncCatalogControlPlane(opts: {
     metaPath: opts.paths.catalogMeta,
     catalogBytes: readFileSync(opts.paths.catalog),
     sources,
+    ollamaDiscovery: ollamaDiscoveryEvidence({
+      tags,
+      spawnable,
+      error: ollamaError,
+    }),
   });
   writeCobProfile(opts.paths, opts.profilePort ?? opts.resolveRuntimePort() ?? DEFAULT_PORT);
   const ollamaCount = catalog.models.filter((model) => String(model.slug).startsWith("ollama/")).length;

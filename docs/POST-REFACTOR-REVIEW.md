@@ -4,11 +4,13 @@ Bu belge 2026-08-27 mimari ayrıştırmasından sonra ortaya çıkan yapının k
 değerlendirmesidir. Bir bug listesi, release günlüğü veya canlı makine durum
 raporu değildir.
 
-- Güncel ürün ve kullanım sözleşmesi: [README.md](./README.md)
-- Güncel makine/release durumu: [STATUS.md](./STATUS.md)
-- Sürüm geçmişi: [CHANGELOG.md](./CHANGELOG.md)
+- Güncel ürün ve kullanım sözleşmesi: [README.md](../README.md)
+- Güncel makine/workspace/canary durumu: [STATUS.md](../STATUS.md)
+- Release event, burned artifact, install ve rollback otoritesi: [RELEASE.md](./RELEASE.md)
+- Sürüm geçmişi: [CHANGELOG.md](../CHANGELOG.md)
 - Canlı doğrulama kontratı: [LIVE-TESTING.md](./LIVE-TESTING.md)
-- Geçici işler ve düzeltmeler: [GitHub Issues](https://github.com/gencberke/claude-codex-ollama-bridge/issues)
+- Geçici işler ve düzeltmeler: açık kullanıcı talimatı ve
+  [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md)
 
 ## 1. Sonuç
 
@@ -169,6 +171,25 @@ COB'a alınmayacak yaklaşımlar:
 - Ollama Multi-Agent V2 ve bridge-owned collaboration queue
 - launchd/Login Item/OS supervisor
 
+## 8.1 Logging ve evidence sınırı
+
+Gözlemlenebilirlik kalıcı bir güvenlik ve ownership sınırıdır:
+
+- Structured persistence yalnız opt-in'dir; default hot path ve human-readable
+  log değişmeden kalır.
+- Log ve persisted diagnostic alanları yapısaldır ve content-free'dur; prompt,
+  output, tool name/ID, auth malzemesi veya raw error yazılmaz.
+- Logging diagnostic-only'dir: model/provider call, automatic retry, queue veya
+  background worker başlatmaz. Logging failure hiçbir request'i fail ettiremez.
+- Exact usage yalnız upstream trace/receipt ile kanıtlanıyorsa taşınır; değer
+  fabricate, estimate veya infer edilmez.
+- Controller retry ve no-progress sahipliği upstream controller'dadır. Gateway
+  bunları ancak trace/receipt açıkça sağlıyorsa raporlar; counter'ları icat
+  etmez, birleştirmez ve kendi retry davranışıyla karıştırmaz.
+- Operasyonel logging ve receipt ayrıntıları [README.md](../README.md) ile
+  [LIVE-TESTING.md](./LIVE-TESTING.md)'dedir; güncel kurulum/install durumu
+  [STATUS.md](../STATUS.md)'dedir.
+
 ## 9. Bilinçli non-goal'lar
 
 - Ollama parent → native GPT child
@@ -184,12 +205,31 @@ COB'a alınmayacak yaklaşımlar:
 Bu dosya yalnız mimari kararı açıklar. Aynı bilginin birden fazla yerde
 yaşamasını önlemek için:
 
-- Yapılacak iş, defect ve deney: GitHub Issues
-- Tamamlanmış kullanıcı-visible değişiklik: `CHANGELOG.md`
-- Güncel makine/install/canary durumu: `STATUS.md`
-- Tekrarlanabilir gold prosedürü: `LIVE-TESTING.md`
-- Kurulum ve ürün davranışı: `README.md`
-- Tarihsel mimari plan: `ARCHITECTURE-PLAN.md`
+| Konu | Tek otorite | Sınır |
+|---|---|---|
+| Ürün ve kullanıcı-visible davranış | `README.md` | Kurulum ve kalıcı ürün kontratı; canlı snapshot değil |
+| Agent rules ve kalıcı safety bans | `AGENTS.md` | Çalışma kuralları ve ürün güvenlik sınırları; volatile durum değil |
+| Güncel makine, workspace ve canary durumu | `STATUS.md` | Tarihli snapshot; PID, sürüm, SHA ve gate disposition burada kalır |
+| Release event, burned artifact, install ve rollback | `docs/RELEASE.md` | Hangi artifact'in üretildiği/kurulduğu ve geri dönüş kaydı burada kalır |
+| Tekrarlanabilir gold prosedürü ve kanıt | `docs/LIVE-TESTING.md` | PASS yalnız trace/receipt ile; fixture veya mock tek başına gold değildir |
+| Tamamlanmış kullanıcı-visible değişiklik | `CHANGELOG.md` | Release/change özeti; makine durumu değil |
+| Geçici iş, defect ve deney görevleri | Açık kullanıcı talimatı + `IMPLEMENTATION-PLAN.md` | Kalıcı mimari kararlar bu review'a kopyalanmaz |
+| Kişisel vault bağlamı ve durable principles | Vault (`second-brain`) | Yalnız routing, tercih ve kalıcı ilke; repo dokümanı/PID/SHA/gate sonucu kopyalanmaz |
+| Implementation plan | `docs/IMPLEMENTATION-PLAN.md` | Lifecycle ve içerik reconciliation deferred; `docs/` relocation plan kararlarını değiştirmez |
+| Controller collaboration sequencing/retry/evidence | Upstream Codex controller + `docs/UPSTREAM-U1.md` / `docs/LIVE-TESTING.md` | Controller send/follow-up sırası ve controller retry counter'ı cob gateway'e devredilmez |
+| Gateway provider-boundary retry/transport/evidence | cob gateway contract + `README.md` / `docs/LIVE-TESTING.md` | Gateway yalnız kendi provider-attempt/transport kanıtını sahiplenir; controller event'lerini replay etmez ve queue eklemez |
+| Logging/diagnostic persistence ve receipt alanları | `README.md` / `docs/LIVE-TESTING.md` | Structured persistence opt-in; default human log/hot path korunur, log failure request'i fail ettirmez |
 
-Bir issue kapandığında bu review'a kapanış günlüğü eklenmez. Yalnız çözüm
-kalıcı bir mimari invariant'ı değiştiriyorsa ilgili bölüm güncellenir.
+## 11. Manuel docs synchronization checklist
+
+Dokümanlar arasında bir senkronizasyon yapılacağı zaman şu kontrol listesi
+uygulanır:
+
+- [ ] Düzenlemeden önce tek bir timestamped evidence snapshot donduruldu; snapshot'ın tarih/saat, artifact ve ortamı kaydedildi.
+- [ ] Her iddia tam olarak bir authority'ye sınıflandırıldı; diğer belgeler authority'ye link veriyor.
+- [ ] Volatile PID, version, root/catalog SHA ve gate diary çoğaltılmadı; bunlar `STATUS.md` veya `docs/RELEASE.md` içinde tutuldu.
+- [ ] `PASS` yalnızca ilgili trace veya receipt ile destekleniyor; test/fixture başarısı tek başına gold sayılmadı.
+- [ ] Her kaydedilmiş iddiada date + artifact identity/version + evidence pointer/receipt bulunuyor.
+- [ ] Vault ve `AGENTS.md` içinde volatile gerçekler tutulmadı; vault yalnız durable principle/routing bağlamı taşıyor.
+- [ ] Stale identifier/link/diff audit yapıldı: eski sürüm/PID/SHA/gate adları, kırık linkler ve kapsam dışı diff aranıp temizlendi.
+- [ ] `docs/IMPLEMENTATION-PLAN.md` içerik/lifecycle kararı yalnız açık yetkiyle değiştirildi; salt relocation ve path düzeltmesi plan uygulaması sayılmadı.

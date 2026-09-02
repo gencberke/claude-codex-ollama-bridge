@@ -1,8 +1,9 @@
 # Agent notes
 
 Read [STATUS.md](./STATUS.md) before changing behavior. Product contract:
-[README.md](./README.md). Live gold: [LIVE-TESTING.md](./LIVE-TESTING.md).
-Versioned global install: [RELEASE.md](./RELEASE.md), [CHANGELOG.md](./CHANGELOG.md).
+[README.md](./README.md). Live gold: [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
+Current implementation plan: [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md).
+Versioned global install: [RELEASE.md](./docs/RELEASE.md), [CHANGELOG.md](./CHANGELOG.md).
 
 cob is one product with two surfaces. **cob Codex** (`cob start`) is the live
 ChatGPT Desktop / `codex --profile cob` gateway. **cob Claude** (`cob claude`)
@@ -12,16 +13,14 @@ default.
 
 ## Current development scope
 
-As of 2026-08-30, active product development is **cob Codex only**. cob Claude
-remains an existing surface, but its feature work, hardening, canaries, and
-release-gate work are frozen until the user explicitly reopens that scope.
-Preserve the current Claude source and its recorded `:18792` state (the
-listener was not running at the 2026-08-30 check; do not restart it without
-authorization); do not refactor or
-fix `src/claude/`, replace its listener, or broaden its claims merely because a
-Codex release is being prepared. Deferred Claude findings do not block a
-clearly Codex-scoped decision, but they still prevent a new whole-product
-production-readiness claim.
+Active product development is **cob Codex only**. cob Claude remains an
+existing surface, but its feature work, hardening, canaries, and release-gate
+work are frozen until the user explicitly reopens that scope. Preserve its
+source and surface boundary; do not refactor or fix `src/claude/`, replace its
+listener, or broaden its claims merely because a Codex release is being
+prepared. Deferred Claude findings do not block a clearly Codex-scoped
+decision, but they still prevent a new whole-product production-readiness
+claim.
 
 ## Do not
 
@@ -33,7 +32,7 @@ production-readiness claim.
   `~/.codex` unless the user asked for `--live-home`. Develop with
   `cob start --dev` (isolated `~/.codex-cob-dev`, port 18791). Publish to the
   Desktop/CLI gateway with `cob pack` then `npm install -g` the tarball
-  ([RELEASE.md](./RELEASE.md)).
+  ([RELEASE.md](./docs/RELEASE.md)).
 - Commit, push, tag, or open a PR unless the user asks.
 - Treat picker success or a DeepSeek chat as native GPT or spawn gold.
 - Implement OpenCodex `nativeAlias` (steal `gpt-5.6-sol` / luna / terra) as
@@ -41,7 +40,8 @@ production-readiness claim.
   root `model_catalog_json`.
 - Call Ollama `/compact`, invent `ocx1` ciphertext, or send ChatGPT /
   `x-codex-*` headers / Fernet / cob envelopes to **Ollama**. A cob-owned
-  `cob1.` envelope is Codex-facing and private `cob-state` only.
+  `cob1.` envelope is Codex-facing and private `cob-state` only; the `cob1.`
+  prefix is an encoding marker, not encryption.
 - Point Ollama threads at a custom `model_provider`. Keep `model_provider =
   "openai"` and loopback `openai_base_url`.
 - Use deprecated Codex `profile = "cob"` in root config (unsupported since
@@ -119,25 +119,14 @@ alias. Its isolated canary has one real 0731 child-native custom `apply_patch`
 edit; it does not authorize live enablement, shell writes, nested V2,
 restart/replay, worktree, or Desktop claims.
 
-Gate 6 (two active `send_message` plus two idle `followup_task` on one child)
-failed in isolated `:18791` canaries: Sol waited after the first send and the
-0731 child completed after `SEND1`. Gate 6-H is the workspace-only JSONL
-harness (`npm run gate6h`) that fail-stops on `controller_sequencing_fail`
-and retries the same fixture at most three times. It does not add a cob
-queue. Three sequencing fails record `controller_sequencing_observed` with
-`transport_unmeasured`. Do not pack the harness, run a fourth Sol canary, or
-write a cob-owned queue.
-Isolated 2026-08-25 canaries: Gate 7 FAIL `worktree_not_distinct`; Gate 8-M
-PASS same-child continue after mid-flight `cob stop --dev`/`start --dev`
-(not G8-R completed-checkpoint replay); Gate 9 FAIL
-`compaction_summary_incomplete` (8k catalog lie; a later compact-ok is not
-gold without continuation; not live G8). Pack-excluded eval fixtures cover
-G2–G5 approval preflight, G8-R replay, and G9 protocol without a live canary.
-Gate 10 FAIL no nested leaf (`collaboration.spawn_agent` absent from the
-0731 child toolset). Desktop hop stays separately authorized. Next Gate 6
-work is cob-external Upstream U1. The portable proposal is
-[UPSTREAM-U1.md](./UPSTREAM-U1.md). Do not implement `agentControl/*` inside cob.
-Re-measure Gate 6 on isolated `:18791` only after Codex ships that driver.
+Gate-specific dispositions and evidence are not recorded here. Current
+machine, workspace, and canary state belongs in [STATUS.md](./STATUS.md);
+repeatable procedures and receipts belong in [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
+Do not treat a fixture, isolated canary, picker success, or model chat as
+product gold without the required trace or receipt. Gate 6's controller
+capability remains cob-external; follow [UPSTREAM-U1.md](./docs/UPSTREAM-U1.md), do
+not implement `agentControl/*` or a cob-owned collaboration queue, and do not
+re-measure it outside the authorized isolated path.
 
 ## Activation split
 
@@ -161,40 +150,43 @@ explain producer/consumer skew via `cob-catalog.meta.json` without spawning
 Codex. First-line kinds include `stale` and `unknown`. Do not claim Desktop
 hot-reloaded the catalog; say fully quit and reopen ChatGPT Desktop.
 
+## Logging and evidence boundaries
+
+- Structured persistence is opt-in only. The default hot path and human-readable
+  log remain unchanged.
+- Logs and persisted diagnostics are structural and content-free: never record
+  prompts, outputs, tool names or IDs, auth material, or raw errors.
+- Logging is diagnostic-only and must not make a model/provider call, automatic
+  retry, queue, or background worker. A logging failure never fails a request.
+- Exact usage is forwarded only when supported by upstream evidence; never
+  fabricate, estimate, or infer exact usage.
+- Controller retries and no-progress counts belong to the upstream controller;
+  cob may report them only when a trace or receipt provides the evidence. The
+  gateway must not invent, merge, or own those counters.
+- Operational logging details and receipt fields belong in [README.md](./README.md)
+  and [LIVE-TESTING.md](./docs/LIVE-TESTING.md). The current installed state belongs
+  in [STATUS.md](./STATUS.md).
+
 English identifiers in code. Picker allowlist, 256k catalog cap, and Ollama
 effort levels are implemented; do not reopen them as cosmetics. Default to
 stability and throughput on the working Ollama-Desktop path. Ollama-thread
-compact shrink is specified in [COMPACTION.md](./COMPACTION.md). Do not
+compact shrink is specified in [COMPACTION.md](./docs/COMPACTION.md). Do not
 implement OpenCodex `ocx1` / Fernet impersonation / `nativeAlias` / root
 config writes.
 
-The 26.810 → 26.818 Desktop hop is recorded in STATUS (picker + 0731 + V1
-child on cob 0.1.6). Live Codex `:18790` is global cob **0.2.2** (pid
-**24581**, installed 2026-08-29 14:21 local from pre-hardening 0.2.2
-bytes; originating tarball SHA/tag unrecorded — the installed bytes are
-burned, so the next cut is **0.2.3**, never a repack of 0.2.2). The cob
-Claude `:18792` listener (last live: cob **0.2.1**, pid 78004) was **not
-running** at the 2026-08-30 read-only check; restarting or changing it
-needs explicit user authorization. Source on `master` is cob **0.2.2** at
-`e6a3449` (the WP hardening plus GitHub Actions CI, `.github/workflows/
-ci.yml`); it is not the live install until an explicitly authorized
-replacement. The earlier 0.2.1/0.2.0 and 0.1.x listeners and tarballs are
-historical and must not be repacked.
-Fail-closed JSON/encrypted-wire is live; `apply_patch` and
-`native_plaintext_spawn` stay off on `~/.codex`. Pack excludes `gate6h` and
-`eval-*`. PATH Codex 0.149.0 validates the live catalog; Desktop producer
-identity changed again at the 2026-08-30 check, so `cob status` reports
-provenance `stale` until `cob sync` / `cob start` regenerates the catalog.
-Current root SHA baseline is `1ecbc836…` (Desktop/user; cob did not write
-it).
-G11 pass; G12 default-on and exact-global 0.1.13 rollback pass; G13 partial;
-G14 pass; G15 partial; G16 isolated-pass; G17 same-corpus pass with no default
-change. Do not credit the 0.1.14 install with those gates. Do not repack
-0.1.11–0.1.16, 0.2.0, 0.2.1, or the installed 0.2.2 bytes. Source on
-`master` is cob **0.2.2** (public GitHub source, not an npm publish). Do not
-restart the Codex `:18790` listener
-to pick up source changes
-unless the user authorizes a Codex gateway replace. Future app updates can still drop overlay or hide
-`ollama/...`; then `cob status` must say why. Do not patch the app binary or
-use `nativeAlias` to paper over an update. Reboot is not cob autostart;
-`cob start` brings the gateway back.
+Current machine, workspace, and canary facts—including PID, version, root
+overlay/catalog hashes, and gate dispositions—are maintained only in
+[STATUS.md](./STATUS.md). Burned artifact identities, release events, global
+installation, and rollback procedure are maintained only in
+[RELEASE.md](./docs/RELEASE.md). Link to those authorities instead of copying their
+volatile snapshots into this file. Never repack a burned or historical
+artifact; cut a new version as required by [RELEASE.md](./docs/RELEASE.md).
+
+Fail-closed JSON/encrypted-wire is required; `apply_patch` and
+`native_plaintext_spawn` stay default-off and isolated from the live root.
+Pack excludes `gate6h` and `eval-*`. Do not restart or replace the live Codex
+gateway to pick up source changes unless the user authorizes that gateway
+replacement. Future app updates can still drop the overlay or hide
+`ollama/...`; diagnose the result with `cob status`, not by patching the app or
+using `nativeAlias`. Reboot is not cob autostart; `cob start` brings the
+gateway back.

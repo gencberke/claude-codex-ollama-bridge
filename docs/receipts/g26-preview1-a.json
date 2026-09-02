@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "measurement": "g26_sidecar",
+  "lane": "G26-A",
+  "window": {
+    "from": "2026-09-02T10:36:09.000Z",
+    "to": "2026-09-02T10:50:01.999Z"
+  },
+  "model_sha8": "b449e89a",
+  "parse": {
+    "invalid_line_count": 0
+  },
+  "requests": {
+    "starts": 45,
+    "ends": 45,
+    "starts_without_end": 0,
+    "ends_without_start": 0
+  },
+  "outcomes": {
+    "statuses": [
+      {
+        "value": 200,
+        "count": 45
+      }
+    ],
+    "upstream_statuses": [
+      {
+        "value": 200,
+        "count": 45
+      }
+    ],
+    "terminals": [
+      {
+        "value": "completed",
+        "count": 45
+      }
+    ],
+    "invalid_json_count": 0
+  },
+  "transport": {
+    "provider_attempts_total": 45,
+    "provider_attempts_max": 1,
+    "provider_retry_excess": 0,
+    "gateway_retry_total": 0,
+    "gateway_retry_max": 0
+  },
+  "wire": {
+    "decoder_tuples": [
+      {
+        "outbound_stream": true,
+        "response_content_type_class": "sse",
+        "decoder_mode": "sse_header",
+        "count": 45
+      }
+    ],
+    "hosted_drop_counts": [
+      {
+        "value": 1,
+        "count": 45
+      }
+    ]
+  },
+  "duplicates": {
+    "fingerprints_repeated": 0,
+    "repeat_excess": 0,
+    "max_repeat": 1
+  },
+  "successful_usage": {
+    "records": 45,
+    "input_tokens": 2033002,
+    "output_tokens": 68837,
+    "total_tokens": 2101839
+  },
+  "latency_ms": {
+    "total": 809575,
+    "max": 79038
+  },
+  "observable_transport_pass": true,
+  "reason_codes": [],
+  "decision_note": "Observable sidecar transport evidence only; controller retry/reconnect, no-progress, agent-local retry, continuity, task outcome, and Gold remain external receipt fields."
+}

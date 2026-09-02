@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "../constants.js";
 import { DEFAULT_OLLAMA_URL } from "../../core/ollama/constants.js";
 import { loadCatalogFile } from "../catalog/file.js";
+import { isVerifiedCloudOllamaRow } from "../catalog/catalog.js";
 import { ollamaReasoningLadderForModel } from "../capabilities.js";
 import { decodeRequestBody, RequestDecodeError } from "../decode.js";
 import { forwardNativeResponses, type HeaderMap, type UpstreamFetch } from "../native.js";
@@ -23,6 +24,7 @@ import {
   mapOllamaReasoningEffort,
   normalizeOllamaResponse,
   ollamaSseTransform,
+  observeApplyPatchTurn,
   prepareOllamaPayload,
 } from "../ollama.js";
 import { APPLY_PATCH_OMIT, COB_APPLY_PATCH_ALIAS } from "../experimental/apply-patch.js";
@@ -30,7 +32,6 @@ import { normalizeOllamaErrorBody } from "../ollama-boundary.js";
 import { OLLAMA_DIALECT } from "../ollama-dialect.js";
 import {
   createOllamaTerminalTrack,
-  formatOllamaGuardLog,
   guardOllamaJsonResponse,
   ollamaGuardHttpBody,
   ollamaGuardSseTerminal,
@@ -49,9 +50,9 @@ import {
   compactHandoffSectionFlags,
   incompleteOllamaCompactHandoffError,
   extractOllamaCompactSummary,
-  formatCompactSectionFlags,
   ollamaSummaryHandoffItem,
   projectOllamaSummarizerHistory,
+  OLLAMA_COMPACT_TRANSCRIPT_VERSION,
 } from "../compaction/summary.js";
 import {
   findCompactionInputItem,
@@ -91,6 +92,25 @@ import {
 import { attachCancellation } from "../../core/http/cancellation.js";
 import { IdleTimeoutError } from "../../core/http/timeouts.js";
 import { sseDoneTerminal, sseErrorTerminal, sseRewriteTransform, type SseObserver } from "../sse.js";
+import { formatOllamaJsonOverflowLog, OllamaJsonOverflowError } from "../bounded-json.js";
+import {
+  classifyOllamaContentType,
+  compactUsageEventFromMetrics,
+  compactUsageEventFromEnvelope,
+  createGatewayRequestContext,
+  elapsedMs,
+  emitGatewayDiagnosticEventTo,
+  gatewayDiagnosticJsonlEnabled,
+  GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+  modelSha8,
+  normalizeDiagnosticEffort,
+  observeOllamaInvalidJson,
+  persistGatewayDiagnosticEvent,
+  recordGatewayRequestEnd,
+  setGatewayRequestFingerprint,
+  type GatewayRequestContext,
+  type GatewayDiagnosticSink,
+} from "../diagnostic-event.js";
 import type { CatalogFile } from "../types.js";
 import type { JsonObject } from "../../core/json.js";
 import { isRecord } from "../../core/json.js";
@@ -155,6 +175,9 @@ export type GatewayOptionsBase = {
     maxBytes?: number;
     maxAgeMs?: number;
   };
+  /** Explicit opt-in structured sidecar; only active with COB_DIAGNOSTIC_JSONL=1. */
+  diagnosticSink?: GatewayDiagnosticSink;
+  diagnosticPath?: string;
 };
 
 /**
@@ -172,24 +195,34 @@ export async function handleNativeSearchPost(
   path: string,
 ): Promise<void> {
   const abort = attachCancellation(req, res);
+  const request = setupRequestDiagnostics(req, res, path, options);
   let inbound: { raw: Buffer; body: Buffer; decoded: boolean; encoding?: string };
   try {
     inbound = await readDecodedBody(req, abort.signal);
   } catch (error) {
-    if (error instanceof BodyAbortedError || abort.signal.aborted) return;
+    if (error instanceof BodyAbortedError || abort.signal.aborted) {
+      markRequestStart(request, "native-search", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
+      return;
+    }
     if (error instanceof BodyLimitError) {
+      markRequestStart(request, "native-search", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
       jsonError(res, error.status, error.code, error.message);
       req.destroy();
       return;
     }
     if (error instanceof RequestDecodeError) {
+      markRequestStart(request, "native-search", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
       jsonError(res, 400, error.code, error.message);
       return;
     }
+    markRequestStart(request, "native-search", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
     throw error;
   }
 
+  markRequestStart(request, "native-search", undefined, inbound.raw, path, undefined, options.diagnosticSink, inbound.body.length);
   logNativeSearchRequest(req, path, inbound);
+  const dispatchStarted = performance.now();
+  if (request) request.provider_attempts = 1;
   const upstream = await forwardNativeResponses({
     body: inbound.body,
     headers: nativeHeaders(req, inbound.decoded),
@@ -200,6 +233,7 @@ export async function handleNativeSearchPost(
     signal: abort.signal,
     headersMs: resolveNativeHeadersMs(options),
   });
+  markUpstreamHeaders(request, upstream.status, performance.now() - dispatchStarted, upstream.headers);
   await relay(upstream, res, abort, options);
 }
 
@@ -218,6 +252,121 @@ function logRequest(
   );
 }
 
+function setupRequestDiagnostics(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  options: GatewayOptions,
+): GatewayRequestContext | undefined {
+  if (!gatewayDiagnosticJsonlEnabled() || !options.diagnosticSink) return undefined;
+  const context = createGatewayRequestContext(path);
+  const finish = () => finishRequestDiagnostics(context, res, options.diagnosticSink);
+  res.once("finish", finish);
+  res.once("close", () => {
+    if (!res.writableFinished) finish();
+  });
+  return context;
+}
+
+function markRequestStart(
+  context: GatewayRequestContext | undefined,
+  route: GatewayRequestContext["route"],
+  model: string | undefined,
+  raw: Buffer,
+  path: string,
+  payload: JsonObject | undefined,
+  sink?: GatewayDiagnosticSink,
+  decodedBytes?: number,
+): void {
+  if (!context || context.start_emitted) return;
+  setGatewayRequestFingerprint(context, path, raw);
+  context.route = route;
+  context.model_sha8 = model === undefined ? undefined : modelSha8(model);
+  if (payload) {
+    const metrics = summarizeRequest(payload, raw.length);
+    context.metrics = {
+      raw_bytes: raw.length,
+      decoded_bytes: decodedBytes ?? metrics.decodedBytes,
+      instructions_bytes: metrics.instructionsBytes,
+      tools_bytes: metrics.toolsBytes,
+      input_bytes: metrics.inputBytes,
+      text_bytes: metrics.textBytes,
+      reasoning_bytes: metrics.reasoningBytes,
+      metadata_bytes: metrics.metadataBytes,
+      tools_n: metrics.toolsCount,
+      input_n: metrics.inputCount,
+      previous_response_id: metrics.previousResponseId,
+      effort: normalizeDiagnosticEffort(metrics.reasoningEffort),
+      tools_sha8: metrics.toolsSha,
+      instructions_sha8: metrics.instructionsSha,
+    };
+  } else {
+    context.metrics = {
+      raw_bytes: raw.length,
+      ...(decodedBytes === undefined ? {} : { decoded_bytes: decodedBytes }),
+    };
+  }
+  context.start_emitted = true;
+  persistGatewayDiagnosticEvent(
+    {
+      schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+      kind: "request_start",
+      timestamp: context.started_at,
+      pid: process.pid,
+      request_seq: context.request_seq,
+      request_fp8: context.request_fp8,
+      route: context.route,
+      ...(context.model_sha8 ? { model_sha8: context.model_sha8 } : {}),
+      metrics: context.metrics,
+    },
+    sink,
+  );
+}
+
+function markUpstreamHeaders(
+  context: GatewayRequestContext | undefined,
+  status: number,
+  latencyMs: number,
+  headers: Pick<Headers, "get">,
+): void {
+  if (!context) return;
+  context.upstream_status = status;
+  context.headers_latency_ms = Number.isFinite(latencyMs) && latencyMs >= 0 ? Math.round(latencyMs) : 0;
+  context.retry_after_present = headers.get("retry-after") !== null;
+}
+
+function finishRequestDiagnostics(
+  context: GatewayRequestContext,
+  res: ServerResponse,
+  sink?: GatewayDiagnosticSink,
+): void {
+  if (context.end_emitted) return;
+  if (!context.start_emitted) {
+    context.start_emitted = true;
+    context.metrics = { raw_bytes: 0 };
+    persistGatewayDiagnosticEvent(
+      {
+        schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+        kind: "request_start",
+        timestamp: context.started_at,
+        pid: process.pid,
+        request_seq: context.request_seq,
+        request_fp8: context.request_fp8,
+        route: context.route,
+        metrics: context.metrics,
+      },
+      sink,
+    );
+  }
+  context.end_emitted = true;
+  const contentLength = Number(res.getHeader("content-length"));
+  const responseBytes = Number.isSafeInteger(contentLength) && contentLength >= 0 ? contentLength : context.response_bytes;
+  persistGatewayDiagnosticEvent(
+    recordGatewayRequestEnd(context, res.statusCode, responseBytes),
+    sink,
+  );
+}
+
 export async function handleResponsesPost(
   req: IncomingMessage,
   res: ServerResponse,
@@ -226,6 +375,7 @@ export async function handleResponsesPost(
   kind: "responses" | "compact",
 ): Promise<void> {
   const abort = attachCancellation(req, res);
+  const request = setupRequestDiagnostics(req, res, path, options);
   // One catalog snapshot per request: route, capability, and dispatch
   // decisions must not straddle an atomic catalog replacement.
   const catalogSnapshot = resolveCatalog(options);
@@ -234,38 +384,57 @@ export async function handleResponsesPost(
   try {
     inbound = await readDecodedBody(req, abort.signal);
   } catch (error) {
-    if (error instanceof BodyAbortedError || abort.signal.aborted) return;
+    if (error instanceof BodyAbortedError || abort.signal.aborted) {
+      markRequestStart(request, "unknown", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
+      return;
+    }
     if (error instanceof BodyLimitError) {
+      markRequestStart(request, "unknown", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
       jsonError(res, error.status, error.code, error.message);
       req.destroy();
       return;
     }
     if (error instanceof RequestDecodeError) {
+      markRequestStart(request, "unknown", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
       jsonError(res, 400, error.code, error.message);
       return;
     }
+    markRequestStart(request, "unknown", undefined, Buffer.alloc(0), path, undefined, options.diagnosticSink);
     throw error;
   }
 
+  if (request) setGatewayRequestFingerprint(request, path, inbound.raw);
   let payload: JsonObject;
   try {
     payload = parseResponsesJson(inbound.body);
   } catch (error) {
     if (error instanceof ResponsesParseError) {
+      markRequestStart(request, "unknown", undefined, inbound.raw, path, undefined, options.diagnosticSink, inbound.body.length);
       jsonError(res, error.status, error.code, error.message);
       return;
     }
+    markRequestStart(request, "unknown", undefined, inbound.raw, path, undefined, options.diagnosticSink, inbound.body.length);
     throw error;
   }
 
   const model = typeof payload.model === "string" ? payload.model.trim() : "";
   if (model.length === 0) {
+    markRequestStart(request, "unknown", undefined, inbound.raw, path, payload, options.diagnosticSink, inbound.body.length);
     jsonError(res, 400, "missing_model", "Responses requests require a string model.");
     return;
   }
 
   const target = routeModel(model, nativeSlugs);
+  markRequestStart(request, target, model, inbound.raw, path, payload, options.diagnosticSink, inbound.body.length);
   logRequest(req, path, inbound, payload, target);
+  if (gatewayDiagnosticJsonlEnabled() && target !== "unknown") {
+    emitGatewayDiagnosticEventTo({
+      schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+      kind: "request_route",
+      route: target,
+      model: sanitizeLogToken(model),
+    }, options.diagnosticSink);
+  }
 
   if (target === "unknown") {
     jsonError(
@@ -298,6 +467,7 @@ export async function handleResponsesPost(
       model,
       abort,
       catalogSnapshot,
+      request,
     );
     return;
   }
@@ -312,6 +482,15 @@ export async function handleResponsesPost(
     }
     const continuation = await prepareOllamaContinuation(prepared, stateStore(options), expanded);
     const catalogModel = typeof continuation.payload.model === "string" ? continuation.payload.model : model;
+    // Reuse the one verified cloud classification over the routed catalog row:
+    // a remote_host tag without a cloud suffix must reject json_schema exactly
+    // like other verified cloud routes.
+    const cloudRoute = isVerifiedCloudOllamaRow(
+      catalogModel,
+      catalogSnapshot?.models.find((item) => String(item.slug) === catalogModel),
+    );
+    const dispatchStarted = performance.now();
+    if (request) request.provider_attempts = 1;
     const forwarded = await forwardOllamaResponses({
       payload: continuation.payload,
       ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
@@ -319,17 +498,28 @@ export async function handleResponsesPost(
       signal: abort.signal,
       headersMs: resolveOllamaHeadersMs(options),
       applyPatch,
+      cloudRoute,
       // Checkpoints currently retain the raw provider function-call alias.
       // The original client payload was validated before this replay is
       // assembled, so only a resolved previous_response_id may authorize the
       // stored alias history on the final Ollama wire.
       allowTrustedApplyPatchAliasHistory: continuation.parentResponseId !== undefined,
       supportsReasoning: catalogRowSupportsReasoning(catalogSnapshot, catalogModel),
+      onWirePrepared: ({ bridge, stream }) => {
+        if (!request) return;
+        request.outbound_stream = stream;
+        request.hosted_tools_dropped_n = bridge.hostedToolsDroppedN;
+      },
     });
     if (isOllamaReject(forwarded)) {
+      if (request) request.provider_attempts = 0;
       json(res, forwarded.status, forwarded.body);
       return;
     }
+    if (request) {
+      request.response_content_type_class = classifyOllamaContentType(forwarded.response.headers.get("content-type"));
+    }
+    markUpstreamHeaders(request, forwarded.response.status, performance.now() - dispatchStarted, forwarded.response.headers);
     await relayOllama(forwarded.response, res, catalogModel, abort, options, {
       state: stateStore(options),
       requestInput: continuation.requestInput,
@@ -338,7 +528,7 @@ export async function handleResponsesPost(
       parentResponseId: continuation.parentResponseId,
       catalogModel,
       signal: abort.signal,
-    }, forwarded.bridge, forwarded.declaration);
+    }, forwarded.bridge, forwarded.declaration, request);
     return;
   }
 
@@ -350,6 +540,8 @@ export async function handleResponsesPost(
   const nativeBody = nativePrepared.context
     ? encodeNativePayload(inbound.body, nativePrepared.payload)
     : inbound.body;
+  const dispatchStarted = performance.now();
+  if (request) request.provider_attempts = 1;
   const upstream = await forwardNativeResponses({
     body: nativeBody,
     headers: nativeHeaders(req, inbound.decoded),
@@ -358,6 +550,7 @@ export async function handleResponsesPost(
     signal: abort.signal,
     headersMs: resolveNativeHeadersMs(options),
   });
+  markUpstreamHeaders(request, upstream.status, performance.now() - dispatchStarted, upstream.headers);
   if (nativePrepared.context) {
     await relayNativePlaintextSpawn(upstream, res, abort, options, nativePrepared.context);
   } else {
@@ -424,6 +617,7 @@ async function handleOllamaCompactionTrigger(
   threadModel: string,
   abort: AbortController,
   catalogSnapshot: CatalogFile | undefined,
+  request?: GatewayRequestContext,
 ): Promise<void> {
   const policy = options.compaction ?? { provider: "native" };
   const nativeSlugs = nativeSlugsFromCatalog(catalogSnapshot);
@@ -465,6 +659,7 @@ async function handleOllamaCompactionTrigger(
       abort,
       payload.stream === true,
       catalogSnapshot,
+      request,
     );
     return;
   }
@@ -486,20 +681,39 @@ async function handleOllamaCompactionTrigger(
     threadModel,
     replayHistory: continuation.replayHistory,
   });
-  console.error(
-    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("native", plan.compactModel))} ${formatCompactAttemptLog(compactNote)}`,
-  );
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "compact_start",
+    provider: "native",
+    thread_model: sanitizeLogToken(threadModel),
+    compact_model: sanitizeLogToken(plan.compactModel),
+    group_sha8: compactNote.groupSha8,
+    attempt: compactNote.attempt,
+  }, options.diagnosticSink);
   const rewritten = nativeCompactRequest(compactPayload, plan.compactModel);
   const body = Buffer.from(JSON.stringify(rewritten), "utf8");
-  const upstream = await forwardNativeResponses({
-    body,
-    headers: nativeHeaders(req, true),
-    contentType: "application/json",
-    url: NATIVE_RESPONSES_URL,
-    fetchImpl: options.nativeFetch,
-    signal: abort.signal,
-    headersMs: resolveNativeHeadersMs(options),
-  });
+  const dispatchStarted = performance.now();
+  if (request) request.provider_attempts = 1;
+  let upstream: Response;
+  try {
+    upstream = await forwardNativeResponses({
+      body,
+      headers: nativeHeaders(req, true),
+      contentType: "application/json",
+      url: NATIVE_RESPONSES_URL,
+      fetchImpl: options.nativeFetch,
+      signal: abort.signal,
+      headersMs: resolveNativeHeadersMs(options),
+    });
+  } catch (error) {
+    emitCompactFailure(
+      options,
+      compactNote,
+      abort.signal.aborted ? "native_compaction_aborted" : "native_compaction_dispatch_failed",
+    );
+    throw error;
+  }
+  markUpstreamHeaders(request, upstream.status, performance.now() - dispatchStarted, upstream.headers);
   await relayNativeOllamaCompaction(
     upstream,
     res,
@@ -515,6 +729,8 @@ async function handleOllamaCompactionTrigger(
       compactModel: plan.compactModel,
       signal: abort.signal,
     },
+    compactNote,
+    request,
   );
 }
 
@@ -527,6 +743,7 @@ async function handleOllamaSummaryCompact(
   abort: AbortController,
   stream: boolean,
   catalogSnapshot: CatalogFile | undefined,
+  request?: GatewayRequestContext,
 ): Promise<void> {
   const history = projectOllamaSummarizerHistory(stateHistoryValues(continuation.replayHistory));
   if (!Array.isArray(history) || history.length === 0) {
@@ -566,37 +783,77 @@ async function handleOllamaSummaryCompact(
     threadModel,
     replayHistory: continuation.replayHistory,
   });
-  console.error(
-    `[cob] compaction_trigger target=${sanitizeLogToken(threadModel)} compaction provider: ${sanitizeLogToken(compactionHeader("ollama", compactModel))} ${formatCompactAttemptLog(compactNote)}`,
-  );
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "compact_start",
+    provider: "ollama",
+    thread_model: sanitizeLogToken(threadModel),
+    compact_model: sanitizeLogToken(compactModel),
+    group_sha8: compactNote.groupSha8,
+    attempt: compactNote.attempt,
+  }, options.diagnosticSink);
   const compactStarted = Date.now();
   const supportsReasoning = catalogRowSupportsReasoning(catalogSnapshot, compactModel);
   const compactEffort = supportsReasoning
     ? mapOllamaReasoningEffort(options.compaction?.ollamaEffort, compactModel) ??
       ollamaReasoningLadderForModel(compactModel).defaultEffort
     : "omitted";
-  const forwarded = await forwardOllamaResponses({
-    payload: preparedSummarizer,
-    ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
-    fetchImpl: options.ollamaFetch,
-    signal: abort.signal,
-    headersMs: resolveOllamaHeadersMs(options),
-    supportsReasoning,
-  });
+  const dispatchStarted = performance.now();
+  if (request) request.provider_attempts = 1;
+  let forwarded: Awaited<ReturnType<typeof forwardOllamaResponses>>;
+  try {
+    forwarded = await forwardOllamaResponses({
+      payload: preparedSummarizer,
+      ollamaUrl: options.ollamaUrl ?? DEFAULT_OLLAMA_URL,
+      fetchImpl: options.ollamaFetch,
+      signal: abort.signal,
+      headersMs: resolveOllamaHeadersMs(options),
+      supportsReasoning,
+      onWirePrepared: ({ bridge, stream }) => {
+        if (!request) return;
+        request.outbound_stream = stream;
+        request.hosted_tools_dropped_n = bridge.hostedToolsDroppedN;
+      },
+    });
+  } catch (error) {
+    emitCompactFailure(
+      options,
+      compactNote,
+      abort.signal.aborted ? "ollama_compaction_aborted" : "ollama_compaction_dispatch_failed",
+    );
+    throw error;
+  }
   if (isOllamaReject(forwarded)) {
+    if (request) request.provider_attempts = 0;
+    emitCompactFailure(options, compactNote, "ollama_compaction_prepare_failed");
     json(res, forwarded.status, forwarded.body);
     return;
   }
+  if (request) {
+    request.response_content_type_class = classifyOllamaContentType(forwarded.response.headers.get("content-type"));
+  }
   const { response: upstream } = forwarded;
+  markUpstreamHeaders(request, upstream.status, performance.now() - dispatchStarted, upstream.headers);
   const extra: Record<string, string> = {
     "x-cob-compaction": compactionHeader("ollama", compactModel),
   };
-  const raw = await readLimitedResponse(upstream, MAX_UPSTREAM_BODY_BYTES, {
-    idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
-    signal: abort.signal,
-  });
-  if (abort.signal.aborted) return;
+  let raw: Buffer;
+  try {
+    raw = await readLimitedResponse(upstream, MAX_UPSTREAM_BODY_BYTES, {
+      idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
+      signal: abort.signal,
+    });
+  } catch (error) {
+    emitCompactFailure(options, compactNote, abort.signal.aborted ? "ollama_compaction_aborted" : "ollama_compaction_read_failed");
+    throw error;
+  }
+  if (abort.signal.aborted) {
+    emitCompactFailure(options, compactNote, "ollama_compaction_aborted");
+    if (request) request.terminal = "client_abort";
+    return;
+  }
   if (upstream.status < 200 || upstream.status >= 300) {
+    emitCompactFailure(options, compactNote, "ollama_compaction_http_failed");
     console.error(formatOllamaSummarizerHttpError(upstream.status, raw, Date.now() - compactStarted, compactNote));
     jsonError(
       res,
@@ -609,8 +866,9 @@ async function handleOllamaSummaryCompact(
   }
   let summarizerResponse: JsonObject | undefined;
   try {
-    summarizerResponse = await parseSummarizerResponse(upstream, raw);
+    summarizerResponse = await parseSummarizerResponse(upstream, raw, request);
   } catch (error) {
+    emitCompactFailure(options, compactNote, "ollama_compaction_parse_failed");
     jsonError(
       res,
       502,
@@ -622,35 +880,44 @@ async function handleOllamaSummaryCompact(
   }
   const extracted = extractOllamaCompactSummary(summarizerResponse);
   if (extracted.kind === "error") {
-    console.error(`[cob] ollama compact failed code=${extracted.code} ${formatCompactAttemptLog(compactNote)}`);
+    emitGatewayDiagnosticEventTo({
+      schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+      kind: "compact_failure",
+      code: extracted.code,
+      group_sha8: compactNote.groupSha8,
+      attempt: compactNote.attempt,
+    }, options.diagnosticSink);
     jsonError(res, 400, extracted.code, extracted.message, { requires_full_context: true });
     return;
   }
   const incomplete = incompleteOllamaCompactHandoffError(extracted.text);
   if (incomplete) {
     const usage = extractOllamaUsage(summarizerResponse);
-    console.error(
-      `[cob] ollama compact failed code=${incomplete.code} summary_bytes=${Buffer.byteLength(extracted.text, "utf8")} effort=${compactEffort} sections=${formatCompactSectionFlags(compactHandoffSectionFlags(extracted.text))} ${usage ? formatOllamaUsage(usage) : "tokens=omitted"} ${formatCompactAttemptLog(compactNote)}`,
-    );
+    emitGatewayDiagnosticEventTo({
+      schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+      kind: "compact_failure",
+      code: incomplete.code,
+      group_sha8: compactNote.groupSha8,
+      attempt: compactNote.attempt,
+      transcript_format_version: OLLAMA_COMPACT_TRANSCRIPT_VERSION,
+      summary_bytes: Buffer.byteLength(extracted.text, "utf8"),
+      effort: compactEffort,
+      sections: sectionEventFlags(extracted.text),
+      usage: compactUsageEventFromMetrics(usage),
+    }, options.diagnosticSink);
     jsonError(res, 400, incomplete.code, incomplete.message, { requires_full_context: true });
     return;
   }
-  logOllamaCompactOk({
-    latencyMs: Date.now() - compactStarted,
-    summaryBytes: Buffer.byteLength(extracted.text, "utf8"),
-    sections: compactHandoffSectionFlags(extracted.text),
-    effort: compactEffort,
-    usage: extractOllamaUsage(summarizerResponse),
-    compactNote,
-  });
   let envelope: string;
   try {
     envelope = encodeCobCompactEnvelope(extracted.text);
   } catch (error) {
     if (error instanceof CobCompactEnvelopeError) {
+      emitCompactFailure(options, compactNote, error.code);
       jsonError(res, 400, error.code, error.message, { requires_full_context: true });
       return;
     }
+    emitCompactFailure(options, compactNote, "ollama_compaction_envelope_failed");
     throw error;
   }
   const ids = newCobCompactIds();
@@ -683,6 +950,7 @@ async function handleOllamaSummaryCompact(
       ollamaSummaryHandoffItem(extracted.text),
     );
   } catch {
+    emitCompactFailure(options, compactNote, "ollama_compaction_checkpoint_failed");
     if (stream) {
       res.writeHead(502, { "content-type": "text/event-stream", ...extra });
       res.end(sseErrorTerminal("Ollama compact checkpoint publication failed; resend the full context"));
@@ -697,13 +965,39 @@ async function handleOllamaSummaryCompact(
     }
     return;
   }
-  if (abort.signal.aborted) return;
+  logOllamaCompactOk({
+    latencyMs: Date.now() - compactStarted,
+    summaryBytes: Buffer.byteLength(extracted.text, "utf8"),
+    sections: compactHandoffSectionFlags(extracted.text),
+    effort: compactEffort,
+    usage: extractOllamaUsage(summarizerResponse),
+    compactNote,
+    sink: options.diagnosticSink,
+  });
+  if (abort.signal.aborted) {
+    emitCompactFailure(options, compactNote, "ollama_compaction_aborted");
+    if (request) request.terminal = "client_abort";
+    return;
+  }
+  if (request) {
+    request.terminal = "completed";
+    request.response_bytes = rawBody.length;
+  }
   if (stream) {
     res.writeHead(200, { "content-type": "text/event-stream", ...extra });
     res.end(rawBody);
     return;
   }
   json(res, 200, response, extra);
+}
+
+/** Section-presence flags as a content-free 0/1 event record. */
+function sectionEventFlags(text: string): Record<string, number> {
+  return sectionEventFlagsFromFlags(compactHandoffSectionFlags(text));
+}
+
+function sectionEventFlagsFromFlags(flags: ReturnType<typeof compactHandoffSectionFlags>): Record<string, number> {
+  return Object.fromEntries(Object.entries(flags).map(([name, present]) => [name, present ? 1 : 0]));
 }
 
 function logOllamaCompactOk(opts: {
@@ -713,10 +1007,36 @@ function logOllamaCompactOk(opts: {
   effort: string;
   usage: ReturnType<typeof extractOllamaUsage>;
   compactNote: CompactAttemptNote;
+  sink?: GatewayDiagnosticSink;
 }): void {
-  const usage = opts.usage ? formatOllamaUsage(opts.usage) : "tokens=omitted";
-  console.error(
-    `[cob] ollama compact ok latency_ms=${opts.latencyMs} summary_bytes=${opts.summaryBytes} effort=${opts.effort} sections=${formatCompactSectionFlags(opts.sections)} ${usage} ${formatCompactAttemptLog(opts.compactNote)}`,
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "compact_success",
+    transcript_format_version: OLLAMA_COMPACT_TRANSCRIPT_VERSION,
+    latency_ms: opts.latencyMs,
+    summary_bytes: opts.summaryBytes,
+    effort: opts.effort,
+    sections: sectionEventFlagsFromFlags(opts.sections),
+    usage: compactUsageEventFromMetrics(opts.usage),
+    group_sha8: opts.compactNote.groupSha8,
+    attempt: opts.compactNote.attempt,
+  }, opts.sink);
+}
+
+function emitCompactFailure(
+  options: GatewayOptions,
+  compactNote: CompactAttemptNote,
+  code: string,
+): void {
+  emitGatewayDiagnosticEventTo(
+    {
+      schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+      kind: "compact_failure",
+      code,
+      group_sha8: compactNote.groupSha8,
+      attempt: compactNote.attempt,
+    },
+    options.diagnosticSink,
   );
 }
 
@@ -742,8 +1062,19 @@ function sanitizeLogToken(value: string): string {
   return cleaned.length > 0 ? cleaned : "-";
 }
 
-async function parseSummarizerResponse(upstream: Response, raw: Buffer): Promise<JsonObject | undefined> {
+async function parseSummarizerResponse(
+  upstream: Response,
+  raw: Buffer,
+  request?: GatewayRequestContext,
+): Promise<JsonObject | undefined> {
   const contentType = upstream.headers.get("content-type") ?? "";
+  if (contentType.includes("text/event-stream")) {
+    if (request) request.decoder_mode = "sse_header";
+  } else if (looksLikeSse(raw)) {
+    if (request) request.decoder_mode = "sse_sniff";
+  } else {
+    if (request) request.decoder_mode = "json";
+  }
   const isSse = contentType.includes("text/event-stream") || looksLikeSse(raw);
   if (isSse) {
     const track = createOllamaTerminalTrack();
@@ -910,13 +1241,31 @@ function logOllamaStreamIncomplete(
   terminal: "empty" | "eof" | "idle" | "error" | "client_abort",
   capture: StreamCapture,
   track?: OllamaTerminalTrack,
+  request?: GatewayRequestContext,
+  sink?: GatewayDiagnosticSink,
 ): void {
-  const trackInfo = track
-    ? ` phase=${track.phase} done_n=${track.doneTrailers} contra_n=${track.contradictoryFrames} held_malformed=${track.malformed}`
-    : "";
-  console.error(
-    `[cob] ollama stream incomplete terminal=${terminal} status=${status} raw_bytes=${capture.rawBytes} completed=${capture.sawCompletedEvent} done=${capture.sawDone} malformed=${capture.malformed}${trackInfo}`,
-  );
+  if (request) {
+    request.terminal = terminal;
+    request.response_bytes = capture.rawBytes;
+  }
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "upstream_terminal",
+    terminal,
+    status,
+    raw_bytes: capture.rawBytes,
+    completed: capture.sawCompletedEvent,
+    done: capture.sawDone,
+    malformed: capture.malformed,
+    ...(track
+      ? {
+          phase: track.phase,
+          done_n: track.doneTrailers,
+          contra_n: track.contradictoryFrames,
+          held_malformed: track.malformed,
+        }
+      : {}),
+  }, sink);
 }
 
 function createStreamCapture(): StreamCapture {
@@ -948,10 +1297,17 @@ function composedSseObserver(primary: SseObserver, secondary: SseObserver): SseO
   };
 }
 
-function captureObserver(capture: StreamCapture, suppressDone = false): SseObserver {
+function captureObserver(
+  capture: StreamCapture,
+  suppressDone = false,
+  request?: GatewayRequestContext,
+): SseObserver {
   return {
     suppressDone,
     onChunk(chunk) {
+      if (request && request.first_event_latency_ms === undefined) {
+        request.first_event_latency_ms = elapsedMs(request.started_ms);
+      }
       capture.rawBytes += chunk.length;
       if (capture.rawBytes > MAX_UPSTREAM_BODY_BYTES) {
         throw new UpstreamLimitError();
@@ -1032,18 +1388,37 @@ async function relayNativeOllamaCompaction(
   abort: AbortController,
   options: GatewayOptions,
   context: OllamaStateContext & { compactModel: string },
+  compactNote: CompactAttemptNote,
+  request?: GatewayRequestContext,
 ): Promise<void> {
   const extra: Record<string, string> = {
     "x-cob-compaction": compactionHeader("native", context.compactModel),
   };
   const contentType = upstream.headers.get("content-type") ?? "";
-  const raw = await readLimitedResponse(upstream, MAX_UPSTREAM_BODY_BYTES, {
-    idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
-    signal: abort.signal,
-  });
-  if (abort.signal.aborted) return;
+  let raw: Buffer;
+  try {
+    raw = await readLimitedResponse(upstream, MAX_UPSTREAM_BODY_BYTES, {
+      idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
+      signal: abort.signal,
+    });
+  } catch (error) {
+    emitCompactFailure(
+      options,
+      compactNote,
+      abort.signal.aborted ? "native_compaction_aborted" : "native_compaction_read_failed",
+    );
+    throw error;
+  }
+  if (request) request.response_bytes = raw.length;
+  if (abort.signal.aborted) {
+    emitCompactFailure(options, compactNote, "native_compaction_aborted");
+    if (request) request.terminal = "client_abort";
+    return;
+  }
   const isSse = contentType.includes("text/event-stream") || looksLikeSse(raw);
   if (upstream.status < 200 || upstream.status >= 300) {
+    emitCompactFailure(options, compactNote, "native_compaction_http_failed");
+    if (request) request.terminal = "http_error";
     const headers = { ...copyUpstreamHeaders(upstream), ...extra };
     if (isSse && !headers["content-type"]?.includes("text/event-stream")) {
       headers["content-type"] = "text/event-stream";
@@ -1084,6 +1459,8 @@ async function relayNativeOllamaCompaction(
     validationError = nativeCompactionResponseError(candidate);
   }
   if (validationError || !candidate) {
+    emitCompactFailure(options, compactNote, "native_compaction_invalid");
+    if (request) request.terminal = "invalid_response";
     const message = `native compaction validation failed: ${validationError ?? "missing response"}`;
     if (isSse) {
       res.writeHead(502, { "content-type": "text/event-stream", ...extra });
@@ -1100,6 +1477,8 @@ async function relayNativeOllamaCompaction(
       compactModel: context.compactModel,
     });
   } catch {
+    emitCompactFailure(options, compactNote, "native_compaction_checkpoint_failed");
+    if (request) request.terminal = "checkpoint_failed";
     // The native body is still buffered and headers are not sent. Keep the
     // failure provider-safe and deterministic; never echo opaque ciphertext
     // or an implementation error into the client-facing stream.
@@ -1120,6 +1499,7 @@ async function relayNativeOllamaCompaction(
   if (isSse && !headers["content-type"]?.includes("text/event-stream")) {
     headers["content-type"] = "text/event-stream";
   }
+  if (request) request.terminal = "completed";
   res.writeHead(upstream.status, headers);
   res.end(raw);
 }
@@ -1199,13 +1579,14 @@ function logNativeSearchRequest(
   );
 }
 
-function logOllamaUsage(envelope: JsonObject | undefined): void {
+function logOllamaUsage(envelope: JsonObject | undefined): ReturnType<typeof extractOllamaUsage> {
   const usage = extractOllamaUsage(envelope);
   if (!usage) {
     console.error("[cob] ollama usage omitted (upstream did not supply exact token counts)");
-    return;
+    return undefined;
   }
   console.error(`[cob] ollama usage ${formatOllamaUsage(usage)}`);
+  return usage;
 }
 
 export function json(
@@ -1434,18 +1815,21 @@ async function relayOllama(
   context: OllamaStateContext,
   bridge: ToolSearchBridge,
   declaration: OllamaToolDeclaration,
+  request?: GatewayRequestContext,
 ): Promise<void> {
   const contentType = upstream.headers.get("content-type") ?? "";
   if (contentType.includes("text/event-stream")) {
+    if (request) request.decoder_mode = "sse_header";
     res.writeHead(upstream.status, copyUpstreamHeaders(upstream));
     const capture = createStreamCapture();
     const guard: OllamaResponseGuardState = { terminal: createOllamaTerminalTrack() };
     if (!upstream.body) {
       if (upstream.status >= 200 && upstream.status < 300) {
-        logOllamaStreamIncomplete(upstream.status, "empty", capture, guard.terminal);
+        logOllamaStreamIncomplete(upstream.status, "empty", capture, guard.terminal, request, options.diagnosticSink);
         endOllamaStream(res);
         return;
       }
+      if (request) request.terminal = "http_error";
       res.end();
       return;
     }
@@ -1465,7 +1849,7 @@ async function relayOllama(
     try {
       relayed = await relayTransformed(
         nodeStream,
-        ollamaSseTransform(catalogModel, captureObserver(capture), bridge, declaration, guard),
+        ollamaSseTransform(catalogModel, captureObserver(capture, false, request), bridge, declaration, guard),
         res,
         {
           idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
@@ -1476,9 +1860,21 @@ async function relayOllama(
         },
       );
     } catch (error) {
+      if (error instanceof OllamaJsonOverflowError) {
+        if (request) {
+          request.terminal = "overflow";
+          request.response_bytes = capture.rawBytes;
+        }
+        console.error(formatOllamaJsonOverflowLog(error.overflow));
+        if (!res.writableEnded && !res.destroyed) {
+          res.write(ollamaJsonOverflowSseTerminal(error.overflow));
+          res.end();
+        }
+        return;
+      }
       if (failClosedSse) {
         if (abort.signal.aborted) {
-          logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal);
+          logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal, request, options.diagnosticSink);
           return;
         }
         logOllamaStreamIncomplete(
@@ -1486,6 +1882,8 @@ async function relayOllama(
           error instanceof IdleTimeoutError ? "idle" : "error",
           capture,
           guard.terminal,
+          request,
+          options.diagnosticSink,
         );
         endOllamaStream(res);
         return;
@@ -1494,45 +1892,92 @@ async function relayOllama(
     }
     if (!relayed && failClosedSse) {
       if (abort.signal.aborted) {
-        logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal);
+        logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal, request, options.diagnosticSink);
         return;
       }
-      logOllamaStreamIncomplete(upstream.status, "error", capture, guard.terminal);
+      logOllamaStreamIncomplete(upstream.status, "error", capture, guard.terminal, request, options.diagnosticSink);
       endOllamaStream(res);
       return;
     }
     if (!relayed) return;
     if (abort.signal.aborted) {
-      logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal);
+      logOllamaStreamIncomplete(upstream.status, "client_abort", capture, guard.terminal, request, options.diagnosticSink);
       return;
     }
     if (guard.failure) {
-      console.error(formatOllamaGuardLog(guard.failure, declaration));
+      if (request) {
+        request.terminal = "guard_rejection";
+        request.response_bytes = 0;
+      }
+      logApplyPatchObservation(declaration, true, options.diagnosticSink);
+      emitGatewayDiagnosticEventTo({
+        schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+        kind: "guard_rejection",
+        code: guard.failure.code,
+        guard_kind: guard.failure.kind,
+        name_length: guard.failure.nameLength,
+        name_sha8: guard.failure.nameSha8,
+        declared_count: declaration.count,
+        declared_sha8: declaration.sha8,
+      }, options.diagnosticSink);
       if (!res.writableEnded && !res.destroyed) res.write(ollamaGuardSseTerminal(guard.failure));
       if (!res.writableEnded && !res.destroyed) res.end();
       return;
     }
+    // A traversal overflow taints the whole response: frames were already
+    // omitted, so success is off the table regardless of the terminal phase.
+    // Always end with exactly one overflow response.failed plus one [DONE].
+    if (guard.overflow) {
+      if (request) {
+        request.terminal = "overflow";
+        request.response_bytes = capture.rawBytes;
+      }
+      console.error(formatOllamaJsonOverflowLog(guard.overflow));
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(ollamaJsonOverflowSseTerminal(guard.overflow));
+        res.end();
+      }
+      return;
+    }
     const track = guard.terminal ?? createOllamaTerminalTrack();
     if (okStream && track.phase === "held-completed" && track.completedCandidate) {
-      await writeOllamaCompletedTerminal(res, context, track, catalogModel, bridge, declaration);
+      await writeOllamaCompletedTerminal(
+        res,
+        context,
+        track,
+        catalogModel,
+        bridge,
+        declaration,
+        request,
+        capture.rawBytes,
+        options.diagnosticSink,
+      );
       if (!res.writableEnded && !res.destroyed) res.end();
       return;
     }
     if (track.phase === "held-non-success") {
       // A single failed/incomplete/error terminal is relayed verbatim once;
       // cob never appends a success [DONE] to it.
+      if (request) {
+        request.terminal = "non_success";
+        request.response_bytes = capture.rawBytes;
+      }
       writeOllamaHeldNonSuccessTerminal(res, track, catalogModel, bridge, declaration);
     } else if (okStream) {
-      logOllamaStreamIncomplete(upstream.status, "eof", capture, track);
+      logOllamaStreamIncomplete(upstream.status, "eof", capture, track, request, options.diagnosticSink);
     }
     if (!res.writableEnded && !res.destroyed) res.end();
     return;
   }
+  if (request) request.decoder_mode = "json";
+  const bodyReadStarted = performance.now();
   const raw = await readLimitedResponse(upstream, MAX_UPSTREAM_BODY_BYTES, {
     idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
     signal: abort.signal,
   });
+  if (request) request.response_bytes = raw.length;
   if (upstream.status < 200 || upstream.status >= 300) {
+    if (request) request.terminal = "http_error";
     const retryAfter = upstream.headers.get("retry-after") ?? undefined;
     const body = normalizeOllamaErrorBody(upstream.status, raw, retryAfter);
     const headers = copyUpstreamHeaders(upstream);
@@ -1548,6 +1993,17 @@ async function relayOllama(
     // A successful Ollama response is still an API response that cob must
     // validate before relaying.  Never forward an opaque 2xx body: it could
     // be provider text, an HTML error page, or an untrusted tool dialect.
+    if (request) request.terminal = "invalid_json";
+    emitGatewayDiagnosticEventTo({
+      schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+      kind: "ollama_invalid_json",
+      ...observeOllamaInvalidJson(
+        raw,
+        upstream.headers,
+        performance.now() - bodyReadStarted,
+        upstream.status,
+      ),
+    }, options.diagnosticSink);
     jsonError(
       res,
       502,
@@ -1561,12 +2017,15 @@ async function relayOllama(
   // objects fail closed here instead of publishing state.
   const candidate = strictOllamaCompletedEnvelope(parsed);
   if (!candidate) {
+    if (request) request.terminal = "invalid_response";
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
   const failure = guardOllamaJsonResponse(candidate, declaration);
   if (failure) {
-    rejectOllamaJsonGuard(res, failure, declaration);
+    if (request) request.terminal = "guard_rejection";
+    logApplyPatchObservation(declaration, true, options.diagnosticSink);
+    rejectOllamaJsonGuard(res, failure, declaration, options.diagnosticSink);
     return;
   }
   let publicBody: Buffer;
@@ -1574,17 +2033,34 @@ async function relayOllama(
     const normalized = normalizeOllamaResponse(parsed, catalogModel, bridge, declaration.applyPatch);
     publicBody = Buffer.from(JSON.stringify(normalized), "utf8");
   } catch (error) {
+    logApplyPatchObservation(declaration, true, options.diagnosticSink);
     if (error instanceof UpstreamLimitError) throw error;
     if (error instanceof ConversationStateError) throw error;
+    if (error instanceof OllamaJsonOverflowError) {
+      if (request) request.terminal = "overflow";
+      console.error(formatOllamaJsonOverflowLog(error.overflow));
+      jsonError(
+        res,
+        502,
+        error.overflow.code,
+        "Ollama response JSON exceeded the traversal safety budget; resend the full context.",
+      );
+      return;
+    }
+    if (request) request.terminal = "invalid_response";
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
   if (declaration.applyPatch && publicBody.includes(COB_APPLY_PATCH_ALIAS)) {
+    if (request) request.terminal = "invalid_response";
+    logApplyPatchObservation(declaration, true, options.diagnosticSink);
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
+  logApplyPatchObservation(declaration, false, options.diagnosticSink);
   try {
     logOllamaUsage(candidate);
+    if (request) request.usage = compactUsageEventFromEnvelope(candidate);
     await publishOllamaCheckpoint(context, candidate, {
       model: context.catalogModel,
       upstreamModel: ollamaUpstreamModel(context.catalogModel),
@@ -1592,9 +2068,11 @@ async function relayOllama(
   } catch (error) {
     if (error instanceof UpstreamLimitError) throw error;
     if (error instanceof ConversationStateError) throw error;
+    if (request) request.terminal = "checkpoint_error";
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
+  if (request) request.terminal = "completed";
   const headers = copyUpstreamHeaders(upstream);
   headers["content-type"] = "application/json";
   res.writeHead(upstream.status, headers);
@@ -1614,6 +2092,9 @@ async function writeOllamaCompletedTerminal(
   catalogModel: string,
   bridge: ToolSearchBridge,
   declaration: OllamaToolDeclaration,
+  request?: GatewayRequestContext,
+  responseBytes?: number,
+  sink?: GatewayDiagnosticSink,
 ): Promise<void> {
   try {
     const candidate = track.completedCandidate;
@@ -1625,7 +2106,13 @@ async function writeOllamaCompletedTerminal(
     if (normalized === APPLY_PATCH_OMIT) {
       throw new Error("Ollama terminal was rejected by the apply-patch rewrite");
     }
+    if (request) {
+      request.terminal = "completed";
+      request.response_bytes = responseBytes;
+    }
+    logApplyPatchObservation(declaration, false, sink);
     logOllamaUsage(candidate);
+    if (request) request.usage = compactUsageEventFromEnvelope(candidate);
     await publishOllamaCheckpoint(context, candidate, {
       model: context.catalogModel,
       upstreamModel: ollamaUpstreamModel(context.catalogModel),
@@ -1635,6 +2122,16 @@ async function writeOllamaCompletedTerminal(
       res.write(sseDoneTerminal());
     }
   } catch (error) {
+    logApplyPatchObservation(declaration, true, sink);
+    if (error instanceof OllamaJsonOverflowError) {
+      if (request) request.terminal = "overflow";
+      console.error(formatOllamaJsonOverflowLog(error.overflow));
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(ollamaJsonOverflowSseTerminal(error.overflow));
+      }
+      return;
+    }
+    if (request) request.terminal = "stream_error";
     if (!res.writableEnded && !res.destroyed) {
       res.write(sseErrorTerminal(error instanceof Error ? error.message : String(error)));
     }
@@ -1661,6 +2158,13 @@ function writeOllamaHeldNonSuccessTerminal(
     }
   } catch (error) {
     if (error instanceof UpstreamLimitError) throw error;
+    if (error instanceof OllamaJsonOverflowError) {
+      console.error(formatOllamaJsonOverflowLog(error.overflow));
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(ollamaJsonOverflowSseTerminal(error.overflow));
+      }
+      return;
+    }
     // A non-success terminal that cannot be safely rewritten simply ends the
     // stream without a client terminal; cob never invents one.
   }
@@ -1670,8 +2174,18 @@ function rejectOllamaJsonGuard(
   res: ServerResponse,
   failure: OllamaGuardFailure,
   declaration: OllamaToolDeclaration,
+  sink?: GatewayDiagnosticSink,
 ): void {
-  console.error(formatOllamaGuardLog(failure, declaration));
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "guard_rejection",
+    code: failure.code,
+    guard_kind: failure.kind,
+    name_length: failure.nameLength,
+    name_sha8: failure.nameSha8,
+    declared_count: declaration.count,
+    declared_sha8: declaration.sha8,
+  }, sink);
   const body = Buffer.from(JSON.stringify(ollamaGuardHttpBody(failure)), "utf8");
   res.writeHead(502, {
     "content-type": "application/json",
@@ -1690,6 +2204,51 @@ function rejectOllamaJsonNormalize(res: ServerResponse, declaration: OllamaToolD
     OLLAMA_DIALECT.response.invalidResponse,
     "Ollama returned an invalid response; resend the full context.",
   );
+}
+
+/** Emit Gate 5's boolean-only turn facts after response normalization. */
+function logApplyPatchObservation(
+  declaration: OllamaToolDeclaration,
+  requireModelCall = false,
+  sink?: GatewayDiagnosticSink,
+): void {
+  if (!declaration.applyPatch?.enabled) return;
+  const bridge = declaration.applyPatch;
+  if (requireModelCall && !bridge.observation.modelCallObserved) return;
+  const observed = observeApplyPatchTurn(
+    bridge,
+    declaration.names.has(declaration.applyPatch.alias),
+  );
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "gate5_observation",
+    classification: observed.classification,
+    declaration_present: observed.declarationPresent,
+    outbound_alias_present: observed.outboundAliasPresent,
+    model_call_observed: observed.modelCallObserved,
+    restoration_observed: observed.restorationObserved,
+  }, sink);
+}
+
+/**
+ * One response.failed terminal plus exactly one client [DONE] for an
+ * upstream-response traversal overflow. Content-free: no path, key, or value
+ * from the offending body.
+ */
+function ollamaJsonOverflowSseTerminal(overflow: { code: string }): string {
+  const failed = {
+    type: "response.failed",
+    response: {
+      status: "failed",
+      error: {
+        type: "upstream_error",
+        code: overflow.code,
+        message:
+          "Ollama response JSON exceeded the traversal safety budget; resend the full context.",
+      },
+    },
+  };
+  return `data: ${JSON.stringify(failed)}\n\n${sseDoneTerminal()}`;
 }
 
 function resolveNativeHeadersMs(options: GatewayOptions): number {

@@ -21,6 +21,8 @@ import {
   resolveCatalog,
   type GatewayOptions,
 } from "./responses.js";
+import { gatewayDiagnosticJsonlEnabled } from "../diagnostic-event.js";
+import { DiagnosticLog } from "../runtime/diagnostic-log.js";
 
 /**
  * Gateway HTTP shell: loopback bind, allowlisted routes, health and shutdown
@@ -44,8 +46,16 @@ export function createGateway(options: GatewayOptions): Server {
           ),
         }
       : options;
-  return createServer((req, res) => {
-    void handleRequest(req, res, gatewayOptions).catch((error: unknown) => {
+  const diagnosticLog =
+    gatewayDiagnosticJsonlEnabled() && options.diagnosticPath
+      ? new DiagnosticLog(options.diagnosticPath)
+      : undefined;
+  const effectiveOptions = {
+    ...gatewayOptions,
+    ...(diagnosticLog ? { diagnosticSink: diagnosticLog } : {}),
+  };
+  const server = createServer((req, res) => {
+    void handleRequest(req, res, effectiveOptions).catch((error: unknown) => {
       if (isAbortLike(error) || error instanceof BodyAbortedError) {
         if (!res.writableEnded) res.end();
         return;
@@ -69,6 +79,11 @@ export function createGateway(options: GatewayOptions): Server {
       jsonError(res, 500, "server_error", error instanceof Error ? error.message : String(error));
     });
   });
+  if (diagnosticLog) {
+    server.once("error", () => diagnosticLog.close());
+    server.once("close", () => diagnosticLog.close());
+  }
+  return server;
 }
 
 export function listenGateway(options: GatewayOptions): Promise<Server> {

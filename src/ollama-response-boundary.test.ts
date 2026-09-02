@@ -405,7 +405,7 @@ describe("Ollama SSE response guard", () => {
 });
 
 describe("Ollama guard diagnostics", () => {
-  it("keeps client preview bounded and logs content-free", () => {
+  it("keeps guard logs and client errors content-free", () => {
     const declared = declarationOf([{ type: "function", name: "exec_command" }]);
     const ugly = `apply_patch\nSECRET=token\r\n${"x".repeat(200)}`;
     const failure = guardOllamaJsonResponse(jsonResponse([functionCall(ugly)]), declared);
@@ -430,7 +430,58 @@ describe("Ollama guard diagnostics", () => {
     assert.equal(sse.includes("data: [DONE]"), true);
     assert.equal([...sse.matchAll(/response\.failed/g)].length, 1);
     assert.equal([...sse.matchAll(/data: \[DONE\]/g)].length, 1);
-    assert.ok(failure.preview.length <= 100);
+  });
+});
+
+describe("Ollama tool-search argument guard", () => {
+  const declared = declarationOf([{ type: "function", name: "tool_search" }]);
+
+  it("rejects malformed, scalar, and array tool_search arguments fail-closed", () => {
+    const rejected = ["not-json", "{", '"scalar"', "5", "12.5", "true", "null", "[1,2]", '{"query":"x"'];
+    let last: ReturnType<typeof guardOllamaJsonResponse>;
+    for (const args of rejected) {
+      const failure = guardOllamaJsonResponse(
+        jsonResponse([functionCall("tool_search", { arguments: args })]),
+        declared,
+      );
+      assert.ok(failure, `expected a guard failure for argument shape`);
+      assert.equal(failure.code, "ollama_tool_call_invalid");
+      assert.equal((failure as { kind?: string }).kind, "invalid_arguments");
+      last = failure;
+    }
+    const message = ollamaGuardMessage(last!);
+    assert.equal(message.includes("query"), false);
+    assert.equal(message.includes("scalar"), false);
+    assert.equal(message, "Ollama returned a client tool call with malformed arguments.");
+  });
+
+  it("inspects tool_search arguments on SSE output items too", () => {
+    const failure = inspectOllamaSseEvent(
+      { type: "response.output_item.added", item: functionCall("tool_search", { arguments: "not-json" }) },
+      declared,
+    );
+    assert.ok(failure);
+    assert.equal(failure?.code, "ollama_tool_call_invalid");
+    assert.equal((failure as { kind?: string }).kind, "invalid_arguments");
+  });
+
+  it("accepts absent, empty, object, and valid JSON object arguments", () => {
+    const accepted: unknown[] = [undefined, "", "   ", "{}", "  {}  ", '{"query":"x"}', { query: "x" }];
+    for (const args of accepted) {
+      const failure = guardOllamaJsonResponse(
+        jsonResponse([functionCall("tool_search", { arguments: args })]),
+        declared,
+      );
+      assert.equal(failure, undefined);
+    }
+  });
+
+  it("leaves non-tool_search calls on the name-only contract", () => {
+    const execDeclared = declarationOf([{ type: "function", name: "exec_command" }]);
+    assert.equal(
+      guardOllamaJsonResponse(jsonResponse([functionCall("exec_command", { arguments: "not-json" })]), execDeclared),
+      undefined,
+    );
   });
 });
 

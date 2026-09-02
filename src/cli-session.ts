@@ -23,6 +23,7 @@ export type CliFlags = {
   dir?: string;
   compactionProvider?: string;
   compactionModel?: string;
+  json: boolean;
 };
 
 const VALUE_FLAGS = new Set([
@@ -34,9 +35,9 @@ const VALUE_FLAGS = new Set([
   "--compaction-model",
 ]);
 
-const BOOLEAN_FLAGS = new Set(["--foreground", "--live", "--dev", "--live-home", "--desktop"]);
+const BOOLEAN_FLAGS = new Set(["--foreground", "--live", "--dev", "--live-home", "--desktop", "--json"]);
 
-const SESSION_COMMANDS = new Set(["start", "serve", "stop", "restore", "status", "sync", "smoke", "agents"]);
+const SESSION_COMMANDS = new Set(["start", "serve", "stop", "restore", "status", "sync", "smoke", "agents", "state verify"]);
 
 function flagApplies(flag: string, surface: CobSurface, command: string): boolean {
   if (command === "version" || command === "pack" || command === "help") return false;
@@ -62,6 +63,8 @@ function flagApplies(flag: string, surface: CobSurface, command: string): boolea
     case "--compaction-provider":
     case "--compaction-model":
       return surface === "codex" && (command === "start" || command === "serve");
+    case "--json":
+      return surface === "codex" && (command === "status" || command === "state verify");
     default:
       return false;
   }
@@ -109,6 +112,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   }
   const surfaceArg = positionals[0];
   const surfacePrefix = surfaceArg !== undefined && isCobSurface(surfaceArg);
+  // The exact narrow nested subcommand `cob state verify` (read-only audit).
+  const isStateVerify = !surfacePrefix && surfaceArg === "state" && positionals[1] === "verify";
   let surface: CobSurface = DEFAULT_SURFACE;
   let command = "help";
   if (surfacePrefix && surfaceArg) {
@@ -117,7 +122,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   } else if (surfaceArg !== undefined) {
     command = surfaceArg;
   }
-  const maxPositionals = surfacePrefix ? 2 : 1;
+  if (isStateVerify) command = "state verify";
+  const maxPositionals = isStateVerify ? 2 : surfacePrefix ? 2 : 1;
   if (positionals.length > maxPositionals) {
     throw new Error(`unexpected positional argument: ${positionals[maxPositionals]}`);
   }
@@ -132,6 +138,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   applyBoolean("--dev", () => (flags.dev = true));
   applyBoolean("--live-home", () => (flags.liveHome = true));
   applyBoolean("--desktop", () => (flags.desktop = true));
+  applyBoolean("--json", () => (flags.json = true));
   const applyValue = (flag: string, set: (value: string) => void): void => {
     const value = values.get(flag);
     if (value === undefined) return;
@@ -188,6 +195,7 @@ function baseFlags(command: string, env: NodeJS.ProcessEnv, surface: CobSurface 
     dev: false,
     liveHome: env.COB_ALLOW_LIVE_HOME === "1",
     desktop: false,
+    json: false,
   };
 }
 

@@ -13,6 +13,7 @@ import {
   readFileSync,
   realpathSync,
   rmdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -20,7 +21,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { uniqueTempPath } from "./core/atomic.js";
@@ -33,6 +34,8 @@ import {
   readStartLease,
   restrictExperimentalToIsolatedHome,
   RootConfigUnreadableError,
+  cobOwnedFiles,
+  overlayStateFiles,
   restoreCob,
   restoreOverlays,
   serveForeground,
@@ -51,6 +54,25 @@ import { resolvePaths } from "./codex/paths.js";
 import { cobProcessIdentity, isOurCobArgv, processStartKey } from "./core/process-info.js";
 
 describe("lifecycle primitives", () => {
+  it("owns diagnostic rotation files without snapshotting them as overlays", () => {
+    const paths = resolvePaths(join(mkdtempSync(join(tmpdir(), "cob-diagnostic-lifecycle-")), ".codex"));
+    const backup = `${paths.diagnostics}.1`;
+    assert.ok(cobOwnedFiles(paths).includes(paths.diagnostics));
+    assert.ok(cobOwnedFiles(paths).includes(backup));
+    assert.equal(overlayStateFiles(paths).includes(paths.diagnostics), false);
+    assert.equal(overlayStateFiles(paths).includes(backup), false);
+  });
+
+  it("removes both diagnostic files during restore", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cob-diagnostic-restore-"));
+    const paths = resolvePaths(home);
+    writeFileSync(paths.diagnostics, "active\n");
+    writeFileSync(`${paths.diagnostics}.1`, "backup\n");
+    await restoreCob(paths);
+    assert.equal(existsSync(paths.diagnostics), false);
+    assert.equal(existsSync(`${paths.diagnostics}.1`), false);
+  });
+
   it("forces Gate 5 and native plaintext off before a live home policy is persisted", () => {
     const cob = {
       compaction: { provider: "native" as const },
@@ -1031,7 +1053,16 @@ describe("overlay rollback and start lease", () => {
     };
     const ollama = catalog.models.find((model) => String(model.slug).startsWith("ollama/"));
     if (ollama) assert.equal(ollama.supports_search_tool, false);
-    assert.equal(parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8")).schema_version, 1);
+    // The v2 failure attempt is cleared; degraded Ollama discovery now persists
+    // as schema 3 evidence instead of a bare v1 sidecar.
+    const finalMeta = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+    assert.equal(finalMeta.schema_version, 3);
+    assert.equal(
+      finalMeta.schema_version === 3 && "ollama_discovery" in finalMeta
+        ? finalMeta.ollama_discovery?.state
+        : "",
+      "degraded",
+    );
   });
 
   it("keeps Gate 5 isolated and applies patch only to the configured spawn row during sync", async () => {
@@ -1730,6 +1761,69 @@ describe("cob status desktop overlay", () => {
     assert.match(report.text, /catalog provenance: stale/);
   });
 
+  it("emits a stable JSON status derived from the same assessment as the human output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-json-"));
+    const paths = resolvePaths(dir);
+    const report = await statusReport(paths, {
+      discovery: { liveHome: false, platform: "darwin", desktopBins: [], pathBin: undefined },
+    });
+    assert.equal(report.json.schema_version, 1);
+    assert.equal(report.json.kind, "stale");
+    assert.equal(report.json.needs_action, !report.ok);
+    assert.match(report.text, new RegExp(`^cob: ${report.json.kind}\n`));
+    assert.equal(report.json.gateway.running, false);
+    assert.equal(report.json.gateway.healthy, false);
+    assert.equal(report.json.overlay, "absent");
+    assert.equal(report.json.catalog.present, false);
+    assert.equal(report.json.catalog.freshness, "missing");
+    assert.deepEqual(report.json.action_codes, ["cob_start", "cob_sync"]);
+    assert.equal(report.json.home.kind, "isolated");
+    // JSON must serialize without throwing and without leaking the runtime nonce.
+    const serialized = JSON.stringify(report.json);
+    assert.equal(serialized.includes("nonce"), false);
+    assert.doesNotThrow(() => JSON.parse(serialized));
+    // Content-free JSON: no absolute home path or account identifier; only
+    // the stable home kind leaves the machine.
+    assert.equal(serialized.includes("codex_home"), false);
+    assert.equal(serialized.includes(dir), false);
+    assert.equal(serialized.includes(homedir()), false);
+  });
+
+  it("serializes missing and corrupt sidecars and stopped gateways without throwing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-json-corrupt-"));
+    const paths = resolvePaths(dir);
+    writeFileSync(paths.catalog, "{}\n");
+    writeFileSync(paths.catalogMeta, "{not json");
+    const report = await statusReport(paths, {
+      discovery: { liveHome: false, platform: "darwin", desktopBins: [], pathBin: undefined },
+    });
+    assert.doesNotThrow(() => JSON.stringify(report.json));
+    assert.equal(report.json.catalog.meta_present, true);
+    assert.notEqual(report.json.catalog.freshness, "fresh");
+    assert.equal(report.json.gateway.running, false);
+  });
+
+  it("does not report a stale runtime record as a running gateway", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-status-stale-runtime-"));
+    const paths = resolvePaths(dir);
+    const dead = spawnSync("true");
+    assert.equal(dead.status, 0);
+    assert.ok(dead.pid);
+    writeRuntime(paths, {
+      pid: dead.pid!,
+      port: 1,
+      ollamaUrl: "http://127.0.0.1:1",
+      startedAt: "2026-08-31T00:00:00.000Z",
+    });
+    const report = await statusReport(paths);
+    assert.equal(report.json.gateway.healthy, false);
+    // The runtime JSON alone is not evidence: a dead recorded pid must not
+    // report running=true, and status stays read-only.
+    assert.equal(report.json.gateway.running, false);
+    assert.ok(report.json.action_codes.includes("cob_start"));
+    assert.match(report.text, /no live cob process/);
+  });
+
   it("keeps the previous catalog and embeds its provenance when a second consumer rejects", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-sync-reject-"));
     const paths = resolvePaths(dir);
@@ -2169,6 +2263,7 @@ describe("private log target", () => {
       dev: true,
       liveHome: false,
       desktop: false,
+      json: false,
       home: dir,
     };
     try {
@@ -2224,5 +2319,282 @@ describe("root config read taxonomy", () => {
       assert.doesNotMatch(String(error), /model =/);
       return true;
     });
+  });
+});
+
+describe("standalone sync publication rollback", () => {
+  const ROOT_BYTES = "ROOT\n";
+  const BUNDLED_A = JSON.stringify({
+    models: [{ slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
+  });
+  const BUNDLED_B = JSON.stringify({
+    models: [
+      { slug: "gpt-5.6-sol", visibility: "list", priority: 9 },
+      { slug: "gpt-5.7-terra", visibility: "list", priority: 1 },
+    ],
+  });
+
+  function writeCodexBin(dir: string, name: "accept" | "reject", bundledPath: string): string {
+    const path = join(dir, name);
+    const emit = `if [ "$3" = "--bundled" ]; then\n  cat "${bundledPath}"\n  exit 0\nfi\n`;
+    const body =
+      name === "reject"
+        ? `${emit}echo 'Codex rejected cob catalog: missing consumer field' >&2\nexit 1\n`
+        : `${emit}exit 0\n`;
+    writeFileSync(path, `#!/bin/sh\n${body}`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  function brokenParent(): { path: string; cleanup: () => void } {
+    const path = join(tmpdir(), `cob-sync-broken-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+    mkdirSync(path);
+    chmodSync(path, 0o555);
+    return {
+      path,
+      cleanup: () => {
+        chmodSync(path, 0o755);
+        rmSync(path, { recursive: true, force: true });
+      },
+    };
+  }
+
+  function syncHome(dir: string, bin: string) {
+    const paths = resolvePaths(dir);
+    writeFileSync(paths.rootConfig, ROOT_BYTES);
+    writeFileSync(paths.cobConfig, "# cob\n");
+    const bundledPath = join(dir, "bundled.json");
+    writeFileSync(bundledPath, BUNDLED_A);
+    const discovery = { liveHome: false, platform: "darwin" as const, pathBin: bin };
+    const inspect = { readVersion: () => "codex-cli test" };
+    const syncOpts = () => ({
+      paths,
+      ollamaUrl: "http://127.0.0.1:1",
+      discovery,
+      inspect,
+      locked: true,
+    });
+    const published = () => ({
+      catalog: readFileSync(paths.catalog),
+      meta: readFileSync(paths.catalogMeta),
+      profile: readFileSync(paths.profile),
+    });
+    return { paths, bundledPath, syncOpts, published };
+  }
+
+  it("restores exact prior overlays when publication fails after the catalog write", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-rollback-meta-"));
+    const accept = writeCodexBin(dir, "accept", join(dir, "bundled.json"));
+    const { paths, bundledPath, syncOpts, published } = syncHome(dir, accept);
+    await syncCatalog(syncOpts());
+    const before = published();
+    writeFileSync(bundledPath, BUNDLED_B);
+    const broken = brokenParent();
+    try {
+      await assert.rejects(
+        () => syncCatalog({ ...syncOpts(), paths: { ...paths, catalogMeta: join(broken.path, "meta") } }),
+        /EACCES|EPERM|permission|read-only/i,
+      );
+      assert.equal(readFileSync(paths.catalog).equals(before.catalog), true, "catalog bytes");
+      assert.equal(readFileSync(paths.catalogMeta).equals(before.meta), true, "metadata bytes");
+      assert.equal(readFileSync(paths.profile).equals(before.profile), true, "profile bytes");
+      assert.equal(readFileSync(paths.rootConfig, "utf8"), ROOT_BYTES);
+      assert.equal(existsSync(paths.runtime), false);
+    } finally {
+      broken.cleanup();
+    }
+  });
+
+  it("restores exact prior overlays when publication fails at the profile write", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-rollback-profile-"));
+    const accept = writeCodexBin(dir, "accept", join(dir, "bundled.json"));
+    const { paths, bundledPath, syncOpts, published } = syncHome(dir, accept);
+    await syncCatalog(syncOpts());
+    const before = published();
+    writeFileSync(bundledPath, BUNDLED_B);
+    const broken = brokenParent();
+    try {
+      await assert.rejects(
+        () => syncCatalog({ ...syncOpts(), paths: { ...paths, profile: join(broken.path, "profile") } }),
+        /EACCES|EPERM|permission|read-only/i,
+      );
+      assert.equal(readFileSync(paths.catalog).equals(before.catalog), true, "catalog bytes");
+      assert.equal(readFileSync(paths.catalogMeta).equals(before.meta), true, "metadata bytes");
+      assert.equal(readFileSync(paths.profile).equals(before.profile), true, "profile bytes");
+      assert.equal(readFileSync(paths.rootConfig, "utf8"), ROOT_BYTES);
+    } finally {
+      broken.cleanup();
+    }
+  });
+
+  it("keeps the consumer-rejection sidecar while restoring last-good publication bytes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-rollback-reject-"));
+    const accept = writeCodexBin(dir, "accept", join(dir, "bundled.json"));
+    const { paths, syncOpts, published } = syncHome(dir, accept);
+    await syncCatalog(syncOpts());
+    const before = published();
+    const reject = writeCodexBin(dir, "reject", join(dir, "bundled.json"));
+    await assert.rejects(
+      () => syncCatalog({ ...syncOpts(), discovery: { liveHome: false, platform: "darwin" as const, pathBin: reject } }),
+      /rejected cob catalog/,
+    );
+    const { parseCatalogMetadata } = await import("./codex/catalog/provenance.js");
+    const retained = parseCatalogMetadata(readFileSync(paths.catalogMeta, "utf8"));
+    assert.equal(retained.schema_version, 2);
+    assert.ok(retained.schema_version === 2 && retained.last_failure);
+    assert.equal(readFileSync(paths.catalog).equals(before.catalog), true, "catalog bytes");
+    assert.equal(readFileSync(paths.profile).equals(before.profile), true, "profile bytes");
+    assert.equal(readFileSync(paths.rootConfig, "utf8"), ROOT_BYTES);
+  });
+
+  it("keeps write-if-changed behavior across successful standalone syncs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-sync-write-if-changed-"));
+    const accept = writeCodexBin(dir, "accept", join(dir, "bundled.json"));
+    const { paths, syncOpts, published } = syncHome(dir, accept);
+    const first = await syncCatalog(syncOpts());
+    assert.equal(first.wrote, true);
+    const before = published();
+    const second = await syncCatalog(syncOpts());
+    assert.equal(second.wrote, false);
+    assert.equal(readFileSync(paths.catalog).equals(before.catalog), true);
+    assert.equal(readFileSync(paths.profile).equals(before.profile), true);
+  });
+});
+
+describe("WP1.6 lifecycle hardening", () => {
+  const MALFORMED_LEASE = "{not-json\n";
+
+  function writeMalformedLease(paths: { startLease: string }): void {
+    writeFileSync(paths.startLease, MALFORMED_LEASE, { mode: 0o600 });
+  }
+
+  it("blocks sync, start, and restore when the start lease bytes are malformed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-lease-malformed-"));
+    const paths = resolvePaths(dir);
+    writeMalformedLease(paths);
+    try {
+      await assert.rejects(
+        () => syncCatalog({ paths, ollamaUrl: "http://127.0.0.1:1" }),
+        /unreadable cob start lease/,
+      );
+      await assert.rejects(
+        async () =>
+          startGatewayDetached({
+            paths,
+            port: await freePort(),
+            ollamaUrl: "http://127.0.0.1:1",
+            spawnServe: () => {
+              throw new Error("must not spawn over a malformed lease");
+            },
+          }),
+        /unreadable cob start lease/,
+      );
+      await assert.rejects(() => restoreCob(paths), /unreadable cob start lease/);
+      assert.equal(readFileSync(paths.startLease, "utf8"), MALFORMED_LEASE);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses locked sync over a malformed lease without touching any bytes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-lease-locked-"));
+    const paths = resolvePaths(dir);
+    writeMalformedLease(paths);
+    try {
+      await assert.rejects(
+        () => syncCatalog({ paths, ollamaUrl: "http://127.0.0.1:1", locked: true }),
+        /unreadable cob start lease/,
+      );
+      assert.equal(readFileSync(paths.startLease, "utf8"), MALFORMED_LEASE);
+      assert.equal(existsSync(paths.catalog), false);
+      assert.equal(existsSync(paths.profile), false);
+      assert.equal(existsSync(paths.cobConfig), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses detached start before the healthy-runtime early return", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-lease-healthy-runtime-"));
+    const paths = resolvePaths(dir);
+    const port = await freePort();
+    const gateway = spawnPlainHealthGateway(dir, port);
+    try {
+      writeRuntime(paths, {
+        pid: gateway.pid!,
+        port,
+        ollamaUrl: "http://127.0.0.1:1",
+        startedAt: new Date().toISOString(),
+        nonce: "healthy-runtime-nonce",
+        startKey: processStartKey(gateway.pid!),
+      });
+      await waitForHealth(port, { attempts: 100, nonce: "healthy-runtime-nonce", pid: gateway.pid });
+      writeMalformedLease(paths);
+      let spawnCalls = 0;
+      await assert.rejects(
+        () =>
+          startGatewayDetached({
+            paths,
+            port,
+            ollamaUrl: "http://127.0.0.1:1",
+            spawnServe: () => {
+              spawnCalls += 1;
+              throw new Error("must not spawn over a malformed lease");
+            },
+          }),
+        /unreadable cob start lease/,
+      );
+      assert.equal(spawnCalls, 0);
+      assert.equal(readFileSync(paths.startLease, "utf8"), MALFORMED_LEASE);
+    } finally {
+      gateway.kill("SIGKILL");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not publish overlays when the prepare start path sees a malformed lease", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-lease-prepare-"));
+    const paths = resolvePaths(dir);
+    writeMalformedLease(paths);
+    try {
+      await assert.rejects(
+        () =>
+          prepareProfileAndCatalog({ paths, ollamaUrl: "http://127.0.0.1:1", locked: true }),
+        /unreadable cob start lease/,
+      );
+      assert.equal(readFileSync(paths.startLease, "utf8"), MALFORMED_LEASE);
+      assert.equal(existsSync(paths.catalog), false);
+      assert.equal(existsSync(paths.profile), false);
+      assert.equal(existsSync(paths.cobConfig), false);
+      assert.equal(existsSync(paths.rootConfig), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on malformed runtime pid and port values", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-runtime-malformed-"));
+    const paths = resolvePaths(dir);
+    try {
+      const write = (value: unknown) => {
+        writeFileSync(paths.runtime, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+      };
+      const base = { ollamaUrl: "http://127.0.0.1:1", startedAt: "2026-08-31T00:00:00Z" };
+      write({ ...base, pid: -5, port: 18791 });
+      assert.equal(readRuntime(paths), null);
+      write({ ...base, pid: 1.5, port: 18791 });
+      assert.equal(readRuntime(paths), null);
+      write({ ...base, pid: 4242, port: 0 });
+      assert.equal(readRuntime(paths), null);
+      write({ ...base, pid: 4242, port: 70000 });
+      assert.equal(readRuntime(paths), null);
+      write({ ...base, pid: 4242, port: 18791 });
+      const runtime = readRuntime(paths);
+      assert.ok(runtime);
+      assert.equal(runtime?.pid, 4242);
+      assert.equal(runtime?.port, 18791);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -6,18 +6,60 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ConversationStateError, type StateHistoryItem } from "./codex/state/schema.js";
+import { ConversationStateError, encodeResponseId, MAX_STATE_CHAIN_DEPTH, type StateHistoryItem } from "./codex/state/schema.js";
+import { MAX_UPSTREAM_BODY_BYTES } from "./core/http/body.js";
 import { ConversationStateStore } from "./codex/state/store.js";
 import { createStateHistoryItems, historyItemIdentity, mergeStateHistory } from "./codex/state/history.js";
+import { formatStateVerifyReport, verifyStateIntegrity } from "./codex/state/verify.js";
+import { readdirSync as readdirSnapshotSync } from "node:fs";
+
+function snapshotDir(dir: string): Map<string, { mode: number; bytes: number }> {
+  const snapshot = new Map<string, { mode: number; bytes: number }>();
+  const walk = (current: string, prefix: string): void => {
+    for (const name of readdirSnapshotSync(current)) {
+      const path = join(current, name);
+      const key = `${prefix}${name}`;
+      const stat = statSync(path);
+      if (stat.isDirectory()) {
+        snapshot.set(`${key}/`, { mode: stat.mode, bytes: 0 });
+        walk(path, `${key}/`);
+      } else {
+        snapshot.set(key, { mode: stat.mode, bytes: stat.size });
+      }
+    }
+  };
+  walk(dir, "");
+  return snapshot;
+}
 
 function newStore(options?: ConstructorParameters<typeof ConversationStateStore>[1]): ConversationStateStore {
   return new ConversationStateStore(mkdtempSync(join(tmpdir(), "cob-state-test-")), options);
+}
+
+/**
+ * Sabotages the checkpoints directory after the parent resolution inside
+ * publish, so the candidate checkpoint write fails with EACCES while the
+ * candidate archive write (compact archive dir) still succeeds.
+ */
+class SabotagedCheckpointsStore extends ConversationStateStore {
+  constructor(stateDir: string, private readonly sabotage: () => void) {
+    super(stateDir);
+  }
+
+  async resolve(responseId: string) {
+    const resolved = await super.resolve(responseId);
+    this.sabotage();
+    return resolved;
+  }
 }
 
 function draft(
@@ -362,6 +404,111 @@ describe("durable Ollama conversation state", () => {
     assert.equal(existsSync(store.checkpointPath("sum-1")), false);
   });
 
+  it("preserves a corrupt checkpoint's archive during explicit cleanup while true orphans remain reclaimable", async () => {
+    const store = newStore();
+    mkdirSync(store.checkpointsDir, { recursive: true, mode: 0o700 });
+    mkdirSync(store.compactArchiveDir, { recursive: true, mode: 0o700 });
+    writeFileSync(store.checkpointPath("corrupt"), "{not-json\n", { mode: 0o600 });
+    const corruptArchive = Buffer.from('{"id":"corrupt","object":"response.compaction"}');
+    writeFileSync(store.compactArchivePath("corrupt"), corruptArchive, { mode: 0o600 });
+    const orphan = Buffer.from('{"id":"orphan","object":"response.compaction"}');
+    writeFileSync(store.compactArchivePath("orphan"), orphan, { mode: 0o600 });
+    await store.cleanup();
+    assert.equal(readFileSync(store.checkpointPath("corrupt")).equals(Buffer.from("{not-json\n")), true);
+    assert.equal(readFileSync(store.compactArchivePath("corrupt")).equals(corruptArchive), true);
+    assert.equal(existsSync(store.compactArchivePath("orphan")), false);
+  });
+
+  it("preserves a corrupt checkpoint's archive during the post-publish orphan cleanup", async () => {
+    const store = newStore();
+    await store.publish(draft("old", [{ id: "u-old", type: "message", text: "old" }], []));
+    writeFileSync(store.checkpointPath("corrupt"), "{not-json\n", { mode: 0o600 });
+    const corruptArchive = Buffer.from('{"id":"corrupt","object":"response.compaction"}');
+    writeFileSync(store.compactArchivePath("corrupt"), corruptArchive, { mode: 0o600 });
+    const rootHistory = (await store.resolve("old")).history;
+    await store.publish(
+      draft("next", [{ id: "u-next", type: "message", text: "next" }], [], "old", undefined, rootHistory),
+    );
+    assert.equal(existsSync(store.checkpointPath("next")), true);
+    assert.equal(readFileSync(store.checkpointPath("corrupt")).equals(Buffer.from("{not-json\n")), true);
+    assert.equal(readFileSync(store.compactArchivePath("corrupt")).equals(corruptArchive), true);
+  });
+
+  it("removes only the archive created by a failed candidate checkpoint write", async () => {
+    const store = new SabotagedCheckpointsStore(mkdtempSync(join(tmpdir(), "cob-state-test-")), () => {
+      chmodSync(store.checkpointsDir, 0o500);
+    });
+    await store.publish(draft("old", [{ id: "u-old", type: "message", text: "old" }], []));
+    writeFileSync(store.compactArchivePath("kept"), '{"id":"kept","object":"response"}', { mode: 0o600 });
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "victim",
+      "replacement",
+    );
+    await assert.rejects(
+      () =>
+        store.publish({
+          ...draft("victim", [], [{ type: "compaction", encrypted_content: "secret" }], "old", replacement),
+          providerInput: [],
+          providerOutput: [],
+          responseBody: {
+            id: "victim",
+            object: "response.compaction",
+            output: [{ type: "compaction", encrypted_content: "secret" }],
+          },
+          provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+          rawCompactBody: Buffer.from('{"id":"victim","object":"response.compaction"}'),
+        }),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "EACCES",
+    );
+    try {
+      assert.equal(existsSync(store.compactArchivePath("victim")), false);
+      assert.equal(existsSync(store.checkpointPath("victim")), false);
+      assert.equal(existsSync(store.checkpointPath("old")), true);
+      assert.equal(readFileSync(store.compactArchivePath("kept"), "utf8"), '{"id":"kept","object":"response"}');
+      await store.resolve("old");
+    } finally {
+      chmodSync(store.checkpointsDir, 0o700);
+    }
+  });
+
+  it("never removes a pre-existing matching archive when the candidate checkpoint write fails", async () => {
+    const store = new SabotagedCheckpointsStore(mkdtempSync(join(tmpdir(), "cob-state-test-")), () => {
+      chmodSync(store.checkpointsDir, 0o500);
+    });
+    await store.publish(draft("old", [{ id: "u-old", type: "message", text: "old" }], []));
+    const raw = Buffer.from('{"id":"victim","object":"response.compaction"}');
+    writeFileSync(store.compactArchivePath("victim"), raw, { mode: 0o600 });
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "victim",
+      "replacement",
+    );
+    await assert.rejects(
+      () =>
+        store.publish({
+          ...draft("victim", [], [{ type: "compaction", encrypted_content: "secret" }], "old", replacement),
+          providerInput: [],
+          providerOutput: [],
+          responseBody: {
+            id: "victim",
+            object: "response.compaction",
+            output: [{ type: "compaction", encrypted_content: "secret" }],
+          },
+          provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+          rawCompactBody: raw,
+        }),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "EACCES",
+    );
+    try {
+      assert.equal(readFileSync(store.compactArchivePath("victim")).equals(raw), true);
+      assert.equal(existsSync(store.checkpointPath("victim")), false);
+      await store.resolve("old");
+    } finally {
+      chmodSync(store.checkpointsDir, 0o700);
+    }
+  });
+
   it("prunes obsolete checkpoint and archive pairs after a successful commit", async () => {
     const store = newStore();
     await store.publish(draft("head-1", [{ id: "u1" }], []));
@@ -540,3 +687,294 @@ function referenceMerge(base: readonly StateHistoryItem[], additions: readonly S
   }
   return merged;
 }
+
+describe("state integrity audit (cob state verify)", () => {
+  it("classifies a clean store without mutating any byte", async () => {
+    const store = newStore();
+    await store.publish(draft("root", [{ id: "u-root" }], [{ id: "a-root", type: "message", text: "ok" }]));
+    await store.publish(draft("child", [{ id: "u-child" }], [], "root"));
+    const before = snapshotDir(store.stateDir);
+    const report = verifyStateIntegrity(store.stateDir);
+    assert.deepEqual(snapshotDir(store.stateDir), before);
+    assert.equal(report.schema_version, 1);
+    assert.equal(report.clean, true);
+    assert.equal(report.checkpoints.total, 2);
+    assert.equal(report.checkpoints.valid, 2);
+    assert.equal(report.checkpoints.corrupt, 0);
+    assert.equal(report.lineage.max_depth, 2);
+    const raw = JSON.stringify(report);
+    assert.equal(raw.includes("root"), false);
+    assert.equal(raw.includes("u-root"), false);
+    assert.equal(raw.includes(store.stateDir), false);
+  });
+
+  it("classifies corrupt, unsafe-permission, missing-archive, and orphan fixtures", async () => {
+    const store = newStore();
+    await store.publish(draft("good", [{ id: "u-good" }], []));
+    // Corrupt JSON.
+    writeFileSync(join(store.checkpointsDir, "bmFtZQ.json"), "{not json", { mode: 0o600 });
+    // Invalid filename encoding.
+    writeFileSync(join(store.checkpointsDir, "not-base64url!!.json"), "{}", { mode: 0o600 });
+    // Unsafe permissions on a validly encoded file.
+    const unsafeEncoded = Buffer.from("resp-unsafe", "utf8").toString("base64url");
+    writeFileSync(join(store.checkpointsDir, `${unsafeEncoded}.json`), "{}\n", { mode: 0o644 });
+    // Orphan archive (no matching checkpoint file).
+    writeFileSync(store.compactArchivePath("orphan-1"), "{}", { mode: 0o600 });
+    // Temporary file is reported but does not fail the audit.
+    writeFileSync(join(store.checkpointsDir, "leftover.tmp"), "x", { mode: 0o600 });
+    const before = snapshotDir(store.stateDir);
+    const report = verifyStateIntegrity(store.stateDir);
+    assert.deepEqual(snapshotDir(store.stateDir), before);
+    assert.equal(report.checkpoints.corrupt, 1);
+    assert.equal(report.checkpoints.invalid_filename, 1);
+    assert.equal(report.checkpoints.permission_failing, 1);
+    assert.equal(report.archives.orphan, 1);
+    assert.equal(report.temporary_files, 1);
+    assert.equal(report.clean, false);
+    // Content-free report: no encoded filename or state root leaks.
+    const raw = JSON.stringify(report);
+    assert.equal(raw.includes("not-base64url"), false);
+    assert.equal(raw.includes(unsafeEncoded), false);
+    assert.equal(raw.includes("orphan-1"), false);
+    assert.equal(raw.includes(store.stateDir), false);
+  });
+
+  it("flags a compaction replacement whose archive file is missing", async () => {
+    const store = newStore();
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "cmp-1",
+      "replacement",
+    );
+    await store.publish({
+      ...draft("cmp-1", [], [{ type: "compaction", encrypted_content: "note" }], undefined, replacement),
+      providerInput: [],
+      providerOutput: [],
+      responseBody: {
+        id: "cmp-1",
+        object: "response.compaction",
+        output: [{ type: "compaction", encrypted_content: "note" }],
+      },
+      provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+      rawCompactBody: Buffer.from('{"id":"cmp-1","object":"response.compaction"}'),
+    });
+    const before = snapshotDir(store.stateDir);
+    const report = verifyStateIntegrity(store.stateDir);
+    assert.deepEqual(snapshotDir(store.stateDir), before);
+    assert.equal(report.clean, true);
+    // Remove the archive through an unrelated manual mutation; verify only reads.
+    const { unlinkSync } = await import("node:fs");
+    unlinkSync(store.compactArchivePath("cmp-1"));
+    const after = verifyStateIntegrity(store.stateDir);
+    assert.equal(after.checkpoints.missing_archive, 1);
+    assert.equal(after.clean, false);
+  });
+
+  it("fails closed for a non-directory or symlinked state root", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-state-verify-root-"));
+    const fileRoot = join(dir, "not-a-dir");
+    writeFileSync(fileRoot, "x", { mode: 0o600 });
+    const fileReport = verifyStateIntegrity(fileRoot);
+    assert.equal(fileReport.state_dir_present, true);
+    assert.equal(fileReport.clean, false);
+    assert.ok(fileReport.unsafe_directories >= 1);
+
+    const outside = mkdtempSync(join(tmpdir(), "cob-state-verify-outside-"));
+    const linkRoot = join(dir, "linked-root");
+    symlinkSync(outside, linkRoot);
+    const linkReport = verifyStateIntegrity(linkRoot);
+    assert.equal(linkReport.clean, false);
+    assert.ok(linkReport.unsafe_directories >= 1);
+    // The linked target was never followed.
+    assert.equal(linkReport.checkpoints.total, 0);
+  });
+
+  it("fails closed for unsafe state directory modes and symlinked subdirectories", async () => {
+    const store = newStore();
+    await store.publish(draft("root", [{ id: "u-root" }], []));
+    chmodSync(store.stateDir, 0o755);
+    const loose = verifyStateIntegrity(store.stateDir);
+    assert.ok(loose.unsafe_directories >= 1);
+    assert.equal(loose.clean, false);
+    chmodSync(store.stateDir, 0o700);
+
+    const outside = mkdtempSync(join(tmpdir(), "cob-state-verify-outside2-"));
+    writeFileSync(join(outside, "bmFtZQ.json"), "{not json", { mode: 0o600 });
+    rmSync(store.checkpointsDir, { recursive: true });
+    symlinkSync(outside, store.checkpointsDir);
+    const linked = verifyStateIntegrity(store.stateDir);
+    assert.equal(linked.checkpoints.total, 0);
+    assert.ok(linked.unsafe_directories >= 1);
+    assert.equal(linked.clean, false);
+  });
+
+  it("fails closed when a replacement archive is a symlink, unsafe, or oversized", async () => {
+    const store = newStore();
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "cmp-1",
+      "replacement",
+    );
+    await store.publish({
+      ...draft("cmp-1", [], [{ type: "compaction", encrypted_content: "note" }], undefined, replacement),
+      providerInput: [],
+      providerOutput: [],
+      responseBody: {
+        id: "cmp-1",
+        object: "response.compaction",
+        output: [{ type: "compaction", encrypted_content: "note" }],
+      },
+      provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+      rawCompactBody: Buffer.from('{"id":"cmp-1","object":"response.compaction"}'),
+    });
+    const archivePath = store.compactArchivePath("cmp-1");
+    const archiveBytes = readFileSync(archivePath);
+
+    chmodSync(archivePath, 0o644);
+    const unsafe = verifyStateIntegrity(store.stateDir);
+    assert.equal(unsafe.checkpoints.valid, 0);
+    assert.equal(unsafe.checkpoints.corrupt, 1);
+    assert.equal(unsafe.clean, false);
+    chmodSync(archivePath, 0o600);
+
+    const outside = mkdtempSync(join(tmpdir(), "cob-state-verify-archive-"));
+    const outsideArchive = join(outside, "archive.json");
+    writeFileSync(outsideArchive, archiveBytes, { mode: 0o600 });
+    unlinkSync(archivePath);
+    symlinkSync(outsideArchive, archivePath);
+    const linked = verifyStateIntegrity(store.stateDir);
+    assert.equal(linked.checkpoints.corrupt, 1);
+    assert.equal(linked.clean, false);
+
+    unlinkSync(archivePath);
+    writeFileSync(archivePath, Buffer.alloc(MAX_UPSTREAM_BODY_BYTES + 1, 0), { mode: 0o600 });
+    const oversized = verifyStateIntegrity(store.stateDir);
+    assert.equal(oversized.checkpoints.valid, 0);
+    assert.equal(oversized.checkpoints.corrupt, 1);
+    assert.equal(oversized.clean, false);
+  });
+
+  it("does not let a corrupt or non-replacement checkpoint make its archive look valid", async () => {
+    const store = newStore();
+    const replacement = createStateHistoryItems(
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "handoff" }] }],
+      "cmp-1",
+      "replacement",
+    );
+    await store.publish({
+      ...draft("cmp-1", [], [{ type: "compaction", encrypted_content: "note" }], undefined, replacement),
+      providerInput: [],
+      providerOutput: [],
+      responseBody: {
+        id: "cmp-1",
+        object: "response.compaction",
+        output: [{ type: "compaction", encrypted_content: "note" }],
+      },
+      provenance: { source: "native-compact", gateway: "cob", compactModel: "codex-mini" },
+      rawCompactBody: Buffer.from('{"id":"cmp-1","object":"response.compaction"}'),
+    });
+    await store.publish(draft("plain", [{ id: "u-plain" }], []));
+    writeFileSync(store.compactArchivePath("plain"), "{}", { mode: 0o600 });
+    const before = verifyStateIntegrity(store.stateDir);
+    assert.equal(before.archives.linked, 1);
+    assert.equal(before.archives.orphan, 1);
+
+    // Corrupting the replacement checkpoint revokes the archive's linked
+    // status instead of shielding it as a valid link.
+    writeFileSync(store.checkpointPath("cmp-1"), "{not json", { mode: 0o600 });
+    const after = verifyStateIntegrity(store.stateDir);
+    assert.equal(after.checkpoints.corrupt, 1);
+    assert.equal(after.archives.linked, 0);
+    assert.equal(after.archives.orphan, 2);
+    assert.equal(after.clean, false);
+  });
+
+  it("counts root-level temporary files and includes them in the scan budget", async () => {
+    const store = newStore();
+    await store.publish(draft("root", [{ id: "u-root" }], []));
+    writeFileSync(join(store.stateDir, "leftover.tmp"), "x", { mode: 0o600 });
+    const report = verifyStateIntegrity(store.stateDir);
+    assert.equal(report.temporary_files, 1);
+    assert.ok(report.scan.files_scanned >= 1);
+    assert.equal(report.clean, true);
+  });
+
+  it("records an explicit finding when lineage exceeds the store chain-depth invariant", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-state-verify-depth-"));
+    const stateDir = join(dir, "cob-state");
+    const checkpointsDir = join(stateDir, "checkpoints");
+    mkdirSync(checkpointsDir, { recursive: true, mode: 0o700 });
+    // One node beyond the store's fail-closed MAX_STATE_CHAIN_DEPTH + 1 limit.
+    const total = MAX_STATE_CHAIN_DEPTH + 3;
+    for (let index = 0; index < total; index += 1) {
+      const responseId = `d${index}`;
+      const checkpoint = {
+        schemaVersion: 1,
+        responseId,
+        ...(index > 0 ? { parentResponseId: `d${index - 1}` } : {}),
+        requestInput: null,
+        output: [],
+        providerInput: [],
+        providerOutput: [],
+        history: [],
+        responseBody: { id: responseId, output: [] },
+        route: "ollama",
+        model: "m",
+        provenance: { source: "ollama-response", gateway: "cob" },
+        isCompactionReplacement: false,
+        createdAt: "2026-08-31T00:00:00.000Z",
+      };
+      writeFileSync(
+        join(checkpointsDir, `${encodeResponseId(responseId)}.json`),
+        `${JSON.stringify(checkpoint)}\n`,
+        { mode: 0o600 },
+      );
+    }
+    const report = verifyStateIntegrity(stateDir);
+    assert.equal(report.checkpoints.valid, total);
+    assert.ok(report.lineage.over_depth >= 1);
+    assert.equal(report.clean, false);
+  });
+
+  it("stops reading file contents once the scan cap is exceeded and fails closed", async () => {
+    const store = newStore();
+    await store.publish(draft("ok-1", [{ id: "u-1" }], []));
+    // Two fixtures that a content scan would classify; past the cap they must
+    // stay unclassified because contents are never read.
+    writeFileSync(join(store.checkpointsDir, "bmFtZQ.json"), "{not json", { mode: 0o600 });
+    writeFileSync(join(store.checkpointsDir, "bmFtZQ2.json"), "{not json", { mode: 0o600 });
+    const unsafeEncoded = Buffer.from("resp-overcap", "utf8").toString("base64url");
+    writeFileSync(join(store.checkpointsDir, `${unsafeEncoded}.json`), "{}\n", { mode: 0o644 });
+    const before = snapshotDir(store.stateDir);
+    const report = verifyStateIntegrity(store.stateDir, { scanFileLimit: 5 });
+    assert.deepEqual(snapshotDir(store.stateDir), before);
+    assert.equal(report.scan.limit_exceeded, true);
+    assert.equal(report.scan.limit, 5);
+    assert.ok(report.scan.files_scanned > 5);
+    assert.equal(report.clean, false);
+    // Bounded: contents were never read, so no content-derived findings.
+    assert.equal(report.checkpoints.corrupt, 0);
+    assert.equal(report.checkpoints.permission_failing, 0);
+    assert.equal(report.checkpoints.valid, 0);
+    assert.equal(report.checkpoints.total, 4);
+    assert.equal(report.lineage.max_depth, 0);
+  });
+
+  it("treats a missing state root as a clean empty audit", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-state-verify-absent-"));
+    const report = verifyStateIntegrity(join(dir, "cob-state"));
+    assert.equal(report.state_dir_present, false);
+    assert.equal(report.clean, true);
+    assert.equal(report.checkpoints.total, 0);
+  });
+
+  it("serializes identical human and JSON modes from one report", () => {
+    const store = newStore();
+    const report = verifyStateIntegrity(store.stateDir);
+    const serialized = JSON.stringify(report);
+    assert.doesNotThrow(() => JSON.parse(serialized));
+    const formatted = formatStateVerifyReport(report);
+    assert.match(formatted, /^state verify: clean/);
+    assert.equal(formatted.includes(store.stateDir), false);
+  });
+});

@@ -19,6 +19,7 @@ import {
 } from "./source.js";
 import type { CatalogFile } from "../types.js";
 import { asSlug, asVisibility } from "../types.js";
+import { OLLAMA_DIALECT_VERSION, OLLAMA_REVIEWED_VERSION } from "../ollama-dialect.js";
 import { isRecord } from "../../core/json.js";
 
 /**
@@ -28,6 +29,7 @@ import { isRecord } from "../../core/json.js";
 
 export const CATALOG_PROVENANCE_SCHEMA = 1;
 export const CATALOG_PROVENANCE_FAILURE_SCHEMA = 2;
+export const CATALOG_PROVENANCE_DEGRADED_SCHEMA = 3;
 export const V1_ROSTER_SLOTS = 5;
 export const LIVE_DESKTOP_RESTART_HINT =
   "Fully quit and reopen ChatGPT Desktop before judging picker changes.";
@@ -36,12 +38,32 @@ export function shouldPrintDesktopRestartHint(liveHome: boolean, wroteCatalog: b
   return liveHome && wroteCatalog;
 }
 
+export type OllamaDiscoveryState = "success" | "degraded";
+
+/**
+ * Content-free Ollama discovery evidence recorded beside the catalog: counts
+ * and digests only. Never raw upstream text, model names, tool names, or
+ * bodies. Schema 3 marks the whole sidecar degraded so an older cob fails
+ * closed instead of reporting fresh provenance it cannot explain.
+ */
+export type OllamaDiscoveryEvidence = {
+  state: OllamaDiscoveryState;
+  observed_at: string;
+  tag_count: number;
+  capability_digest: string;
+  missing_spawn_count: number;
+  dialect_version: string;
+  dialect_revision: string;
+  diagnostic?: { code: string };
+};
+
 export type CatalogProvenance = {
-  schema_version: typeof CATALOG_PROVENANCE_SCHEMA;
+  schema_version: typeof CATALOG_PROVENANCE_SCHEMA | typeof CATALOG_PROVENANCE_DEGRADED_SCHEMA;
   generated_at: string;
   catalog_sha256: string;
   producer: CodexBinaryRecord;
   validators: CodexBinaryRecord[];
+  ollama_discovery?: OllamaDiscoveryEvidence;
 };
 
 export type CatalogValidationFailure = {
@@ -62,6 +84,7 @@ export type CatalogActiveProvenance =
       generated_at: string;
       producer: CodexBinaryRecord;
       validators: CodexBinaryRecord[];
+      ollama_discovery?: OllamaDiscoveryEvidence;
     }
   | {
       state: "unknown" | "missing";
@@ -91,6 +114,7 @@ export type CatalogProvenanceAssessment = {
   repair: "cob sync or cob start" | "none";
   lines: string[];
   provenance?: CatalogProvenance;
+  discovery_evidence?: OllamaDiscoveryEvidence;
 };
 
 export type RosterAssessment = {
@@ -111,7 +135,10 @@ export function parseCatalogProvenance(text: string): CatalogProvenance {
   if (!isRecord(parsed)) {
     throw new Error("catalog provenance must be a JSON object");
   }
-  if (parsed.schema_version !== CATALOG_PROVENANCE_SCHEMA) {
+  if (
+    parsed.schema_version !== CATALOG_PROVENANCE_SCHEMA &&
+    parsed.schema_version !== CATALOG_PROVENANCE_DEGRADED_SCHEMA
+  ) {
     throw new Error(
       `catalog provenance schema_version ${String(parsed.schema_version)} is unsupported`,
     );
@@ -122,12 +149,136 @@ export function parseCatalogProvenance(text: string): CatalogProvenance {
   if (typeof parsed.catalog_sha256 !== "string" || !/^[0-9a-f]{64}$/.test(parsed.catalog_sha256)) {
     throw new Error("catalog provenance has an invalid catalog_sha256");
   }
+  if (
+    parsed.schema_version === CATALOG_PROVENANCE_DEGRADED_SCHEMA &&
+    parsed.ollama_discovery === undefined
+  ) {
+    throw new Error("catalog provenance schema 3 is missing ollama_discovery evidence");
+  }
+  const discovery =
+    parsed.ollama_discovery === undefined
+      ? undefined
+      : parseOllamaDiscoveryEvidence(parsed.ollama_discovery);
+  if (parsed.schema_version === CATALOG_PROVENANCE_SCHEMA && discovery?.state === "degraded") {
+    throw new Error(
+      "catalog provenance schema 1 cannot record degraded ollama_discovery evidence; schema 3 is required",
+    );
+  }
   return {
-    schema_version: CATALOG_PROVENANCE_SCHEMA,
+    schema_version: parsed.schema_version,
     generated_at: parsed.generated_at,
     catalog_sha256: parsed.catalog_sha256,
     producer: parseBinaryRecord(parsed.producer, "producer"),
     validators: parseBinaryRecords(parsed.validators, "validators"),
+    ...(discovery === undefined ? {} : { ollama_discovery: discovery }),
+  };
+}
+
+export function ollamaDiscoveryEvidence(opts: {
+  tags?: readonly { name: string; capabilities?: readonly string[] }[];
+  spawnable?: readonly string[];
+  error?: string;
+  observedAt?: string;
+}): OllamaDiscoveryEvidence {
+  const tags = opts.tags ?? [];
+  const spawnable = opts.spawnable ?? [];
+  const diagnostic =
+    opts.error !== undefined
+      ? { code: ollamaDiscoveryDiagnosticCode(opts.error) }
+      : undefined;
+  return {
+    state: diagnostic ? "degraded" : "success",
+    observed_at: opts.observedAt ?? new Date().toISOString(),
+    tag_count: diagnostic ? 0 : tags.length,
+    capability_digest: capabilityDigest(diagnostic ? [] : tags),
+    missing_spawn_count: diagnostic
+      ? spawnable.length
+      : spawnable.filter((wanted) => !tags.some((tag) => isSpawnableMatch(tag.name, wanted)))
+          .length,
+    dialect_version: String(OLLAMA_DIALECT_VERSION),
+    dialect_revision: OLLAMA_REVIEWED_VERSION,
+    ...(diagnostic ? { diagnostic } : {}),
+  };
+}
+
+export function ollamaDiscoveryDiagnosticCode(message: string): string {
+  if (/timed out after/i.test(message)) return "tags_timeout";
+  const status = message.match(/failed: (\d{3})/i)?.[1];
+  if (status) return `tags_http_${status}`;
+  if (/malformed|unexpected payload/i.test(message)) return "tags_malformed";
+  return "tags_unreachable";
+}
+
+function capabilityDigest(tags: readonly { capabilities?: readonly string[] }[]): string {
+  const sets = tags
+    .map((tag) => [...(tag.capabilities ?? [])].sort().join("|"))
+    .sort();
+  return sha256Hex(JSON.stringify(sets));
+}
+
+function parseOllamaDiscoveryEvidence(value: unknown): OllamaDiscoveryEvidence {
+  if (!isRecord(value)) {
+    throw new Error("catalog provenance ollama_discovery must be an object");
+  }
+  if (value.state !== "success" && value.state !== "degraded") {
+    throw new Error("catalog provenance ollama_discovery has an invalid state");
+  }
+  if (typeof value.observed_at !== "string" || value.observed_at.length === 0) {
+    throw new Error("catalog provenance ollama_discovery is missing observed_at");
+  }
+  if (
+    typeof value.tag_count !== "number" ||
+    !Number.isInteger(value.tag_count) ||
+    value.tag_count < 0
+  ) {
+    throw new Error("catalog provenance ollama_discovery has an invalid tag_count");
+  }
+  if (typeof value.capability_digest !== "string" || !isSha256(value.capability_digest)) {
+    throw new Error("catalog provenance ollama_discovery has an invalid capability_digest");
+  }
+  if (
+    typeof value.missing_spawn_count !== "number" ||
+    !Number.isInteger(value.missing_spawn_count) ||
+    value.missing_spawn_count < 0
+  ) {
+    throw new Error("catalog provenance ollama_discovery has an invalid missing_spawn_count");
+  }
+  if (typeof value.dialect_version !== "string" || value.dialect_version.length === 0) {
+    throw new Error("catalog provenance ollama_discovery is missing dialect_version");
+  }
+  if (typeof value.dialect_revision !== "string" || value.dialect_revision.length === 0) {
+    throw new Error("catalog provenance ollama_discovery is missing dialect_revision");
+  }
+  if (value.state === "degraded") {
+    if (
+      !isRecord(value.diagnostic) ||
+      typeof value.diagnostic.code !== "string" ||
+      !/^[a-z0-9_]+$/.test(value.diagnostic.code)
+    ) {
+      throw new Error("catalog provenance ollama_discovery has an invalid diagnostic code");
+    }
+    return {
+      state: "degraded",
+      observed_at: value.observed_at,
+      tag_count: value.tag_count,
+      capability_digest: value.capability_digest,
+      missing_spawn_count: value.missing_spawn_count,
+      dialect_version: value.dialect_version,
+      dialect_revision: value.dialect_revision,
+      diagnostic: { code: value.diagnostic.code },
+    } as OllamaDiscoveryEvidence;
+  }
+  if (value.diagnostic !== undefined) {
+    throw new Error("catalog provenance ollama_discovery success must not carry a diagnostic");
+  }
+  return {
+    state: "success",
+    observed_at: value.observed_at,
+    tag_count: value.tag_count,
+    capability_digest: value.capability_digest,
+    missing_spawn_count: value.missing_spawn_count,
+    dialect_version: value.dialect_version,
+    dialect_revision: value.dialect_revision,
   };
 }
 
@@ -136,13 +287,18 @@ export function writeCatalogProvenance(opts: {
   catalogBytes: string | Buffer;
   sources: CatalogSources;
   generatedAt?: string;
+  ollamaDiscovery?: OllamaDiscoveryEvidence;
 }): CatalogProvenance {
   const meta: CatalogProvenance = {
-    schema_version: CATALOG_PROVENANCE_SCHEMA,
+    schema_version:
+      opts.ollamaDiscovery?.state === "degraded"
+        ? CATALOG_PROVENANCE_DEGRADED_SCHEMA
+        : CATALOG_PROVENANCE_SCHEMA,
     generated_at: opts.generatedAt ?? new Date().toISOString(),
     catalog_sha256: sha256Hex(opts.catalogBytes),
     producer: opts.sources.producer,
     validators: opts.sources.validators,
+    ...(opts.ollamaDiscovery ? { ollama_discovery: opts.ollamaDiscovery } : {}),
   };
   writeFileAtomic(opts.metaPath, serializeCatalogProvenance(meta), 0o600);
   return meta;
@@ -153,7 +309,10 @@ export function parseCatalogMetadata(text: string): CatalogMetadata {
   if (!isRecord(parsed)) {
     throw new Error("catalog provenance must be a JSON object");
   }
-  if (parsed.schema_version === CATALOG_PROVENANCE_SCHEMA) {
+  if (
+    parsed.schema_version === CATALOG_PROVENANCE_SCHEMA ||
+    parsed.schema_version === CATALOG_PROVENANCE_DEGRADED_SCHEMA
+  ) {
     return parseCatalogProvenance(text);
   }
   if (parsed.schema_version !== CATALOG_PROVENANCE_FAILURE_SCHEMA) {
@@ -294,7 +453,11 @@ export function assessCatalogProvenance(opts: {
       )
     : undefined;
   const finish = (assessment: CatalogProvenanceAssessment): CatalogProvenanceAssessment =>
-    applyCatalogValidationFailure(assessment, failure, failureValidatorProblem);
+    applyCatalogValidationFailure(
+      withDiscoveryLines(assessment, metadata),
+      failure,
+      failureValidatorProblem,
+    );
   if (!exists(opts.catalogPath)) {
     return finish({
       freshness: "missing",
@@ -414,6 +577,49 @@ function stale(reason: string, detail?: string): CatalogProvenanceAssessment {
   };
 }
 
+function withDiscoveryLines(
+  assessment: CatalogProvenanceAssessment,
+  metadata: CatalogMetadata | undefined,
+): CatalogProvenanceAssessment {
+  const evidence = metadataDiscoveryEvidence(metadata);
+  if (!evidence) return assessment;
+  return {
+    ...assessment,
+    discovery_evidence: evidence,
+    lines: [...assessment.lines, ...formatOllamaDiscoveryLines(evidence)],
+  };
+}
+
+/**
+ * Discovery evidence survives stale and validation-failure states: a schema 2
+ * sidecar carries it inside its retained active provenance so human lines and
+ * JSON status stay in parity.
+ */
+function metadataDiscoveryEvidence(
+  metadata: CatalogMetadata | undefined,
+): OllamaDiscoveryEvidence | undefined {
+  if (!metadata) return undefined;
+  if (metadata.schema_version === CATALOG_PROVENANCE_FAILURE_SCHEMA) {
+    return metadata.active.state === "known" ? metadata.active.ollama_discovery : undefined;
+  }
+  return metadata.ollama_discovery;
+}
+
+export function formatOllamaDiscoveryLines(evidence: OllamaDiscoveryEvidence): string[] {
+  if (evidence.state === "degraded") {
+    return [`ollama discovery: degraded (${evidence.diagnostic?.code ?? "unknown"})`];
+  }
+  const lines = [`ollama discovery: success (${evidence.tag_count} tag${evidence.tag_count === 1 ? "" : "s"})`];
+  if (evidence.missing_spawn_count > 0) {
+    lines.push(
+      `  warning: ${evidence.missing_spawn_count} configured spawn row${
+        evidence.missing_spawn_count === 1 ? "" : "s"
+      } absent from fresh tags`,
+    );
+  }
+  return lines;
+}
+
 function producerChanged(recorded: CodexBinaryRecord, current: CodexBinaryRecord): boolean {
   return recorded.path !== current.path || !sameFileIdentity(recorded.file, current.file);
 }
@@ -472,14 +678,25 @@ function statusIo(io: InspectCodexIo = {}): InspectCodexIo {
 }
 
 function activeKnownProvenance(metadata: CatalogMetadata): CatalogProvenance | undefined {
-  if (metadata.schema_version === CATALOG_PROVENANCE_SCHEMA) return metadata;
-  if (metadata.active.state !== "known") return undefined;
+  if (
+    metadata.schema_version === CATALOG_PROVENANCE_SCHEMA ||
+    metadata.schema_version === CATALOG_PROVENANCE_DEGRADED_SCHEMA
+  ) {
+    return metadata;
+  }
+  const active =
+    metadata.schema_version === CATALOG_PROVENANCE_FAILURE_SCHEMA ? metadata.active : undefined;
+  if (!active || active.state !== "known") return undefined;
   return {
-    schema_version: CATALOG_PROVENANCE_SCHEMA,
-    generated_at: metadata.active.generated_at,
+    schema_version:
+      active.ollama_discovery?.state === "degraded"
+        ? CATALOG_PROVENANCE_DEGRADED_SCHEMA
+        : CATALOG_PROVENANCE_SCHEMA,
+    generated_at: active.generated_at,
     catalog_sha256: metadata.catalog_sha256 ?? "",
-    producer: metadata.active.producer,
-    validators: metadata.active.validators,
+    producer: active.producer,
+    validators: active.validators,
+    ...(active.ollama_discovery ? { ollama_discovery: active.ollama_discovery } : {}),
   };
 }
 
@@ -597,15 +814,18 @@ function retainedActiveProvenance(
   if (metadata.catalog_sha256 !== catalogSha) {
     return { state: "unknown", reason: "previous catalog metadata did not match the catalog" };
   }
-  if (metadata.schema_version === CATALOG_PROVENANCE_SCHEMA) {
-    return {
-      state: "known",
-      generated_at: metadata.generated_at,
-      producer: metadata.producer,
-      validators: metadata.validators,
-    };
+  if (metadata.schema_version === CATALOG_PROVENANCE_FAILURE_SCHEMA) {
+    return metadata.active;
   }
-  return metadata.active;
+  return {
+    state: "known",
+    generated_at: metadata.generated_at,
+    producer: metadata.producer,
+    validators: metadata.validators,
+    // Safe degraded discovery evidence is preserved, never silently converted
+    // away by a later validation-failure retention.
+    ...(metadata.ollama_discovery ? { ollama_discovery: metadata.ollama_discovery } : {}),
+  };
 }
 
 function parseActiveProvenance(value: unknown): CatalogActiveProvenance {
@@ -621,6 +841,9 @@ function parseActiveProvenance(value: unknown): CatalogActiveProvenance {
       generated_at: value.generated_at,
       producer: parseBinaryRecord(value.producer, "active.producer"),
       validators: parseBinaryRecords(value.validators, "active.validators"),
+      ...(value.ollama_discovery === undefined
+        ? {}
+        : { ollama_discovery: parseOllamaDiscoveryEvidence(value.ollama_discovery) }),
     };
   }
   if (value.state !== "unknown" && value.state !== "missing") {

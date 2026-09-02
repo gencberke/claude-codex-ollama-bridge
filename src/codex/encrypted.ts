@@ -1,4 +1,9 @@
 import { isRecord } from "../core/json.js";
+import {
+  checkOllamaJsonNode,
+  newOllamaTraversalBudget,
+  type OllamaTraversalBudget,
+} from "./bounded-json.js";
 
 const FERNET_PREFIX = "gAAAAA";
 const OCX1_PREFIX = "ocx1";
@@ -9,10 +14,15 @@ export function isEncryptedFieldName(key: string): boolean {
   return key === "encrypted" || key.startsWith("encrypted_");
 }
 
-export function findEncryptedContent(value: unknown): string | undefined {
+export function findEncryptedContent(
+  value: unknown,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
+): string | undefined {
+  checkOllamaJsonNode(budget, depth);
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findEncryptedContent(item);
+      const found = findEncryptedContent(item, budget, depth + 1);
       if (found !== undefined) return found;
     }
     return undefined;
@@ -29,16 +39,21 @@ export function findEncryptedContent(value: unknown): string | undefined {
       }
       continue;
     }
-    const found = findEncryptedContent(nested);
+    const found = findEncryptedContent(nested, budget, depth + 1);
     if (found !== undefined) return found;
   }
   return undefined;
 }
 
-export function findFernetEncryptedContent(value: unknown): string | undefined {
+export function findFernetEncryptedContent(
+  value: unknown,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
+): string | undefined {
+  checkOllamaJsonNode(budget, depth);
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findFernetEncryptedContent(item);
+      const found = findFernetEncryptedContent(item, budget, depth + 1);
       if (found !== undefined) return found;
     }
     return undefined;
@@ -48,21 +63,26 @@ export function findFernetEncryptedContent(value: unknown): string | undefined {
     if (isEncryptedFieldName(key) && typeof nested === "string" && nested.trim().startsWith(FERNET_PREFIX)) {
       return nested;
     }
-    const found = findFernetEncryptedContent(nested);
+    const found = findFernetEncryptedContent(nested, budget, depth + 1);
     if (found !== undefined) return found;
   }
   return undefined;
 }
 
-export function stripPlaintextEncryptedContent(value: unknown): unknown {
+export function stripPlaintextEncryptedContent(
+  value: unknown,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
+): unknown {
+  checkOllamaJsonNode(budget, depth);
   if (Array.isArray(value)) {
-    return value.map((item) => stripPlaintextEncryptedContent(item));
+    return value.map((item) => stripPlaintextEncryptedContent(item, budget, depth + 1));
   }
   if (!isRecord(value)) return value;
   const next: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
     if (isEncryptedFieldName(key)) continue;
-    next[key] = stripPlaintextEncryptedContent(nested);
+    next[key] = stripPlaintextEncryptedContent(nested, budget, depth + 1);
   }
   return next;
 }

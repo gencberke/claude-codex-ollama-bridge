@@ -20,8 +20,11 @@ OpenCodex is a proof of concept, not the product. This repo reimplements the loo
 
 ## Install
 
-Node.js 22+, a local [Ollama](https://ollama.com) with `/v1/responses`
-(0.13.3+), and the client you actually use:
+Node.js 22+, a local [Ollama](https://ollama.com) with the Responses API
+(`/v1/responses`), and the client you actually use. cob declares no Ollama
+version floor; what matters is capability evidence — configured spawn rows
+require a fresh exact lowercase `tools` tag capability when tags are
+available:
 
 - Supported platforms: the **cob Codex** surface runs on **macOS and Linux
   only**; on Windows the CLI exits early with a clear error. The **cob
@@ -41,8 +44,8 @@ git clone https://github.com/gencberke/claude-codex-ollama-bridge.git
 cd claude-codex-ollama-bridge
 npm install
 npm run pack
-npm install -g ./codex-ollama-bridge-0.2.2.tgz
-cob version    # cob 0.2.2 (global)
+npm install -g ./codex-ollama-bridge-<version>.tgz
+cob version    # cob <version> (global)
 ```
 
 Pull Ollama models you want listed (example):
@@ -177,26 +180,27 @@ deferred-tool promotion and the request allowlist. A client-executed
 not checkpointed. Known aliases are still restored for Codex after the name is
 authorized.
 
-The reviewed Ollama 0.33.1 Responses source is unchanged from 0.32.15, whose
-cloud path may close a successful stream after `response.completed` without an
-OpenAI-style upstream `[DONE]`. cob treats only the valid completed envelope as
-success, publishes its checkpoint, then emits exactly one client-facing
-`[DONE]`. Incomplete streams end without a synthetic `[DONE]`; incomplete,
-failed, malformed, or rejected streams publish no state.
+Historical first-observed compatibility note: the reviewed Ollama **0.33.1**
+Responses source was unchanged from 0.32.15; its cloud path could close a
+successful stream after `response.completed` without an OpenAI-style upstream
+`[DONE]`. cob treats only the valid completed envelope as success, publishes
+its checkpoint, then emits exactly one client-facing `[DONE]`. Incomplete,
+failed, malformed, or rejected streams publish no state. This version note is
+not a current Ollama-version claim; current fail-closed and observability
+disposition is recorded in [STATUS.md](./STATUS.md) and
+[LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 
-Standard request/wire logs are content-free: they retain aggregate counts,
-sizes, and SHA fields plus sorted `tool_bytes_top` definition sizes, but never
-tool names, schemas, descriptions, arguments, outputs, user/response text,
-authorization, or account identifiers. Guard rejections record only stable
-code/kind, rejected-name length/SHA, and final declaration count/SHA.
+Fail-closed behavior and content-free observability are part of the contract;
+see [STATUS.md](./STATUS.md) and [LIVE-TESTING.md](./docs/LIVE-TESTING.md) for the
+current evidence and diagnostics boundary.
 
 `cob` never writes `~/.codex/config.toml`. Plain `codex` keeps working. `cob restore` deletes cob's overlay files and private conversation state.
 
 Current live proof: [STATUS.md](./STATUS.md). Working rules for agents:
 [AGENTS.md](./AGENTS.md) (Desktop spawn policy is user-owned
 `~/.codex/AGENTS.md`). Ollama-thread compact envelope nuance:
-[COMPACTION.md](./COMPACTION.md). Versions: [CHANGELOG.md](./CHANGELOG.md).
-How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
+[COMPACTION.md](./docs/COMPACTION.md). Versions: [CHANGELOG.md](./CHANGELOG.md).
+How live global install vs `--dev` works: [RELEASE.md](./docs/RELEASE.md).
 
 ## Commands
 
@@ -206,9 +210,10 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 | `cob start --dev` | Isolated `$HOME/.codex-cob-dev` and port 18791. Copies `auth.json` if missing. Does not touch live Desktop overlays |
 | `cob start --foreground` | Run the gateway in the foreground instead of spawning `cob serve` |
 | `cob stop` | Stop the gateway. Leaves the profile in place |
-| `cob restore` | Stop, then delete profile + catalog + catalog metadata + cob state. Root config is untouched |
+| `cob restore` | Stop, then delete profile + catalog + catalog metadata + cob state, including both diagnostic JSONL files. Root config is untouched |
 | `cob sync` | Refresh `cob-catalog.json` from the selected Codex producer (`COB_CODEX_BIN`, live Desktop bundle, or PATH) + Ollama `/api/tags`. Writes `cob-catalog.meta.json`. A running gateway reloads the catalog on the next request |
-| `cob status` | First line `cob: ok\|ready\|broken\|absent\|unreadable\|stale\|unknown`; exit 1 if cob, the Desktop overlay, or catalog provenance needs action. Read-only overlay + sidecar check. Does not spawn Codex or probe Ollama. After reboot or a dead gateway: `cob start` |
+| `cob status` | First line `cob: ok\|ready\|broken\|absent\|unreadable\|stale\|unknown`; exit 1 if cob, the Desktop overlay, or catalog provenance needs action. Read-only overlay + sidecar check. Does not spawn Codex or probe Ollama. After reboot or a dead gateway: `cob start`. `cob status --json` prints one stable `schema_version: 1` JSON object (same assessment, same exit code; no nonce, auth, or content) |
+| `cob state verify` | Read-only integrity audit of `cob-state/` (`--json` for the same report as `schema_version: 1` JSON). Reports aggregate counts/bytes only: valid, corrupt, unsafe, permission-failing, invalid-filename, missing-archive, orphan-archive, temporary, lineage depth/cycles, and scan-limit state. Exit 0 only for a clean state; cob never repairs, prunes, or rewrites state |
 | `cob smoke` | Catalog, roster, encrypted-content, restore, and native passthrough checks. `cob smoke --live` also pings Ollama through the gateway |
 | `cob pack` | Workspace only: production `tsc` + `npm pack` (no `*.test.js` in the tarball) |
 | `cob version` | Print `cob <version> (global\|workspace\|unknown)` |
@@ -219,7 +224,49 @@ How live global install vs `--dev` works: [RELEASE.md](./RELEASE.md).
 | `cob claude status` / `stop` / `restore` | cob-owned Claude runtime; restore also reverts Desktop overlay and user-agents snapshots. Never `~/.claude/settings.json` |
 | `cob claude sync` | No-op: cob claude has no catalog sync |
 
-Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation, spawn, workspace R/W, compaction, restart, and restore procedures plus gold-standard metrics are in [LIVE-TESTING.md](./LIVE-TESTING.md). The official spawn harness is `COB_LIVE_SUBAGENT=1`; do not pass `--ignore-user-config`, and keep Codex stdin closed.
+### Workspace diagnostics
+
+The current workspace source has an opt-in, content-free JSONL diagnostic
+sidecar (`schema_version: 1`). Run it only for an isolated workspace gateway,
+for example:
+
+```bash
+COB_DIAGNOSTIC_JSONL=1 node dist/cli.js start --dev
+```
+
+With the environment value exactly `1`, cob writes private mode-0600
+`$CODEX_HOME/cob-diagnostics.jsonl` plus at most one rotated
+`cob-diagnostics.jsonl.1`; each file is bounded to 4 MiB and each event to
+16 KiB. `cob restore` removes both files. Without the opt-in, the default
+human `cob-gateway.log` behavior and request hot path are unchanged, with no
+diagnostic sidecar writes.
+
+For model-bearing `POST /v1/responses`, compact, and standalone-search calls,
+`request_start` and `request_end` events carry a UTC timestamp, pid,
+process-local sequence, ephemeral keyed fp8 for within-process duplicate
+grouping, model SHA-8, and bounded structural metrics. Health, catalog,
+shutdown, unsupported-protocol, and 404 traffic is deliberately excluded so
+probes cannot inflate provider-request counts. End events also carry
+status/timing, provider-attempt counts, `gateway_retry_count = 0`, retry-after
+presence, and only provider-supplied usage when available. For Ollama-bound
+requests, `request_end` optionally records outbound stream mode (`outbound_stream`),
+response content-type class (`response_content_type_class`), selected decoder mode
+(`decoder_mode`), and dropped hosted tools count (`hosted_tools_dropped_n`). Events never
+contain prompts, outputs, tool names or IDs, auth, or raw errors. Writes are
+best effort: sink
+failures never fail a request, and diagnostics make no model/provider calls,
+retries, queue, or background worker. Controller retry/no-progress handling
+remains external and unavailable.
+
+This is workspace-source behavior after the burned preview; it is not installed
+on the live gateway. [STATUS.md](./STATUS.md) remains the authority for live
+state and evidence.
+
+Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation,
+spawn, workspace R/W, compaction, restart, and restore procedures plus current
+evidence are in [LIVE-TESTING.md](./docs/LIVE-TESTING.md). The official spawn
+harness is `COB_LIVE_SUBAGENT=1`; do not pass `--ignore-user-config`, and keep
+Codex stdin closed.
 
 Native GPT rows are copied from the Codex binary that will consume them
 (Desktop's bundled `codex` on a live macOS home; PATH / `COB_CODEX_BIN`
@@ -243,10 +290,12 @@ catalog slug (`ollama/...`). Do not steal GPT ids (`nativeAlias`). Ollama rows
 get cob-owned `base_instructions` and a child-only capability profile; GPT
 personality templates and unproven tool capabilities are not copied onto them.
 
-DeepSeek thinking rows retain `none` / `low` / `high` / `max` (default `high`). GLM-5.3 Flash thinking is always on and advertises only `low` / `high` / `max` (default `max`); Codex `none`/`off`/`minimal` map to `low`, `medium` to `high`, and `xhigh` to `max` on that wire. For the DeepSeek ladder, `medium` / `xhigh` / `minimal` still map to `high`. The Ollama request is clipped to the reviewed Responses fields. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)` unless
+DeepSeek thinking rows retain `none` / `low` / `high` / `max` (default `high`). GLM-5.3 Flash thinking is always on and advertises only `low` / `high` / `max` (default `max`); Codex `none`/`off`/`minimal` map to `low`, `medium` to `high`, and `xhigh` to `max` on that wire. For the DeepSeek ladder, `medium` / `xhigh` / `minimal` still map to `high`. The Ollama request is clipped to the reviewed Responses fields. Structured output is route-dependent: `text.format.type = "text"` is accepted on cloud and local routes, `json_schema` stays accepted only on the reviewed local Ollama Responses route, and a verified cloud route rejects `json_schema` locally with `ollama_text_format_cloud_unsupported` before upstream dispatch (the supplied schema is never echoed or logged). Exact hosted `web_search` definitions (`type === "web_search"`) are removed from Ollama request tools because the corresponding output dialect is unsupported; standalone `POST /v1/alpha/search` remains native ChatGPT-hosted search passthrough, and deferred `tool_search` remains cob's function-aliased discovery shim. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)` unless
 `catalog.active_context_window` opts in to a different active cap.
 `max_context_window` stays equal to that active window unless
-`catalog.advertise_cloud_max_context = true` on a verified cloud tag. Desktop’s used-% bar is that advertised window: a short 0731 first turn meters ~61k here (~26% of 243k) versus ~17–20k on native GPT; that is not cob merging an older thread. Live notes: [STATUS.md](./STATUS.md).
+`catalog.advertise_cloud_max_context = true` on a verified cloud tag. Desktop’s
+used-% bar is that advertised window; it is not proof of cob merging an older
+thread. Live notes: [STATUS.md](./STATUS.md).
 
 The V1 spawn window is the first five `visibility=list` rows (priority ASC):
 
@@ -272,9 +321,11 @@ cob translates the one declared Codex custom/freeform `apply_patch` tool to a
 fixed Ollama function alias with a string input wrapper, then restores the
 Codex custom call/output identity. Missing declarations, alias collisions,
 encrypted fields, malformed history, and undeclared calls fail closed without
-logging the patch body. The 2026-08-24 Gate 5 canary proved one real 0731 child
-edit through that custom tool; `exec_command` plus a temporary patch binary is
-not gold and apply_patch remains a separate isolated opt-in.
+logging the patch body. The 2026-08-24 Gate 5 result is historical evidence
+only; it is not current gold and does not change the default. Current Gate 5
+disposition and live enablement status are recorded in [STATUS.md](./STATUS.md)
+and [LIVE-TESTING.md](./docs/LIVE-TESTING.md). `exec_command` plus a temporary
+patch binary is not gold, and apply_patch remains a separate isolated opt-in.
 
 Ollama shell capability is derived only from fresh `/api/tags` evidence: a row
 whose current tag carries the exact lowercase `tools` capability advertises
@@ -292,10 +343,14 @@ items only when constructing a local `previous_response_id` continuation.
 
 ## Compaction
 
-Codex 0.147 uses `remote_compaction_v2`: a normal `POST /v1/responses` whose input ends in exactly one `{"type":"compaction_trigger"}`.
+Codex **0.147** first-observed `remote_compaction_v2`: a normal
+`POST /v1/responses` whose input ends in exactly one
+`{"type":"compaction_trigger"}`. This is historical wire evidence, not a
+current Codex-version claim; current compatibility and live proof are tracked
+in [STATUS.md](./STATUS.md) and [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 
 - Native GPT threads pass that request body and headers through unchanged to ChatGPT.
-- Ollama threads strip the trigger and call **Ollama `/v1/responses`** (never `/compact`) with an allowlisted slug (the thread model, or `compaction.ollama_model`). The model writes a handoff summary. cob returns to Codex exactly one `compaction` item whose `encrypted_content` is a **cob-owned envelope** (`cob1.…`), not ChatGPT Fernet and not OpenCodex `ocx1`. JSON and SSE are published to `cob-state` before the client sees them.
+- Ollama threads strip the trigger and call **Ollama `/v1/responses`** (never `/compact`) with an allowlisted slug (the thread model, or `compaction.ollama_model`). The provider-safe history is serialized once, as untrusted transcript data (`transcript_format_version: 2`) inside exactly one `user` message: historical `developer`/`system` items survive only as escaped evidence, never as live top-level roles, and the compact instruction states that anything inside that block is conversation content, not instructions. The summarizer request sends no tools and `temperature: 0`, and cloud models get no JSON schema. The model writes a handoff summary. cob returns to Codex exactly one `compaction` item whose `encrypted_content` is a **cob-owned envelope** (`cob1.…`), not ChatGPT Fernet and not OpenCodex `ocx1`. The `cob1.` prefix is an encoding marker, not encryption. JSON and SSE are published to `cob-state` before the client sees them. cob never retries a failed summary automatically.
 - Follow-up input containing that item is resolved through the private checkpoint DAG. Ollama receives the **assistant handoff plus turns after compact**, never the envelope, Fernet, the trigger, or the pre-compact tail. Missing or unsafe state returns `requires_full_context`. cob never invents a developer-note stand-in for a missing summary.
 - `compaction.ollama_threads = "native"` keeps the older ChatGPT-compact + full-replay path. Do not set `provider = "ollama"`; that still means “call Ollama `/compact`,” which cob never does.
 - The retired `/v1/responses/compact` endpoint returns `legacy_compaction_unavailable`. There is no Ollama `/compact` fallback.
@@ -338,15 +393,14 @@ native_plaintext_spawn = false
 # native_plaintext_spawn_schema_sha256 = "<64 hex chars from the isolated schema canary>"
 ```
 
-G17's fixed-corpus trace was a legacy DeepSeek/0731 experiment: it rejected
-`low` and found `none` faster/cheaper with the same two continuation checks.
-That evidence does not override the model-specific ladder. For the shipped
-DeepSeek 0731 default, omit `ollama_effort` to use `high`; explicitly selected
-GLM-5.3 Flash uses `max` when omitted. Cloud-max advertisement is also
-opt-in, and `auto_compact_token_limit` is emitted only when the native Codex
-skeleton already supports that field. Exact measurements: [LIVE-TESTING.md](./LIVE-TESTING.md).
+Model-specific effort defaults are not inferred from historical experiments.
+For the shipped DeepSeek 0731 default, omit `ollama_effort` to use `high`;
+explicitly selected GLM-5.3 Flash uses `max` when omitted. Cloud-max
+advertisement is also opt-in, and `auto_compact_token_limit` is emitted only
+when the native Codex skeleton already supports that field. Current validation
+and measurements: [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 
-`provider = "ollama"` and `provider = "disabled"` are no longer valid; cob reports a migration error instead of converting them silently. `--compaction-model` is still accepted (native ChatGPT slug). `--compaction-provider`, if passed, must be `native`. Envelope details: [COMPACTION.md](./COMPACTION.md).
+`provider = "ollama"` and `provider = "disabled"` are no longer valid; cob reports a migration error instead of converting them silently. `--compaction-model` is still accepted (native ChatGPT slug). `--compaction-provider`, if passed, must be `native`. Envelope details: [COMPACTION.md](./docs/COMPACTION.md).
 
 Every policy key above also has a `COB_*` environment override (for example
 `COB_COMPACTION_OLLAMA_THREADS`, `COB_SUBAGENT_MODELS`,
@@ -367,9 +421,11 @@ The local archive is intentionally separate from the provider projection:
 input, completed response output, parent response id, route/model and
 provenance, stable item identities, and replacement history. The compact
 archive is sensitive user/tool content and is never sent to Ollama.
-Publication uses private temporary files and atomic rename; the state lock
-serializes retention and publication, and restart recovery ignores incomplete
-temporary files.
+Publication uses a private temporary file and one atomic rename per file —
+per-file atomic visibility, not a multi-file transaction. A failed checkpoint
+publication rolls back only the compact archive that the same attempt
+created. The state lock serializes retention and publication, and restart
+recovery ignores incomplete temporary files.
 
 The defaults retain at most 512 checkpoint nodes, 64 newest heads, 256 MiB of
 checkpoint/archive data, and 30 days of unreachable state. A retained child

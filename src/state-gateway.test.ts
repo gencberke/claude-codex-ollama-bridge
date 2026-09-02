@@ -329,7 +329,13 @@ describe("gateway durable Ollama state", () => {
     assert.equal(readdirSync(join(stateDir, "compact-archive")).length, 1);
     const summarizer = ollamaBodies.find((body) => JSON.stringify(body).includes("You are compacting"));
     assert.ok(summarizer);
-    assert.deepEqual(Object.keys(summarizer).sort(), ["input", "instructions", "model", "stream"]);
+    assert.deepEqual(Object.keys(summarizer).sort(), [
+      "input",
+      "instructions",
+      "model",
+      "stream",
+      "temperature",
+    ]);
     assert.equal("store" in summarizer, false);
     assert.equal("previous_response_id" in summarizer, false);
     assert.equal(ollamaSummarizerInstructionCopyCount(summarizer), 1);

@@ -1,6 +1,8 @@
 import {
+  isValidToolSearchWireArguments,
   OLLAMA_CLIENT_EXECUTED_CALL_KINDS,
   OLLAMA_DIALECT,
+  OLLAMA_TOOL_SEARCH_ALIAS,
   OLLAMA_SSE_OUTPUT_ITEM_EVENTS,
   OLLAMA_SSE_TERMINAL_EVENTS,
   OLLAMA_UNREVIEWED_CALL_KINDS,
@@ -13,10 +15,14 @@ import {
 } from "./experimental/apply-patch.js";
 import { sha256Hex8 } from "./request-metrics.js";
 import { sseDoneTerminal, type SseObserver } from "./sse.js";
+import {
+  checkOllamaJsonNode,
+  newOllamaTraversalBudget,
+  type OllamaJsonOverflow,
+  type OllamaTraversalBudget,
+} from "./bounded-json.js";
 import type { JsonObject } from "../core/json.js";
 import { isRecord } from "../core/json.js";
-
-export const OLLAMA_GUARD_NAME_PREVIEW_CHARS = 100;
 
 const REVIEWED_CALL = new Set<string>(OLLAMA_CLIENT_EXECUTED_CALL_KINDS);
 const UNREVIEWED_CALL = new Set<string>(OLLAMA_UNREVIEWED_CALL_KINDS);
@@ -28,27 +34,30 @@ export type OllamaToolDeclaration = {
   readonly count: number;
   readonly sha8: string;
   readonly applyPatch?: ApplyPatchBridge;
-  /** Gate 5 failures are structural only; never echo a tool name to Codex. */
-  readonly redactCallDetails?: boolean;
 };
 
 export type OllamaGuardCode =
   | typeof OLLAMA_DIALECT.response.undeclaredTool
   | typeof OLLAMA_DIALECT.response.invalidTool;
 
-export type OllamaGuardKind = "undeclared" | "invalid_name" | "invalid_type" | "empty_name";
+export type OllamaGuardKind =
+  | "undeclared"
+  | "invalid_name"
+  | "invalid_type"
+  | "invalid_arguments"
+  | "empty_name";
 
 export type OllamaGuardFailure = {
   code: OllamaGuardCode;
   kind: OllamaGuardKind;
   nameLength: number;
   nameSha8: string;
-  preview: string;
-  redact?: boolean;
 };
 
 export type OllamaResponseGuardState = {
   failure?: OllamaGuardFailure;
+  /** Bounded-traversal overflow observed while rewriting an upstream frame. */
+  overflow?: OllamaJsonOverflow;
   /** Route-specific SSE terminal transaction state; created lazily by the transform. */
   terminal?: OllamaTerminalTrack;
 };
@@ -72,13 +81,16 @@ export function declareOllamaWireTools(
     names,
     count: ordered.length,
     sha8: sha256Hex8(ordered),
-    ...(applyPatch ? { applyPatch, redactCallDetails: applyPatch.enabled } : {}),
+    ...(applyPatch ? { applyPatch } : {}),
   });
 }
 
-export function collectOllamaWireToolNames(tools: unknown): string[] {
+export function collectOllamaWireToolNames(
+  tools: unknown,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+): string[] {
   if (!Array.isArray(tools)) return [];
-  return collectQualifiedToolNames(tools);
+  return collectQualifiedToolNames(tools, budget, 1);
 }
 
 export function guardOllamaJsonResponse(
@@ -161,11 +173,13 @@ export function ollamaGuardMessage(failure: OllamaGuardFailure): string {
     if (failure.kind === "invalid_type") {
       return "Ollama returned an unreviewed client tool call type.";
     }
+    if (failure.kind === "invalid_arguments") {
+      return "Ollama returned a client tool call with malformed arguments.";
+    }
     return "Ollama returned a client tool call with an invalid name.";
   }
   // Never echo an upstream-provided tool name (or any surrounding call
-  // detail) into a client-facing guard error. The bounded preview remains an
-  // internal diagnostic field and is intentionally absent from this message.
+  // detail) into a client-facing guard error or diagnostic.
   return "Ollama returned a client tool call that was not in the final outbound catalog.";
 }
 
@@ -335,6 +349,17 @@ function inspectReviewedCallName(
   if (!declaration.names.has(name)) {
     return guardFailure("undeclared", OLLAMA_DIALECT.response.undeclaredTool, name, declaration);
   }
+  if (
+    name === OLLAMA_TOOL_SEARCH_ALIAS &&
+    !isValidToolSearchWireArguments(readRawCallArguments(item))
+  ) {
+    return guardFailure(
+      "invalid_arguments",
+      OLLAMA_DIALECT.response.invalidTool,
+      raw,
+      declaration,
+    );
+  }
   return undefined;
 }
 
@@ -352,6 +377,12 @@ function readRawCallName(item: JsonObject): unknown {
   return undefined;
 }
 
+function readRawCallArguments(item: JsonObject): unknown {
+  if ("arguments" in item) return item.arguments;
+  if (isRecord(item.function) && "arguments" in item.function) return item.function.arguments;
+  return undefined;
+}
+
 function guardFailure(
   kind: OllamaGuardKind,
   code: OllamaGuardCode,
@@ -364,8 +395,6 @@ function guardFailure(
     kind,
     nameLength: name.length,
     nameSha8: sha256Hex8(typeof rawName === "string" ? rawName : null),
-    preview: safeNamePreview(name),
-    redact: declaration?.redactCallDetails === true,
   };
 }
 
@@ -380,23 +409,15 @@ function applyPatchIssueToFailure(
     kind: issue.kind,
     nameLength: name.length,
     nameSha8: sha256Hex8(typeof rawName === "string" ? rawName : null),
-    preview: safeNamePreview(name),
-    redact: declaration.redactCallDetails === true,
   };
 }
 
-function safeNamePreview(name: string): string {
-  if (name.length === 0) return "";
-  const clipped = name.length > OLLAMA_GUARD_NAME_PREVIEW_CHARS
-    ? name.slice(0, OLLAMA_GUARD_NAME_PREVIEW_CHARS)
-    : name;
-  const escaped = JSON.stringify(clipped);
-  return escaped.length > OLLAMA_GUARD_NAME_PREVIEW_CHARS
-    ? escaped.slice(0, OLLAMA_GUARD_NAME_PREVIEW_CHARS)
-    : escaped;
-}
-
-function collectQualifiedToolNames(tools: unknown[]): string[] {
+function collectQualifiedToolNames(
+  tools: unknown[],
+  budget: OllamaTraversalBudget,
+  depth: number,
+): string[] {
+  checkOllamaJsonNode(budget, depth);
   const names: string[] = [];
   for (const tool of tools) {
     if (!isRecord(tool)) continue;
@@ -404,7 +425,7 @@ function collectQualifiedToolNames(tools: unknown[]): string[] {
       const name = typeof tool.name === "string" && tool.name.trim().length > 0
         ? tool.name.trim()
         : undefined;
-      const nested = collectQualifiedToolNames(tool.tools);
+      const nested = collectQualifiedToolNames(tool.tools, budget, depth + 1);
       names.push(...nested.map((nestedName) => name ? qualifyOllamaToolName(name, nestedName) : nestedName));
       continue;
     }

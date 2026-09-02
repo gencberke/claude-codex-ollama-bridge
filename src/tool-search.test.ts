@@ -5,8 +5,10 @@ import {
   applyDeferredToolsToOllama,
   rewriteToolSearchFromOllama,
   rewriteToolSearchToOllama,
+  TOOL_SEARCH_NAME,
 } from "./codex/tool-search.js";
-import { guardOllamaJsonResponse } from "./codex/ollama-response-boundary.js";
+import { guardOllamaJsonResponse, collectOllamaWireToolNames } from "./codex/ollama-response-boundary.js";
+import { OllamaJsonOverflowError } from "./codex/bounded-json.js";
 import { sha256Hex8 } from "./codex/request-metrics.js";
 import type { JsonObject } from "./core/json.js";
 
@@ -1055,6 +1057,138 @@ describe("deferred tool promotion", () => {
     assert.equal(bridge.skippedUnsupported >= 1, true);
   });
 
+  it("preserves outer segments for nested deferred namespaces in alias and restoration", () => {
+    const nested: JsonObject = {
+      type: "namespace",
+      name: "outer",
+      tools: [
+        {
+          type: "namespace",
+          name: "inner",
+          tools: [
+            { type: "function", name: "leaf", parameters: { type: "object", properties: {} } },
+          ],
+        },
+      ],
+    };
+    const payload: JsonObject = {
+      tools: [SEARCH_TOOL],
+      input: [
+        completedSearch("search-1"),
+        {
+          type: "tool_search_output",
+          call_id: "search-1",
+          status: "completed",
+          execution: "client",
+          tools: [nested],
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal((payload.tools as JsonObject[]).some((tool) => tool.name === "outer__inner__leaf"), true);
+    assert.deepEqual(bridge.aliases.get("outer__inner__leaf"), {
+      name: "leaf",
+      namespace: "outer.inner",
+    });
+    const restoredJson = rewriteToolSearchFromOllama(
+      {
+        output: [
+          {
+            type: "function_call",
+            name: "outer__inner__leaf",
+            call_id: "leaf-1",
+            arguments: "{}",
+          },
+        ],
+      },
+      bridge,
+    ) as JsonObject;
+    assert.deepEqual(restoredJson.output, [
+      {
+        type: "function_call",
+        name: "leaf",
+        namespace: "outer.inner",
+        call_id: "leaf-1",
+        arguments: "{}",
+      },
+    ]);
+    const restoredSse = normalizeOllamaResponse(
+      {
+        type: "response.output_item.done",
+        item: {
+          type: "function_call",
+          name: "outer__inner__leaf",
+          call_id: "leaf-1",
+          arguments: "{}",
+        },
+      },
+      "ollama/deepseek-v4-flash:0731-cloud",
+      bridge,
+    ) as JsonObject;
+    assert.deepEqual((restoredSse.item as JsonObject).name, "leaf");
+    assert.deepEqual((restoredSse.item as JsonObject).namespace, "outer.inner");
+  });
+
+  it("keeps a nested deferred alias colliding with a declared tool fail-closed", () => {
+    const payload: JsonObject = {
+      tools: [
+        SEARCH_TOOL,
+        { type: "function", name: "outer__inner__leaf", parameters: { type: "object", properties: {} } },
+      ],
+      input: [
+        completedSearch("search-1"),
+        {
+          type: "tool_search_output",
+          call_id: "search-1",
+          status: "completed",
+          execution: "client",
+          tools: [
+            {
+              type: "namespace",
+              name: "outer",
+              tools: [
+                {
+                  type: "namespace",
+                  name: "inner",
+                  tools: [
+                    { type: "function", name: "leaf", parameters: { type: "object", properties: {} } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal(bridge.promotedN, 0);
+    assert.equal(bridge.collisions, 1);
+    const tools = payload.tools as JsonObject[];
+    assert.equal(tools.filter((tool) => tool.name === "outer__inner__leaf").length, 1);
+    assert.equal(bridge.aliases.has("outer__inner__leaf"), false);
+    const restored = rewriteToolSearchFromOllama(
+      {
+        output: [
+          {
+            type: "function_call",
+            name: "outer__inner__leaf",
+            call_id: "leaf-1",
+            arguments: "{}",
+          },
+        ],
+      },
+      bridge,
+    ) as JsonObject;
+    assert.deepEqual(restored.output, [
+      {
+        type: "function_call",
+        name: "outer__inner__leaf",
+        call_id: "leaf-1",
+        arguments: "{}",
+      },
+    ]);
+  });
+
   it("hashes unsafe or overlong aliases deterministically into 64 chars", () => {
     const payload: JsonObject = {
       tools: [SEARCH_TOOL],
@@ -1111,5 +1245,230 @@ describe("deferred tool promotion", () => {
       (again.tools as JsonObject[]).map((tool) => tool.name).slice(1),
       promoted,
     );
+  });
+});
+
+describe("bounded provider JSON traversal", () => {
+  function deepNested(depth: number): unknown {
+    let value: unknown = "leaf";
+    for (let index = 0; index < depth; index += 1) value = [value];
+    return value;
+  }
+
+  function wideNested(count: number): unknown {
+    return { output: Array.from({ length: count }, (_unused, index) => ({ index })) };
+  }
+
+  it("keeps a normal 120-level fixture valid on the upstream rewrite path", () => {
+    const value = deepNested(120);
+    assert.deepEqual(rewriteToolSearchFromOllama(value), value);
+  });
+
+  it("fails a 200-level upstream rewrite with the stable code, never a RangeError", () => {
+    assert.throws(() => rewriteToolSearchFromOllama(deepNested(200)), (error: unknown) => {
+      assert.ok(error instanceof OllamaJsonOverflowError);
+      const overflow = (error as OllamaJsonOverflowError).overflow;
+      assert.equal(overflow.code, "ollama_json_traversal_overflow");
+      assert.equal(overflow.side, "upstream");
+      assert.equal(overflow.kind, "depth");
+      return true;
+    });
+  });
+
+  it("fails a 50,000-level upstream rewrite without stack exhaustion", () => {
+    assert.throws(() => rewriteToolSearchFromOllama(deepNested(50_000)), OllamaJsonOverflowError);
+  });
+
+  it("stops a wide upstream structure at the node ceiling", () => {
+    assert.throws(() => rewriteToolSearchFromOllama(wideNested(100_001)), (error: unknown) => {
+      assert.ok(error instanceof OllamaJsonOverflowError);
+      assert.equal((error as OllamaJsonOverflowError).overflow.kind, "nodes");
+      return true;
+    });
+  });
+
+  it("fails a deep encrypted-field response content-safely through the JSON normalize path", () => {
+    const deep: unknown = { response: { output: deepNested(200) } };
+    assert.throws(() => normalizeOllamaResponse(deep, "ollama/m"), OllamaJsonOverflowError);
+  });
+
+  it("bounds direct request-side namespace traversals with the stable overflow code", () => {
+    let deep: unknown = { type: "function", name: "leaf", parameters: { type: "object" } };
+    for (let index = 0; index < 200; index += 1) {
+      deep = { type: "namespace", name: `ns${index}`, tools: [deep] };
+    }
+    const tools = [deep as JsonObject];
+    assert.throws(() => rewriteToolSearchToOllama({ tools }), OllamaJsonOverflowError);
+    assert.throws(() => collectOllamaWireToolNames(tools), OllamaJsonOverflowError);
+  });
+
+  it("bounds decoded function_call_output tool-search JSON before promotion", () => {
+    const payload: JsonObject = {
+      tools: [SEARCH_TOOL],
+      input: [
+        completedSearch("search-1"),
+        {
+          type: "function_call_output",
+          call_id: "search-1",
+          output: JSON.stringify({ tools: [deepNested(200)] }),
+        },
+      ],
+    };
+    assert.throws(() => rewriteToolSearchToOllama(payload), OllamaJsonOverflowError);
+  });
+
+  it("bounds a promoted parameter shape decoded from a function_call_output string", () => {
+    let deepParameters: unknown = { type: "string" };
+    for (let index = 0; index < 10_000; index += 1) {
+      deepParameters = { type: "object", properties: { a: deepParameters } };
+    }
+    const payload: JsonObject = {
+      tools: [SEARCH_TOOL],
+      input: [
+        completedSearch("search-1"),
+        {
+          type: "function_call_output",
+          call_id: "search-1",
+          output: JSON.stringify({
+            tools: [{ type: "function", name: "spawn_agent", parameters: deepParameters }],
+          }),
+        },
+      ],
+    };
+    assert.throws(() => rewriteToolSearchToOllama(payload), (error: unknown) => {
+      assert.ok(error instanceof OllamaJsonOverflowError);
+      assert.equal((error as OllamaJsonOverflowError).overflow.side, "request");
+      return true;
+    });
+  });
+
+  it("keeps namespace restoration and alias-collision protections green on ordinary payloads", () => {
+    const payload: JsonObject = {
+      tools: [
+        {
+          type: "namespace",
+          name: "multi_agent_v1",
+          tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object" } }],
+        },
+      ],
+      input: [
+        {
+          type: "function_call",
+          name: "multi_agent_v1.spawn_agent",
+          call_id: "c1",
+          arguments: "{}",
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal(bridge.collisions, 0);
+    const response = {
+      output: [
+        { type: "function_call", name: "multi_agent_v1.spawn_agent", call_id: "c1", arguments: "{}" },
+      ],
+    };
+    const restored = normalizeOllamaResponse(response, "ollama/m", bridge) as JsonObject;
+    const item = (restored.output as JsonObject[])[0]!;
+    assert.equal(item.namespace, "multi_agent_v1");
+    assert.equal(item.name, "spawn_agent");
+  });
+});
+
+describe("exact hosted-tool filter", () => {
+  it("drops hosted web_search with no alias collision and preserves tool_search plus ordinary function", () => {
+    const payload: JsonObject = {
+      tools: [
+        { type: "web_search" },
+        SEARCH_TOOL,
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal(bridge.hostedToolsDroppedN, 1);
+    assert.equal(Array.isArray(payload.tools), true);
+    const tools = payload.tools as JsonObject[];
+    assert.equal(tools.length, 2);
+    assert.equal(tools.some((t) => t.type === "web_search"), false);
+    assert.equal(tools[0]!.type, "function");
+    assert.equal(tools[0]!.name, TOOL_SEARCH_NAME);
+    assert.equal(tools[1]!.type, "function");
+    assert.equal(tools[1]!.name, "exec_command");
+  });
+
+  it("drops hosted web_search inside a namespace while preserving the function child and namespace structure", () => {
+    const payload: JsonObject = {
+      tools: [
+        {
+          type: "namespace",
+          name: "custom_ns",
+          tools: [
+            { type: "web_search" },
+            { type: "function", name: "custom_func", parameters: { type: "object" } },
+          ],
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal(bridge.hostedToolsDroppedN, 1);
+    assert.equal(Array.isArray(payload.tools), true);
+    const tools = payload.tools as JsonObject[];
+    assert.equal(tools.length, 1);
+    const ns = tools[0]!;
+    assert.equal(ns.type, "namespace");
+    assert.equal(ns.name, "custom_ns");
+    assert.equal(Array.isArray(ns.tools), true);
+    const nsChildren = ns.tools as JsonObject[];
+    assert.equal(nsChildren.length, 1);
+    assert.equal(nsChildren[0]!.type, "function");
+    assert.equal(nsChildren[0]!.name, "custom_func");
+  });
+
+  it("preserves a function tool whose name is web_search", () => {
+    const payload: JsonObject = {
+      tools: [
+        {
+          type: "function",
+          name: "web_search",
+          description: "custom search function",
+          parameters: { type: "object" },
+        },
+      ],
+    };
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.equal(bridge.hostedToolsDroppedN, 0);
+    assert.equal(Array.isArray(payload.tools), true);
+    const tools = payload.tools as JsonObject[];
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0]!.type, "function");
+    assert.equal(tools[0]!.name, "web_search");
+    assert.equal(tools[0]!.description, "custom search function");
+  });
+
+  it("preserves namespaced function flattening and declaration integrity when hosted web_search is dropped", () => {
+    const payload: JsonObject = {
+      model: "ollama/deepseek-v4-flash:0731-cloud",
+      tools: [
+        {
+          type: "namespace",
+          name: "functions",
+          tools: [
+            { type: "web_search" },
+            { type: "function", name: "my_tool", parameters: { type: "object" } },
+          ],
+        },
+      ],
+    };
+    const wire = prepareOllamaWire(payload);
+    assert.equal(isOllamaReject(wire), false);
+    if (isOllamaReject(wire)) return;
+    assert.equal(wire.bridge.hostedToolsDroppedN, 1);
+    const wireTools = wire.payload.tools as JsonObject[];
+    assert.equal(wireTools.length, 1);
+    assert.equal(wireTools[0]!.type, "function");
+    assert.equal(wireTools[0]!.name, "my_tool");
+    assert.equal(wireTools[0]!.namespace, undefined);
+    assert.equal(wire.declaration.count, 1);
+    assert.equal(wire.declaration.names.has("my_tool"), true);
+    assert.equal(wire.declaration.names.has("web_search"), false);
   });
 });

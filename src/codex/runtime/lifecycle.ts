@@ -81,6 +81,8 @@ export function cobOwnedFiles(paths: CobPaths): string[] {
     paths.catalogMeta,
     paths.cobConfig,
     paths.log,
+    paths.diagnostics,
+    `${paths.diagnostics}.1`,
     paths.runtime,
     paths.pid,
     paths.startLease,
@@ -88,7 +90,13 @@ export function cobOwnedFiles(paths: CobPaths): string[] {
 }
 
 export function overlayStateFiles(paths: CobPaths): string[] {
-  return cobOwnedFiles(paths).filter((file) => file !== paths.log && file !== paths.startLease);
+  return cobOwnedFiles(paths).filter(
+    (file) =>
+      file !== paths.log &&
+      file !== paths.diagnostics &&
+      file !== `${paths.diagnostics}.1` &&
+      file !== paths.startLease,
+  );
 }
 
 export function snapshotOverlays(paths: CobPaths): OverlaySnapshot {
@@ -160,28 +168,58 @@ export function writeStartLease(paths: CobPaths, lease: StartLease): void {
 }
 
 export function readStartLease(paths: CobPaths): StartLease | null {
+  const state = readStartLeaseState(paths);
+  return state.state === "valid" ? state.lease : null;
+}
+
+export type StartLeaseRead =
+  | { state: "absent" }
+  | { state: "malformed" }
+  | { state: "valid"; lease: StartLease };
+
+/**
+ * Distinguish a missing lease from lease bytes cob cannot validate. A
+ * malformed lease is an explicit blocked lifecycle condition: callers refuse
+ * the operation instead of silently treating it as "no lease" or clearing it.
+ */
+export function readStartLeaseState(paths: CobPaths): StartLeaseRead {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(paths.startLease, "utf8"));
-    if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.nonce !== "string") {
-      return null;
+    raw = readFileSync(paths.startLease, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { state: "absent" };
     }
-    if (!Number.isInteger(parsed.pid) || parsed.pid <= 0 || parsed.nonce.length === 0) return null;
+    return { state: "malformed" };
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.nonce !== "string") {
+      return { state: "malformed" };
+    }
+    if (!Number.isInteger(parsed.pid) || parsed.pid <= 0 || parsed.nonce.length === 0) {
+      return { state: "malformed" };
+    }
     return {
-      pid: parsed.pid,
-      nonce: parsed.nonce,
-      startKey: typeof parsed.startKey === "string" && parsed.startKey.length > 0 ? parsed.startKey : undefined,
-      launcherPid:
-        typeof parsed.launcherPid === "number" && Number.isInteger(parsed.launcherPid) && parsed.launcherPid > 0
-          ? parsed.launcherPid
-          : undefined,
-      launcherStartKey:
-        typeof parsed.launcherStartKey === "string" && parsed.launcherStartKey.length > 0
-          ? parsed.launcherStartKey
-          : undefined,
-      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+      state: "valid",
+      lease: {
+        pid: parsed.pid,
+        nonce: parsed.nonce,
+        startKey:
+          typeof parsed.startKey === "string" && parsed.startKey.length > 0 ? parsed.startKey : undefined,
+        launcherPid:
+          typeof parsed.launcherPid === "number" && Number.isInteger(parsed.launcherPid) && parsed.launcherPid > 0
+            ? parsed.launcherPid
+            : undefined,
+        launcherStartKey:
+          typeof parsed.launcherStartKey === "string" && parsed.launcherStartKey.length > 0
+            ? parsed.launcherStartKey
+            : undefined,
+        createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+      },
     };
   } catch {
-    return null;
+    return { state: "malformed" };
   }
 }
 
@@ -243,15 +281,35 @@ export async function syncCatalog(opts: {
   discovery?: CatalogDiscovery;
   inspect?: InspectCodexIo;
 }): Promise<{ catalog: CatalogFile; wrote: boolean; ollamaCount: number; ollamaError?: string }> {
-  const run = () =>
-    syncCatalogControlPlane({
-      ...opts,
-      resolveRuntimePort: () => readRuntime(opts.paths)?.port,
-    });
+  // Standalone sync is a rollback-controlled publication: any failure after a
+  // write step restores the prior overlay bytes exactly, while a retained
+  // consumer-rejection sidecar stays in place.
+  const refuseMalformedLease = (): StartLeaseRead => {
+    const leaseState = readStartLeaseState(opts.paths);
+    if (leaseState.state === "malformed") {
+      throw new Error(`cob sync refused: unreadable cob start lease at ${opts.paths.startLease}`);
+    }
+    return leaseState;
+  };
+  const run = async () => {
+    // Checked before the snapshot: a malformed lease must block every sync
+    // path, including locked callers, and never reach publication.
+    refuseMalformedLease();
+    const snapshot = snapshotOverlays(opts.paths);
+    try {
+      return await syncCatalogControlPlane({
+        ...opts,
+        resolveRuntimePort: () => readRuntime(opts.paths)?.port,
+      });
+    } catch (error) {
+      restoreOverlays(opts.paths, snapshot, { preserveCatalogValidationFailure: true });
+      throw error;
+    }
+  };
   if (opts.locked) return run();
   return withCobLock(opts.paths, async () => {
-    const lease = readStartLease(opts.paths);
-    if (lease && isStartLeaseActive(lease)) {
+    const leaseState = refuseMalformedLease();
+    if (leaseState.state === "valid" && isStartLeaseActive(leaseState.lease)) {
       throw new Error("cob sync refused: cob start in progress");
     }
     return run();
@@ -285,6 +343,13 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
   cob: CobFileConfig;
 }> {
   const paths = opts.paths ?? resolvePaths();
+  // Narrow start-path control: a malformed lease blocks publication here so
+  // neither prepare nor the foreground serve path can silently publish over
+  // lease bytes cob cannot validate.
+  const leaseState = readStartLeaseState(paths);
+  if (leaseState.state === "malformed") {
+    throw new Error(`cob start refused: unreadable cob start lease at ${paths.startLease}`);
+  }
   const port = opts.port ?? DEFAULT_PORT;
   const ollamaUrl = opts.ollamaUrl ?? DEFAULT_OLLAMA_URL;
   const resolvedCob =
@@ -382,6 +447,7 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
         ollamaUrl: next.ollamaUrl,
         catalog: next.catalog,
         catalogPath: next.paths.catalog,
+        diagnosticPath: next.paths.diagnostics,
         nonce,
         compaction: next.compaction,
         nativePlaintextSpawn: next.cob.experimental?.nativePlaintextSpawn,
@@ -508,8 +574,11 @@ async function stopGatewayUnlocked(paths: CobPaths): Promise<boolean> {
 export async function restoreCob(paths: CobPaths = resolvePaths()): Promise<{ rootConfigUnchanged: boolean }> {
   const before = readRootConfig(paths);
   await withCobLock(paths, async () => {
-    const lease = readStartLease(paths);
-    if (lease && isStartLeaseActive(lease)) {
+    const leaseState = readStartLeaseState(paths);
+    if (leaseState.state === "malformed") {
+      throw new Error(`restore refused: unreadable cob start lease at ${paths.startLease}`);
+    }
+    if (leaseState.state === "valid" && isStartLeaseActive(leaseState.lease)) {
       throw new Error("restore refused: cob start in progress");
     }
     await stopGateway(paths, { locked: true });
@@ -560,6 +629,13 @@ export async function startGatewayDetached(opts: {
 
   await acquireLock(paths.lock);
   try {
+    // Locked-lane lease validation precedes the healthy-runtime early return:
+    // a malformed lease must never be reconciled away or answered with
+    // alreadyRunning.
+    const leaseState = readStartLeaseState(paths);
+    if (leaseState.state === "malformed") {
+      throw new Error(`cob start refused: unreadable cob start lease at ${paths.startLease}`);
+    }
     const existing = readRuntime(paths);
     if (existing && (await isHealthyRuntime(existing))) {
       // Reconcile before the early return: a lease matching the healthy
@@ -572,8 +648,7 @@ export async function startGatewayDetached(opts: {
       }
       return { alreadyRunning: true, runtime: existing };
     }
-    const lease = readStartLease(paths);
-    if (lease && isStartLeaseActive(lease)) {
+    if (leaseState.state === "valid" && isStartLeaseActive(leaseState.lease)) {
       throw new Error("cob start already in progress");
     }
     if (existing) {
@@ -685,8 +760,9 @@ async function reconcileHealthyStartLease(
   paths: CobPaths,
   runtime: RuntimeState,
 ): Promise<"active" | "reconciled" | "foreign"> {
-  const lease = readStartLease(paths);
-  if (!lease) return "foreign";
+  const leaseState = readStartLeaseState(paths);
+  if (leaseState.state !== "valid") return "foreign";
+  const lease = leaseState.lease;
   if (lease.pid !== runtime.pid || lease.nonce !== runtime.nonce) return "foreign";
   if (
     lease.launcherPid !== undefined &&

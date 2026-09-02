@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import {
   APPLY_PATCH_TOOL_NAME,
   COB_APPLY_PATCH_ALIAS,
+  classifyApplyPatchObservation,
+  emptyApplyPatchBridge,
   prepareApplyPatchToOllama,
   validateApplyPatchPayload,
   type ApplyPatchBridge,
@@ -15,7 +17,7 @@ import {
   ollamaGuardHttpBody,
   type OllamaResponseGuardState,
 } from "./codex/ollama-response-boundary.js";
-import { normalizeOllamaResponse, ollamaSseTransform } from "./codex/ollama.js";
+import { normalizeOllamaResponse, observeApplyPatchTurn, ollamaSseTransform } from "./codex/ollama.js";
 import type { JsonObject } from "./core/json.js";
 
 const PATCH_GRAMMAR = "start: /[^\\n]*/";
@@ -80,6 +82,48 @@ async function collectTransform(raw: string, transform: NodeJS.ReadWriteStream):
 }
 
 describe("Gate 5 apply_patch wire bridge", () => {
+  it("classifies Gate 5 misses from content-free protocol facts", () => {
+    const base = {
+      declarationPresent: true,
+      outboundAliasPresent: true,
+      modelCallObserved: true,
+      restorationObserved: true,
+      childCustomCallObserved: true,
+      childCustomOutputObserved: true,
+      executionEffectObserved: true,
+    } as const;
+    const cases = [
+      [{ ...base, declarationPresent: false }, "declaration_missing"],
+      [{ ...base, outboundAliasPresent: false }, "outbound_alias_missing"],
+      [{ ...base, modelCallObserved: false }, "model_declined"],
+      [{ ...base, restorationObserved: false }, "restoration_missing"],
+      [{ ...base, childCustomCallObserved: false }, "restoration_missing"],
+      [{ ...base, childCustomCallObserved: true, childCustomOutputObserved: false }, "execution_incomplete"],
+      [{ ...base, childCustomCallObserved: undefined, childCustomOutputObserved: false }, "inconclusive"],
+      [{ ...base, executionEffectObserved: false }, "execution_no_effect"],
+      [{ ...base, childCustomCallObserved: undefined, childCustomOutputObserved: undefined, executionEffectObserved: false }, "inconclusive"],
+      [base, "complete"],
+      [{ ...base, childCustomCallObserved: true, childCustomOutputObserved: true, executionEffectObserved: undefined }, "inconclusive"],
+      [{ ...base, childCustomCallObserved: true, childCustomOutputObserved: true, executionEffectObserved: true }, "complete"],
+      [{ ...base, executionEffectObserved: undefined }, "inconclusive"],
+    ] as const;
+    for (const [observation, expected] of cases) {
+      assert.equal(classifyApplyPatchObservation(observation), expected);
+      const serialized = JSON.stringify(observation);
+      assert.equal(serialized.includes("apply_patch"), false);
+      assert.equal(serialized.includes("call_"), false);
+      assert.equal(serialized.includes("SECRET"), false);
+    }
+  });
+
+  it("retains declaration-missing evidence when the enabled bridge has no tool", () => {
+    const observed = observeApplyPatchTurn(emptyApplyPatchBridge(true, false), false);
+    assert.equal(observed.classification, "declaration_missing");
+    assert.equal(observed.declarationPresent, false);
+    assert.equal(observed.outboundAliasPresent, false);
+    assert.equal(JSON.stringify(observed).includes("apply_patch"), false);
+  });
+
   it("is default-off and keeps explicit false fail-closed", () => {
     for (const policy of [undefined, { enabled: false }]) {
       const payload = patchPayload();
@@ -264,6 +308,8 @@ describe("Gate 5 apply_patch wire bridge", () => {
       input: "*** Begin Patch\n*** End Patch\n",
     });
     assert.equal(JSON.stringify(normalized).includes(COB_APPLY_PATCH_ALIAS), false);
+    assert.equal(bridge.observation.modelCallObserved, true);
+    assert.equal(bridge.observation.restorationObserved, true);
   });
 
   it("rejects JSON alias calls that share a call_id with different item ids before normalize", () => {

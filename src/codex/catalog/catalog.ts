@@ -134,8 +134,38 @@ export function buildOllamaEntry(
   assertOllamaRowMatchesEvidence(entry, evidence);
   return entry;
 }
+/**
+ * The one verified cloud classification for the Codex/Ollama surface: a
+ * daemon-reported remote host or a reviewed cloud-suffix tag name. The tag and
+ * slug classifiers below are the only entry points; do not add a second
+ * cloud heuristic.
+ */
+export function isVerifiedCloudOllamaName(name: string, remoteHost?: string): boolean {
+  return Boolean(remoteHost) || /:cloud$|-cloud$/.test(name);
+}
+
 export function isVerifiedCloudOllamaTag(tag: Pick<OllamaTag, "name" | "remote_host">): boolean {
-  return Boolean(tag.remote_host) || /:cloud$|-cloud$/.test(tag.name);
+  return isVerifiedCloudOllamaName(tag.name, tag.remote_host);
+}
+
+const OLLAMA_REMOTE_HOST_DESCRIPTION_RE = / via the local Ollama daemon to \S/;
+
+/**
+ * Verified cloud classification for a routed catalog row (request boundary and
+ * row rebuild). A slug cannot carry remote_host evidence, so a remote_host tag
+ * without a cloud suffix is recognized from the cob-owned description that
+ * buildOllamaEntry persisted at discovery time.
+ */
+export function isVerifiedCloudOllamaRow(slug: string, row?: JsonObject): boolean {
+  if (isVerifiedCloudOllamaSlug(slug)) return true;
+  return (
+    typeof row?.description === "string" && OLLAMA_REMOTE_HOST_DESCRIPTION_RE.test(row.description)
+  );
+}
+
+export function isVerifiedCloudOllamaSlug(slug: string): boolean {
+  const name = slug.startsWith("ollama/") ? slug.slice("ollama/".length) : slug;
+  return isVerifiedCloudOllamaName(name);
 }
 
 /**
@@ -150,11 +180,6 @@ export function assertSpawnRowsCarryTools(tags: readonly OllamaTag[], spawnable:
       throw new Error(`configured spawn row ${tag.name} does not carry a fresh tools capability`);
     }
   }
-}
-
-export function isVerifiedCloudOllamaSlug(slug: string): boolean {
-  const name = slug.startsWith("ollama/") ? slug.slice("ollama/".length) : slug;
-  return /:cloud$|-cloud$/.test(name);
 }
 
 export function ollamaCatalogWindows(opts: {
@@ -334,7 +359,7 @@ function rebuildOllamaRowFromPrevious(
   const windows = ollamaCatalogWindows({
     tagLength: typeof model.context_window === "number" ? model.context_window : undefined,
     reportedMax: typeof model.max_context_window === "number" ? model.max_context_window : undefined,
-    cloud: isVerifiedCloudOllamaSlug(slug),
+    cloud: isVerifiedCloudOllamaRow(slug, model),
     advertiseCloudMax: options?.advertiseCloudMaxContext === true,
     activeCap: options?.activeContextWindow,
   });

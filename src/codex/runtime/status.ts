@@ -1,23 +1,52 @@
 import { existsSync, readFileSync } from "node:fs";
-import { fetchHealthz, healthNonceOk, healthPid, isCobHealth, readRuntime } from "./runtime.js";
+import { fetchHealthz, healthNonceOk, healthPid, isCobHealth, readRuntime, runtimeStillServing } from "./runtime.js";
 import { discoverCodexBins, type CatalogDiscovery, type InspectCodexIo } from "../catalog/source.js";
 import { detectInstall, formatInstallLine } from "../../core/install-detection.js";
 import { isLiveCodexHome } from "../home.js";
 import { isRecord } from "../../core/json.js";
 import { resolveCobConfig, resolveSpawnableOllamaSlugs } from "../config/resolve.js";
-import { assessDesktopOverlay, loadRootTomlKeys, openaiPortFromToml, summarizeCobStatus, type DesktopOverlayAssessment } from "../root-config.js";
+import { assessDesktopOverlay, loadRootTomlKeys, openaiPortFromToml, summarizeCobStatus, type CobStatusKind, type DesktopOverlayAssessment, type DesktopOverlayState } from "../root-config.js";
 import { resolvePaths } from "../paths.js";
-import { assessCatalogProvenance } from "../catalog/provenance.js";
+import { assessCatalogProvenance, type CatalogFreshness } from "../catalog/provenance.js";
 import type { CobPaths } from "../paths.js";
 
 /**
  * Read-only codex status report: runtime health, overlay, and provenance.
  */
 
+/** Stable machine-readable status document. Content-free by design. */
+export type StatusReportJson = {
+  schema_version: 1;
+  kind: CobStatusKind;
+  needs_action: boolean;
+  install: { kind: string; version: string };
+  home: { kind: "live" | "isolated" };
+  gateway: {
+    running: boolean;
+    healthy: boolean;
+    health?: string;
+    port?: number;
+    pid?: number;
+  };
+  overlay: DesktopOverlayState;
+  catalog: {
+    present: boolean;
+    meta_present: boolean;
+    freshness: CatalogFreshness;
+    reason?: string;
+    producer?: { kind: string; version: string };
+    validator_count?: number;
+    ollama_discovery?: "success" | "degraded";
+    ollama_discovery_code?: string;
+  };
+  action_codes: string[];
+};
+
 export type StatusReport = {
   /** Exit 0 when this Codex home needs no cob action. */
   ok: boolean;
   text: string;
+  json: StatusReportJson;
 };
 
 export async function statusReport(
@@ -47,6 +76,9 @@ export async function statusReport(
       gatewayHealthy: false,
       discovery,
       inspect: opts?.inspect,
+      gatewayRunning: false,
+      install,
+      liveHome,
     });
   }
   let health = "unknown";
@@ -71,12 +103,19 @@ export async function statusReport(
     }
   }
   const gatewayHealthy = health === "ok";
+  // A runtime record alone is not evidence that the gateway runs: a stale
+  // record with a dead or reused pid must not report running=true. Confirm a
+  // live cob process/health without mutating anything.
+  const gatewayRunning = gatewayHealthy || (await runtimeStillServing(runtime));
   const details = [
     `gateway pid: ${runtime.pid}`,
     `gateway port: ${runtime.port}`,
     `gateway health: ${health}`,
     `ollama url: ${runtime.ollamaUrl}`,
   ];
+  if (!gatewayRunning) {
+    details.push("gateway process: no live cob process for the recorded pid");
+  }
   if (runtime.version) {
     details.push(`gateway release: ${runtime.version} (${runtime.installKind ?? "unknown"})`);
   }
@@ -92,6 +131,11 @@ export async function statusReport(
     gatewayHealthy,
     discovery,
     inspect: opts?.inspect,
+    gatewayRunning,
+    gatewayPid: runtime.pid,
+    gatewayHealth: health,
+    install,
+    liveHome,
   });
 }
 
@@ -105,6 +149,11 @@ function finishStatusReport(
     gatewayHealthy: boolean;
     discovery: CatalogDiscovery;
     inspect?: InspectCodexIo;
+    gatewayRunning: boolean;
+    gatewayPid?: number;
+    gatewayHealth?: string;
+    install: ReturnType<typeof detectInstall>;
+    liveHome: boolean;
   },
 ): StatusReport {
   const overlay = assessPathsOverlay(paths, opts);
@@ -122,10 +171,84 @@ function finishStatusReport(
     gatewayHealthy: opts.gatewayHealthy,
     catalogFreshness: provenance.freshness,
   });
+  const catalogPresent = existsSync(paths.catalog);
+  const metaPresent = existsSync(paths.catalogMeta);
+  // Discovery evidence must stay in parity with the human lines across stale
+  // and validation-failure states, not only when provenance is fresh.
+  const discoveryEvidence = provenance.discovery_evidence;
+  const actionCodes = buildStatusActionCodes({
+    gatewayRunning: opts.gatewayRunning,
+    gatewayHealthy: opts.gatewayHealthy,
+    overlay: overlay.state,
+    freshness: provenance.freshness,
+    liveHome,
+  });
+  const json: StatusReportJson = {
+    schema_version: 1,
+    kind: summary.kind,
+    needs_action: !summary.ok,
+    install: { kind: opts.install.kind, version: opts.install.version },
+    home: { kind: liveHome ? "live" : "isolated" },
+    gateway: {
+      running: opts.gatewayRunning,
+      healthy: opts.gatewayHealthy,
+      ...(opts.gatewayHealth !== undefined ? { health: opts.gatewayHealth } : {}),
+      ...(opts.runtimePort !== undefined ? { port: opts.runtimePort } : {}),
+      ...(opts.gatewayPid !== undefined ? { pid: opts.gatewayPid } : {}),
+    },
+    overlay: overlay.state,
+    catalog: {
+      present: catalogPresent,
+      meta_present: metaPresent,
+      freshness: provenance.freshness,
+      ...(provenance.reason !== undefined ? { reason: provenance.reason } : {}),
+      ...(provenance.provenance
+        ? {
+            producer: {
+              kind: provenance.provenance.producer.kind,
+              version: provenance.provenance.producer.version,
+            },
+            validator_count: provenance.provenance.validators.length,
+          }
+        : {}),
+      ...(discoveryEvidence
+        ? {
+            ollama_discovery: discoveryEvidence.state,
+            ...(discoveryEvidence.diagnostic?.code
+              ? { ollama_discovery_code: discoveryEvidence.diagnostic.code }
+              : {}),
+          }
+        : {}),
+    },
+    action_codes: actionCodes,
+  };
   return {
     ok: summary.ok,
     text: [`cob: ${summary.kind}`, ...heading, ...details, ...overlay.lines, ...provenance.lines].join("\n"),
+    json,
   };
+}
+
+/**
+ * Stable, content-free suggested action codes derived from the same
+ * assessment as the human output. Ordered by the standard recovery ladder.
+ */
+function buildStatusActionCodes(input: {
+  gatewayRunning: boolean;
+  gatewayHealthy: boolean;
+  overlay: DesktopOverlayState;
+  freshness: CatalogFreshness;
+  liveHome: boolean;
+}): string[] {
+  const codes: string[] = [];
+  if (!input.gatewayRunning || !input.gatewayHealthy) codes.push("cob_start");
+  if (input.overlay === "broken" || input.overlay === "unreadable") {
+    codes.push("repair_desktop_overlay");
+  }
+  if (input.freshness === "stale" || input.freshness === "unknown" || input.freshness === "missing") {
+    codes.push("cob_sync");
+  }
+  return codes;
 }
 
 function assessPathsOverlay(

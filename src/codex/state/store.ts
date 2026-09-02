@@ -237,13 +237,31 @@ export class ConversationStateStore {
         );
       }
 
+      const archivePath = this.compactArchivePath(node.responseId);
+      // True only when this attempt created the archive file; a pre-existing
+      // matching archive is never rolled back.
+      const archiveWrittenByAttempt =
+        node.rawCompactBody !== undefined && !existsSync(archivePath);
       if (node.rawCompactBody) {
         // The archive precedes the commit point: it only becomes authoritative
         // once the candidate checkpoint that references it is published.
-        writeImmutable(this.compactArchivePath(node.responseId), node.rawCompactBody);
+        writeImmutable(archivePath, node.rawCompactBody);
         delete node.rawCompactBody;
       }
-      writeImmutable(target, serializeCheckpoint(node));
+      try {
+        writeImmutable(target, serializeCheckpoint(node));
+      } catch (error) {
+        // A failed attempt removes only the archive it created; anything left
+        // behind is reaped by the next orphan cleanup.
+        if (archiveWrittenByAttempt) {
+          try {
+            unlinkSync(archivePath);
+          } catch {
+            // Left for the next orphan cleanup.
+          }
+        }
+        throw error;
+      }
 
       // Post-commit maintenance only. A prune failure must never retract the
       // committed checkpoint or turn this publish into a reported failure.
@@ -471,6 +489,20 @@ export class ConversationStateStore {
 
   private removeOrphanedArchives(known?: ReadonlyArray<{ node: ConversationCheckpoint }>): void {
     const retained = new Set((known ?? this.readValidCheckpoints()).map((entry) => entry.node.responseId));
+    // A physically present, validly named checkpoint file protects its matching
+    // archive even when the checkpoint fails validation; its diagnostic bytes
+    // survive for readCheckpoint() to fail closed on.
+    let presentNames: string[];
+    try {
+      presentNames = readdirSync(this.checkpointsDir);
+    } catch {
+      presentNames = [];
+    }
+    for (const name of presentNames) {
+      if (!name.endsWith(".json")) continue;
+      const responseId = decodeResponseId(name.slice(0, -".json".length));
+      if (responseId) retained.add(responseId);
+    }
     let names: string[];
     try {
       names = readdirSync(this.compactArchiveDir);

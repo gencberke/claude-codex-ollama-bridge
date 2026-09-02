@@ -2,20 +2,23 @@
  * Pinned Ollama Responses dialect. Source/test authority only — not runtime
  * discovery. Normal requests and `cob status` must not call `/api/version`.
  *
- * Reviewed against Ollama 0.33.1 `openai/responses.go`.
- *
- * The tagged 0.33.1 Responses source is unchanged from the reviewed 0.32.15
- * source, so the request and response invariants below remain intentionally
- * narrow.
- */
+ * Upstream source review (2026-08-31): Ollama official `v0.33.2`
+ * (`f96e7aa0513b9973a0ccc71be414c2ecb9d65b1a`), files `openai/responses.go`
+ * and `openai/openai.go`. Both files are byte-identical to `v0.32.15` and
+ * `v0.33.1`, so the request and response invariants below remain
+ * intentionally narrow. This is an upstream source review only: it records no
+ * live daemon behavior claim and no allowlist widening.
+  */
+
+import { isRecord } from "../core/json.js";
 
 export const OLLAMA_DIALECT_VERSION = 2 as const;
-export const OLLAMA_REVIEWED_VERSION = "0.33.1" as const;
+export const OLLAMA_REVIEWED_VERSION = "0.33.2" as const;
 export const OLLAMA_REVIEWED_SOURCE_PATH = "openai/responses.go" as const;
 export const OLLAMA_RESPONSES_ENDPOINT = "/v1/responses" as const;
 
 /**
- * Top-level JSON keys shared by Ollama 0.32.15 and 0.33.1
+ * Top-level JSON keys shared by Ollama 0.32.15, 0.33.1, and 0.33.2
  * `ResponsesRequest`.
  * `tool_choice` is documented as unsupported and is not a struct field.
  * `conversation` is present but not implemented.
@@ -37,7 +40,7 @@ export const OLLAMA_0_32_15_RESPONSES_REQUEST_FIELDS = [
   "stream",
 ] as const;
 
-/** Reviewed Ollama 0.33.1 Responses request surface that cob forwards. */
+/** Reviewed Ollama 0.33.2 Responses request surface that cob forwards. */
 export const OLLAMA_REQUEST_ALLOWLIST = [
   "model",
   "input",
@@ -96,11 +99,34 @@ export const OLLAMA_SSE_TERMINAL_EVENTS = [
   "response.failed",
 ] as const;
 
+/** cob-owned fixed Ollama wire alias for the Codex `tool_search` custom tool. */
+export const OLLAMA_TOOL_SEARCH_ALIAS = "tool_search" as const;
+
+/**
+ * Exact wire argument contract for the fixed tool-search alias. Absent and
+ * empty arguments mean "no query arguments"; anything else must decode to a
+ * JSON object. Malformed JSON, scalars, and arrays are rejected fail-closed
+ * instead of coerced into a query.
+ */
+export function isValidToolSearchWireArguments(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (isRecord(value)) return true;
+  if (typeof value !== "string") return false;
+  if (value.trim().length === 0) return true;
+  try {
+    return isRecord(JSON.parse(value) as unknown);
+  } catch {
+    return false;
+  }
+}
+
 export type OllamaDialectCapability =
   | "supported"
   | "unsupported"
   | "unknown"
-  | "cob-owned";
+  | "cob-owned"
+  /** Capability depends on the runtime route (verified cloud vs local). */
+  | "route-dependent";
 
 export const OLLAMA_DIALECT = {
   version: OLLAMA_DIALECT_VERSION,
@@ -120,6 +146,7 @@ export const OLLAMA_DIALECT = {
       toolChoiceNonAuto: "ollama_tool_choice_unsupported",
       toolChoiceInvalid: "ollama_tool_choice_invalid",
       textFormat: "ollama_text_format_unsupported",
+      textFormatCloud: "ollama_text_format_cloud_unsupported",
     },
   },
   response: {
@@ -151,7 +178,12 @@ export const OLLAMA_DIALECT = {
     undeclaredClientTools: "unsupported",
     usageEstimation: "unsupported",
     retriesAfterHeaders: "unsupported",
-    structuredTextJsonSchema: "supported",
+    // Ollama Cloud does not support structured outputs; json_schema stays
+    // accepted only on the reviewed local Responses route.
+    structuredTextPlainText: "supported",
+    structuredTextJsonSchema: "route-dependent",
+    structuredTextJsonSchemaLocal: "supported",
+    structuredTextJsonSchemaCloud: "unsupported",
     toolChoiceAutoOnly: "supported",
   } satisfies Record<string, OllamaDialectCapability>,
 } as const;

@@ -42,12 +42,20 @@ export function writeRuntime(paths: CobPaths, runtime: RuntimeState): void {
 export function readRuntime(paths: CobPaths): RuntimeState | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(paths.runtime, "utf8"));
+    // Fail closed: a runtime record with a malformed pid or port is untrusted
+    // state, not a healthy runtime identity, and falls back to the pid file.
     if (
       parsed &&
       typeof parsed === "object" &&
       "pid" in parsed &&
       "port" in parsed &&
-      typeof (parsed as RuntimeState).pid === "number"
+      typeof (parsed as RuntimeState).pid === "number" &&
+      Number.isInteger((parsed as RuntimeState).pid) &&
+      (parsed as RuntimeState).pid > 0 &&
+      typeof (parsed as RuntimeState).port === "number" &&
+      Number.isInteger((parsed as RuntimeState).port) &&
+      (parsed as RuntimeState).port >= 1 &&
+      (parsed as RuntimeState).port <= 65535
     ) {
       return parsed as RuntimeState;
     }

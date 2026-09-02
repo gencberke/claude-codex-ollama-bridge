@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from "node:fs";
+import {existsSync, mkdtempSync, readlinkSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { connect, createServer, type AddressInfo } from "node:net";
-import { zstdCompressSync } from "node:zlib";
+import { gzipSync, zstdCompressSync } from "node:zlib";
 import {listenGateway, createGateway } from "./codex/gateway.js";
 import { resetCompactAttemptLog } from "./codex/compact-attempt-log.js";
 import { pickForwardHeaders } from "./codex/native.js";
@@ -24,6 +24,7 @@ import {
 } from "./codex/experimental/native-plaintext-spawn.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
+import type { GatewayDiagnosticEventV1 } from "./codex/diagnostic-event.js";
 const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "cob-gw-state-"));
 
 const TEST_CATALOG: CatalogFile = {
@@ -149,10 +150,402 @@ async function freePort(): Promise<number> {
   });
 }
 
+function processHasOpenFdFor(path: string): boolean {
+  const fdDir = existsSync("/proc/self/fd") ? "/proc/self/fd" : "/dev/fd";
+  return readdirSync(fdDir).some((entry) => {
+    try {
+      return readlinkSync(join(fdDir, entry)) === path;
+    } catch {
+      return false;
+    }
+  });
+}
+
 describe("gateway", () => {
   it("refuses to start without an explicit stateDir or stateStore", () => {
     const unowned = { port: 0, catalog: TEST_CATALOG } as unknown as GatewayOptions;
     assert.throws(() => createGateway(unowned), /refusing to guess the codex home/);
+  });
+
+  it("closes the diagnostic fd when the gateway bind fails", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const dir = mkdtempSync(join(tmpdir(), "cob-diagnostic-bind-failure-"));
+    const diagnosticPath = join(dir, "cob-diagnostics.jsonl");
+    const port = await freePort();
+    const blocker = createServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(port, "127.0.0.1", () => resolve());
+    });
+    try {
+      await assert.rejects(
+        listenGateway({ port, stateDir: dir, catalog: TEST_CATALOG, diagnosticPath }),
+        (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
+      );
+      assert.equal(processHasOpenFdFor(diagnosticPath), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        blocker.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(dir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("emits one content-free diagnostic pair with raw and decoded request sizes", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
+    const payload = Buffer.from(JSON.stringify({ model: "gpt-5.6-luna", input: "private input" }), "utf8");
+    const compressed = gzipSync(payload);
+    const port = await freePort();
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-gw-diagnostics-"));
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      diagnosticSink: { write: (event) => events.push(event) },
+      nativeFetch: async () => new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-encoding": "gzip" },
+        body: compressed,
+      });
+      assert.equal(response.status, 200);
+      await response.arrayBuffer();
+      const starts = events.filter((event) => event.kind === "request_start");
+      const ends = events.filter((event) => event.kind === "request_end");
+      assert.equal(starts.length, 1);
+      assert.equal(ends.length, 1);
+      const start = starts[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_start" }>;
+      const end = ends[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(start.request_seq, end.request_seq);
+      assert.equal(start.metrics?.raw_bytes, compressed.length);
+      assert.equal(start.metrics?.decoded_bytes, payload.length);
+      assert.equal(end.provider_attempts, 1);
+      assert.equal("outbound_stream" in end, false);
+      assert.equal("hosted_tools_dropped_n" in end, false);
+      assert.equal("response_content_type_class" in end, false);
+      assert.equal("decoder_mode" in end, false);
+      assert.equal(JSON.stringify(events).includes("private input"), false);
+      assert.equal(JSON.stringify(events).includes("gpt-5.6-luna"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("records outbound stream, response content-type, decoder mode, and hosted drop metrics for Ollama SSE and JSON requests", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
+    const port = await freePort();
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-gw-ollama-diag-"));
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async (_url, init) => {
+        const parsed = JSON.parse(init.body.toString("utf8")) as { stream?: boolean };
+        if (parsed.stream) {
+          const sseBody = [
+            'event: response.created\ndata: {"type":"response.created"}\n\n',
+            'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_sse_1","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"SECRET_OUTPUT_SSE"}]}]}}\n\n',
+            "data: [DONE]\n\n",
+          ].join("");
+          return new Response(sseBody, {
+            status: 200,
+            headers: { "content-type": "text/event-stream; charset=utf-8" },
+          });
+        }
+        return new Response(
+          JSON.stringify(ollamaCompletedBody({
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "SECRET_OUTPUT_JSON" }] }],
+          })),
+          {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          },
+        );
+      },
+    });
+    try {
+      // 1. Ollama SSE request with hosted web_search tool and custom function tool
+      const sseRes = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          stream: true,
+          input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "SECRET_PROMPT_SSE" }] }],
+          tools: [
+            { type: "web_search" },
+            { type: "function", name: "lookup_item", description: "desc", parameters: { type: "object" } },
+          ],
+        }),
+      });
+      assert.equal(sseRes.status, 200);
+      const sseText = await sseRes.text();
+      assert.match(sseText, /response\.completed/);
+
+      const starts1 = events.filter((e) => e.kind === "request_start");
+      const ends1 = events.filter((e) => e.kind === "request_end");
+      assert.equal(starts1.length, 1);
+      assert.equal(ends1.length, 1);
+      const start1 = starts1[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_start" }>;
+      const end1 = ends1[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(start1.request_seq, end1.request_seq);
+      assert.equal(start1.request_fp8, end1.request_fp8);
+      assert.equal(end1.route, "ollama");
+      assert.equal(end1.provider_attempts, 1);
+      assert.equal(end1.outbound_stream, true);
+      assert.equal(end1.response_content_type_class, "sse");
+      assert.equal(end1.decoder_mode, "sse_header");
+      assert.equal(end1.hosted_tools_dropped_n, 1);
+
+      // Verify diagnostic events are strictly content-free
+      const serializedEvents1 = JSON.stringify(events);
+      assert.equal(serializedEvents1.includes("SECRET_PROMPT_SSE"), false);
+      assert.equal(serializedEvents1.includes("SECRET_OUTPUT_SSE"), false);
+      assert.equal(serializedEvents1.includes("deepseek-v4-flash"), false);
+      assert.equal(serializedEvents1.includes("web_search"), false);
+      assert.equal(serializedEvents1.includes("lookup_item"), false);
+
+      // 2. Ollama JSON request without hosted tool
+      events.length = 0;
+      const jsonRes = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          stream: false,
+          input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "SECRET_PROMPT_JSON" }] }],
+          tools: [
+            { type: "function", name: "lookup_item", description: "desc", parameters: { type: "object" } },
+          ],
+        }),
+      });
+      assert.equal(jsonRes.status, 200);
+      await jsonRes.json();
+
+      const starts2 = events.filter((e) => e.kind === "request_start");
+      const ends2 = events.filter((e) => e.kind === "request_end");
+      assert.equal(starts2.length, 1);
+      assert.equal(ends2.length, 1);
+      const end2 = ends2[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(end2.route, "ollama");
+      assert.equal(end2.provider_attempts, 1);
+      assert.equal(end2.outbound_stream, false);
+      assert.equal(end2.response_content_type_class, "json");
+      assert.equal(end2.decoder_mode, "json");
+      assert.equal(end2.hosted_tools_dropped_n, 0);
+
+      const serializedEvents2 = JSON.stringify(events);
+      assert.equal(serializedEvents2.includes("SECRET_PROMPT_JSON"), false);
+      assert.equal(serializedEvents2.includes("SECRET_OUTPUT_JSON"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("records outbound stream, drop count, and selected decoder mode for Ollama summarizer compaction", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
+    let responseVariant: "sse_header" | "sse_sniff" | "json" = "sse_header";
+    const port = await freePort();
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-gw-summarizer-diag-"));
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async () => {
+        const summaryText = ollamaCompactHandoffSkeleton({ Goal: "summarized" });
+        if (responseVariant === "sse_header") {
+          const sse = [
+            'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_sum_sse","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":' + JSON.stringify(summaryText) + '}]}]}}\n\n',
+            "data: [DONE]\n\n",
+          ].join("");
+          return new Response(sse, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        if (responseVariant === "sse_sniff") {
+          const sse = [
+            'data: {"type":"response.completed","response":{"id":"resp_sum_sniff","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":' + JSON.stringify(summaryText) + '}]}]}}\n\n',
+            "data: [DONE]\n\n",
+          ].join("");
+          return new Response(sse, {
+            status: 200,
+            headers: { "content-type": "application/octet-stream" },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            id: "resp_sum_json",
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: summaryText }] }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      },
+    });
+    try {
+      const payload = {
+        model: "ollama/deepseek-v4-flash:cloud",
+        input: [
+          { type: "message", role: "user", content: [{ type: "input_text", text: "task" }] },
+          { type: "compaction_trigger" },
+        ],
+      };
+
+      // Case 1: sse_header
+      responseVariant = "sse_header";
+      events.length = 0;
+      const res1 = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(res1.status, 200);
+      const ends1 = events.filter((e) => e.kind === "request_end");
+      assert.equal(ends1.length, 1);
+      const end1 = ends1[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(end1.provider_attempts, 1);
+      assert.equal(end1.outbound_stream, false);
+      assert.equal(end1.hosted_tools_dropped_n, 0);
+      assert.equal(end1.response_content_type_class, "sse");
+      assert.equal(end1.decoder_mode, "sse_header");
+
+      // Case 2: sse_sniff
+      responseVariant = "sse_sniff";
+      events.length = 0;
+      const res2 = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(res2.status, 200);
+      const ends2 = events.filter((e) => e.kind === "request_end");
+      assert.equal(ends2.length, 1);
+      const end2 = ends2[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(end2.provider_attempts, 1);
+      assert.equal(end2.outbound_stream, false);
+      assert.equal(end2.hosted_tools_dropped_n, 0);
+      assert.equal(end2.response_content_type_class, "other");
+      assert.equal(end2.decoder_mode, "sse_sniff");
+
+      // Case 3: json
+      responseVariant = "json";
+      events.length = 0;
+      const res3 = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(res3.status, 200);
+      const ends3 = events.filter((e) => e.kind === "request_end");
+      assert.equal(ends3.length, 1);
+      const end3 = ends3[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(end3.provider_attempts, 1);
+      assert.equal(end3.outbound_stream, false);
+      assert.equal(end3.hosted_tools_dropped_n, 0);
+      assert.equal(end3.response_content_type_class, "json");
+      assert.equal(end3.decoder_mode, "json");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("retains final Ollama wire diagnostics when provider fetch setup rejects", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
+    let upstreamCalls = 0;
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-gw-ollama-dispatch-failure-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      stateDir,
+      catalog: TEST_CATALOG,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async () => {
+        upstreamCalls += 1;
+        throw new Error("provider unavailable");
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          stream: true,
+          input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "SECRET_FAILURE_PROMPT" }] }],
+          tools: [
+            { type: "web_search" },
+            { type: "function", name: "private_lookup", parameters: { type: "object" } },
+          ],
+        }),
+      });
+      assert.equal(response.status, 500);
+      await response.arrayBuffer();
+      assert.equal(upstreamCalls, 1);
+      const starts = events.filter((event) => event.kind === "request_start");
+      const ends = events.filter((event) => event.kind === "request_end");
+      assert.equal(starts.length, 1);
+      assert.equal(ends.length, 1);
+      const start = starts[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_start" }>;
+      const end = ends[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(start.request_seq, end.request_seq);
+      assert.equal(start.request_fp8, end.request_fp8);
+      assert.equal(end.route, "ollama");
+      assert.equal(end.provider_attempts, 1);
+      assert.equal(end.outbound_stream, true);
+      assert.equal(end.hosted_tools_dropped_n, 1);
+      assert.equal("response_content_type_class" in end, false);
+      assert.equal("decoder_mode" in end, false);
+      const serialized = JSON.stringify(events);
+      assert.equal(serialized.includes("SECRET_FAILURE_PROMPT"), false);
+      assert.equal(serialized.includes("deepseek-v4-flash"), false);
+      assert.equal(serialized.includes("web_search"), false);
+      assert.equal(serialized.includes("private_lookup"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
   });
 
   it("rejects Chat Completions on the Ollama path without translating", () => {
@@ -1078,6 +1471,9 @@ describe("gateway", () => {
   });
 
   it("routes an Ollama v2 trigger through the Ollama summarizer and replays the handoff", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
     const stateDir = mkdtempSync(join(tmpdir(), "cob-v2-summarize-"));
     const seen: { url?: string; body?: Record<string, unknown> } = {};
     let ollamaHits = 0;
@@ -1087,6 +1483,7 @@ describe("gateway", () => {
       port,
       stateDir,
       catalog: TEST_CATALOG,
+      diagnosticSink: { write: (event) => events.push(event) },
       nativeFetch: async () => {
         nativeHits += 1;
         return new Response("native must not compact Ollama threads", { status: 500 });
@@ -1163,6 +1560,14 @@ describe("gateway", () => {
         output?: { type?: string; encrypted_content?: string }[];
       };
       assert.equal(compactBody.output?.[0]?.type, "compaction");
+      const compactEnds = events.filter((event) => event.kind === "request_end");
+      assert.equal(compactEnds.length, 1);
+      assert.equal(
+        (compactEnds[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>).provider_attempts,
+        1,
+      );
+      assert.equal(events.some((event) => event.kind === "compact_start"), true);
+      assert.equal(events.some((event) => event.kind === "compact_failure"), false);
 
       const follow = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
@@ -1178,10 +1583,70 @@ describe("gateway", () => {
       assert.equal(follow.status, 200, await follow.text());
       assert.equal(ollamaHits, 2);
       assert.equal(nativeHits, 0);
+      assert.equal(events.filter((event) => event.kind === "request_end").length, 2);
+      assert.equal(JSON.stringify(events).includes("ollama/deepseek-v4-flash:cloud"), false);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("records one failed compact attempt when summarizer dispatch throws", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-v2-diagnostic-failure-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      stateDir,
+      catalog: TEST_CATALOG,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async () => {
+        throw new Error("provider unavailable");
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: [
+            { type: "message", role: "user", content: [{ type: "input_text", text: "task" }] },
+            { type: "compaction_trigger" },
+          ],
+        }),
+      });
+      assert.equal(response.status, 500);
+      await response.arrayBuffer();
+      const failures = events.filter((event) => event.kind === "compact_failure");
+      const ends = events.filter((event) => event.kind === "request_end");
+      assert.equal(failures.length, 1);
+      assert.equal(
+        (failures[0] as Extract<GatewayDiagnosticEventV1, { kind: "compact_failure" }>).code,
+        "ollama_compaction_dispatch_failed",
+      );
+      assert.equal(ends.length, 1);
+      assert.equal(
+        (ends[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>).provider_attempts,
+        1,
+      );
+      const end = ends[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(end.outbound_stream, false);
+      assert.equal(end.hosted_tools_dropped_n, 0);
+      assert.equal("response_content_type_class" in end, false);
+      assert.equal("decoder_mode" in end, false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
     }
   });
 
@@ -1401,7 +1866,7 @@ describe("gateway", () => {
       const joined = logs.join("\n");
       assert.match(
         joined,
-        /ollama compact failed code=compaction_summary_incomplete summary_bytes=11 effort=omitted sections=Goal:0,Constraints:0,Completed:0,Pending:0,Decisions:0,Tool_state:0,Verification_evidence:0 in=123 out=7 cache=- total=130 prompt_eval_n=- prompt_eval_ms=- eval_ms=- compact_group=[0-9a-f]{8} compact_attempt=/,
+        /ollama compact failed code=compaction_summary_incomplete transcript_v=2 summary_bytes=11 effort=omitted sections=Goal:0,Constraints:0,Completed:0,Pending:0,Decisions:0,Tool_state:0,Verification_evidence:0 in=123 out=7 cache=- total=130 prompt_eval_n=- prompt_eval_ms=- eval_ms=- compact_group=[0-9a-f]{8} compact_attempt=/,
       );
       assert.equal(joined.includes("plain recap"), false);
     } finally {
@@ -1585,6 +2050,9 @@ describe("gateway", () => {
   });
 
   it("routes an Ollama v2 trigger to native responses and replays its opaque state safely", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
     const stateDir = mkdtempSync(join(tmpdir(), "cob-v2-compaction-"));
     const seen: { url?: string; body?: Record<string, unknown> } = {};
     let ollamaHits = 0;
@@ -1594,6 +2062,7 @@ describe("gateway", () => {
       stateDir,
       catalog: TEST_CATALOG,
       compaction: { provider: "native", model: "codex-mini", ollamaThreads: "native" },
+      diagnosticSink: { write: (event) => events.push(event) },
       nativeFetch: async (url, init) => {
         seen.url = url;
         seen.body = JSON.parse(init.body.toString("utf8")) as Record<string, unknown>;
@@ -1664,6 +2133,16 @@ describe("gateway", () => {
       assert.equal(compactInput[1]?.role, "assistant");
       assert.equal(compactInput[1]?.content?.[0]?.type, "output_text");
       assert.equal(ollamaHits, 0);
+      const compactEnds = events.filter((event) => event.kind === "request_end");
+      assert.equal(compactEnds.length, 1);
+      const compactEnd = compactEnds[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(compactEnd.provider_attempts, 1);
+      assert.equal("outbound_stream" in compactEnd, false);
+      assert.equal("hosted_tools_dropped_n" in compactEnd, false);
+      assert.equal("response_content_type_class" in compactEnd, false);
+      assert.equal("decoder_mode" in compactEnd, false);
+      assert.equal(events.some((event) => event.kind === "compact_start"), true);
+      assert.equal(events.some((event) => event.kind === "compact_failure"), false);
 
       const follow = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
@@ -1678,10 +2157,13 @@ describe("gateway", () => {
       });
       assert.equal(follow.status, 200, await follow.text());
       assert.equal(ollamaHits, 1);
+      assert.equal(events.filter((event) => event.kind === "request_end").length, 2);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
     }
   });
 
@@ -3638,6 +4120,7 @@ describe("WP8 Ollama response integrity", () => {
       assert.deepEqual(checkpointNames(stateDir), []);
       const joined = logs.join("\n");
       assert.match(joined, /\[cob\] ollama guard rejected/);
+      assert.match(joined, /\[cob\] gate5 observation classification=restoration_missing/);
       assert.equal(joined.includes("SECRET_HEREDOC"), false);
       assert.equal(joined.includes(COB_APPLY_PATCH_ALIAS), false);
     } finally {
@@ -3764,6 +4247,338 @@ describe("WP8 Ollama response integrity", () => {
       assert.equal(second.status, 502);
       assert.equal(await errorCode(second), "ollama_undeclared_tool_call");
       assert.deepEqual(checkpointNames(stateDir), before);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("Ollama upstream traversal overflow", () => {
+  function deepSseFrame(depth: number): string {
+    let value: unknown = "leaf";
+    for (let index = 0; index < depth; index += 1) value = [value];
+    return `data: ${JSON.stringify({
+      type: "response.output_item.added",
+      item: { type: "message", role: "assistant", content: value },
+    })}\n\n`;
+  }
+
+  it("ends a deep upstream SSE stream with exactly one response.failed terminal and no content leak", async () => {
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-overflow-sse-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(deepSseFrame(200), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      const failedCount = body.split("\n").filter((line) => line.includes('"response.failed"')).length;
+      assert.equal(failedCount, 1);
+      assert.match(body, /ollama_json_traversal_overflow/);
+      assert.equal((body.match(/data: \[DONE\]/g) ?? []).length, 1);
+      assert.equal(body.includes("leaf"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+      const joined = logs.join("\n");
+      assert.match(joined, /\[cob\] ollama json overflow/);
+      assert.equal(joined.includes("leaf"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects a deep upstream JSON response with a stable 502 and no content leak", async () => {
+    let value: unknown = "leaf";
+    for (let index = 0; index < 200; index += 1) value = [value];
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-overflow-json-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(
+          JSON.stringify({
+            id: "r1",
+            object: "response",
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: value }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi" }),
+      });
+      const body = await response.json() as { error?: { code?: string; message?: string } };
+      assert.equal(response.status, 502);
+      assert.equal(body.error?.code, "ollama_json_traversal_overflow");
+      assert.equal(JSON.stringify(body).includes("leaf"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("emits exactly one overflow response.failed when [DONE] follows the overflow frame", async () => {    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-overflow-done-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(`${deepSseFrame(200)}data: [DONE]\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      assert.equal(body.split("\n").filter((line) => line.includes('"response.failed"')).length, 1);
+      assert.match(body, /ollama_json_traversal_overflow/);
+      assert.equal((body.match(/data: \[DONE\]/g) ?? []).length, 1);
+      assert.equal(body.includes("leaf"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+      assert.equal(logs.join("\n").includes("leaf"), false);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("emits the overflow response.failed when a held completed terminal overflows during rewrite", async () => {
+    const logs: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    let value: unknown = "leaf";
+    for (let index = 0; index < 200; index += 1) value = [value];
+    const completedFrame = `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        id: "r1",
+        object: "response",
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: value }],
+      },
+    })}\n\ndata: [DONE]\n\n`;
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-overflow-completed-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(completedFrame, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      assert.equal(body.split("\n").filter((line) => line.includes('"response.failed"')).length, 1);
+      assert.match(body, /ollama_json_traversal_overflow/);
+      assert.equal(body.includes("upstream_stream_error"), false);
+      assert.equal((body.match(/data: \[DONE\]/g) ?? []).length, 1);
+      assert.equal(body.includes("leaf"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+    } finally {
+      console.error = originalError;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("emits the overflow response.failed when a held non-success terminal overflows during rewrite", async () => {
+    let value: unknown = "leaf";
+    for (let index = 0; index < 200; index += 1) value = [value];
+    const failedFrame = `data: ${JSON.stringify({
+      type: "response.failed",
+      response: {
+        status: "failed",
+        error: { code: "ollama_upstream_error" },
+        output: [{ type: "message", role: "assistant", content: value }],
+      },
+    })}\n\n`;
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-overflow-failed-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      ollamaFetch: async () =>
+        new Response(failedFrame, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      assert.equal(body.split("\n").filter((line) => line.includes('"response.failed"')).length, 1);
+      assert.match(body, /ollama_json_traversal_overflow/);
+      assert.equal((body.match(/data: \[DONE\]/g) ?? []).length, 1);
+      assert.equal(body.includes("leaf"), false);
+      assert.deepEqual(checkpointNames(stateDir), []);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("verified cloud route classification", () => {
+  const remoteHostRow: JsonObject = {
+    slug: "ollama/remote-model:latest",
+    visibility: "list",
+    priority: 3,
+    description:
+      "Ollama model via the local Ollama daemon to https://ollama.com. Routed by cob; not a ChatGPT model.",
+  };
+
+  it("rejects json_schema on a remote_host row without a cloud suffix before upstream dispatch", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
+    let upstreamCalls = 0;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: { models: [remoteHostRow] },
+      stateDir: TEST_STATE_DIR,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async () => {
+        upstreamCalls += 1;
+        return new Response("upstream must not be called", { status: 599 });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/remote-model:latest",
+          input: "hi",
+          text: { format: { type: "json_schema", name: "x", schema: { type: "object" } } },
+        }),
+      });
+      const body = await response.json() as { error?: { code?: string; message?: string } };
+      assert.equal(response.status, 400);
+      assert.equal(body.error?.code, "ollama_text_format_cloud_unsupported");
+      assert.equal(upstreamCalls, 0);
+      const starts = events.filter((event) => event.kind === "request_start");
+      const ends = events.filter((event) => event.kind === "request_end");
+      assert.equal(starts.length, 1);
+      assert.equal(ends.length, 1);
+      const end = ends[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(end.provider_attempts, 0);
+      assert.equal("outbound_stream" in end, false);
+      assert.equal("hosted_tools_dropped_n" in end, false);
+      assert.equal("response_content_type_class" in end, false);
+      assert.equal("decoder_mode" in end, false);
+      assert.equal(JSON.stringify(events).includes("ollama/remote-model:latest"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("keeps json_schema forwarded unchanged on a plain local row", async () => {
+    let upstreamBody: string | undefined;
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      catalog: {
+        models: [
+          {
+            slug: "ollama/local-model:latest",
+            visibility: "list",
+            priority: 3,
+            description: "Ollama model via the local Ollama daemon. Routed by cob; not a ChatGPT model.",
+          },
+        ],
+      },
+      stateDir: TEST_STATE_DIR,
+      ollamaFetch: async (_url, init) => {
+        upstreamBody = init?.body === undefined ? undefined : init.body.toString("utf8");
+        return new Response(
+          JSON.stringify(ollamaCompletedBody()),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/local-model:latest",
+          input: "hi",
+          text: { format: { type: "json_schema", name: "x", schema: { type: "object" } } },
+        }),
+      });
+      assert.equal(response.status, 200);
+      const forwarded = JSON.parse(upstreamBody ?? "{}") as { text?: { format?: { type?: string } } };
+      assert.equal(forwarded.text?.format?.type, "json_schema");
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

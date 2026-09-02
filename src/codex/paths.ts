@@ -10,6 +10,7 @@ export type CobPaths = {
   cobConfig: string;
   pid: string;
   log: string;
+  diagnostics: string;
   runtime: string;
   lock: string;
   startLease: string;
@@ -30,6 +31,7 @@ export function resolvePaths(codexHome = resolveCodexHome()): CobPaths {
     cobConfig: join(codexHome, "cob.toml"),
     pid: join(codexHome, "cob-gateway.pid"),
     log: join(codexHome, "cob-gateway.log"),
+    diagnostics: join(codexHome, "cob-diagnostics.jsonl"),
     runtime: join(codexHome, "cob-runtime.json"),
     lock: join(codexHome, "cob.lock"),
     startLease: join(codexHome, "cob.start-lease.json"),

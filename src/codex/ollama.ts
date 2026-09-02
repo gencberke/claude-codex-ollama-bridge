@@ -2,10 +2,13 @@ import type { Transform } from "node:stream";
 import { DEFAULT_OLLAMA_URL } from "../core/ollama/constants.js";
 import {
   APPLY_PATCH_OMIT,
+  classifyApplyPatchObservation,
   prepareApplyPatchToOllama,
   validateApplyPatchPayload,
   rewriteApplyPatchFromOllama,
   type ApplyPatchBridge,
+  type ApplyPatchClassification,
+  type ApplyPatchObservation,
   type ApplyPatchPrepareOptions,
   type ApplyPatchPolicyInput,
 } from "./experimental/apply-patch.js";
@@ -16,6 +19,7 @@ import {
   stripPlaintextEncryptedContent,
 } from "./encrypted.js";
 import { ollamaUpstreamModel } from "./route.js";
+import { isVerifiedCloudOllamaSlug } from "./catalog/catalog.js";
 import { isResponseEnvelope } from "./compaction/native.js";
 import { SSE_OMIT_LINE, sseRewriteTransform, type SseObserver } from "./sse.js";
 import { fetchWithHeadersTimeout } from "../core/http/timeouts.js";
@@ -23,6 +27,14 @@ import { OLLAMA_HEADERS_TIMEOUT_MS } from "./limits.js";
 import type { JsonObject } from "../core/json.js";
 import { isRecord } from "../core/json.js";
 import type { UpstreamFetch } from "./native.js";
+import {
+  checkOllamaJsonNode,
+  formatOllamaJsonOverflowLog,
+  newOllamaTraversalBudget,
+  OllamaJsonOverflowError,
+  scanOllamaJsonBudget,
+  type OllamaTraversalBudget,
+} from "./bounded-json.js";
 import {
   applyOllamaRequestBoundary,
   normalizeOllamaReasoning,
@@ -75,6 +87,21 @@ export function isOllamaReject(value: unknown): value is OllamaReject {
 export function prepareOllamaPayload(
   payload: JsonObject,
   options: { applyPatch?: ApplyPatchPolicyInput } = {},
+): JsonObject | OllamaReject {
+  try {
+    return prepareOllamaPayloadBounded(payload, options);
+  } catch (error) {
+    if (error instanceof OllamaJsonOverflowError) {
+      console.error(formatOllamaJsonOverflowLog(error.overflow));
+      return ollamaJsonOverflowReject(error.overflow);
+    }
+    throw error;
+  }
+}
+
+function prepareOllamaPayloadBounded(
+  payload: JsonObject,
+  options: { applyPatch?: ApplyPatchPolicyInput },
 ): JsonObject | OllamaReject {
   // Compaction items are resolved from cob's durable transcript before this
   // function runs. Never turn opaque native state into a developer note.
@@ -252,8 +279,34 @@ export function prepareOllamaWire(
     supportsReasoning?: boolean;
     applyPatch?: ApplyPatchPolicyInput;
     allowTrustedApplyPatchAliasHistory?: boolean;
+    /** Caller-verified cloud verdict from catalog/tag evidence; overrides the name-only classification. */
+    cloudRoute?: boolean;
   } = {},
 ): OllamaWireRequest | OllamaReject {
+  try {
+    return prepareOllamaWireBounded(payload, options);
+  } catch (error) {
+    if (error instanceof OllamaJsonOverflowError) {
+      console.error(formatOllamaJsonOverflowLog(error.overflow));
+      return ollamaJsonOverflowReject(error.overflow);
+    }
+    throw error;
+  }
+}
+
+function prepareOllamaWireBounded(
+  payload: JsonObject,
+  options: {
+    supportsReasoning?: boolean;
+    applyPatch?: ApplyPatchPolicyInput;
+    allowTrustedApplyPatchAliasHistory?: boolean;
+    cloudRoute?: boolean;
+  },
+): OllamaWireRequest | OllamaReject {
+  // Request-side traversal safety bound: fail closed with a stable 400 before
+  // any rewrite, clone, or upstream dispatch on a pathological body. The
+  // wrapper converts any later traversal overflow to the same stable 400.
+  scanOllamaJsonBudget(payload, "request");
   const next = structuredClone(payload);
   if (typeof next.model === "string") {
     next.model = ollamaUpstreamModel(next.model);
@@ -265,7 +318,10 @@ export function prepareOllamaWire(
   };
   const patch = prepareApplyPatchToOllama(next, options.applyPatch, patchOptions);
   if (isOllamaReject(patch)) return patch;
-  const bounded = applyOllamaRequestBoundary(next);
+  const cloudRoute =
+    options.cloudRoute ??
+    (typeof next.model === "string" ? isVerifiedCloudOllamaSlug(next.model) : false);
+  const bounded = applyOllamaRequestBoundary(next, { cloudRoute });
   if (isOllamaReject(bounded)) return bounded;
   return {
     payload: bounded.payload,
@@ -285,6 +341,28 @@ export function sanitizeOllamaPayload(
   return wire.payload;
 }
 
+/**
+ * Return the content-free Gate 5 facts collected for one Ollama turn. The
+ * caller supplies only whether the final wire declaration retained cob's
+ * reserved alias and, when independently checked, whether the fixture changed.
+ */
+export function observeApplyPatchTurn(
+  bridge: ApplyPatchBridge,
+  outboundAliasPresent: boolean,
+  executionEffectObserved?: boolean,
+  childEvidence: Pick<ApplyPatchObservation, "childCustomCallObserved" | "childCustomOutputObserved"> = {},
+): ApplyPatchObservation & { classification: ApplyPatchClassification } {
+  const observation: ApplyPatchObservation = {
+    declarationPresent: bridge.declared,
+    outboundAliasPresent,
+    modelCallObserved: bridge.observation.modelCallObserved,
+    restorationObserved: bridge.observation.restorationObserved,
+    ...childEvidence,
+    ...(executionEffectObserved === undefined ? {} : { executionEffectObserved }),
+  };
+  return { ...observation, classification: classifyApplyPatchObservation(observation) };
+}
+
 export function normalizeOllamaResponse(
   value: unknown,
   catalogModel: string,
@@ -299,11 +377,16 @@ export function normalizeOllamaResponse(
   );
 }
 
-function stripEncryptedContentDeep(value: unknown): unknown {
+function stripEncryptedContentDeep(
+  value: unknown,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("upstream"),
+  depth = 1,
+): unknown {
+  checkOllamaJsonNode(budget, depth);
   if (Array.isArray(value)) {
     let changed = false;
     const next = value.map((item) => {
-      const rewritten = stripEncryptedContentDeep(item);
+      const rewritten = stripEncryptedContentDeep(item, budget, depth + 1);
       if (rewritten !== item) changed = true;
       return rewritten;
     });
@@ -317,7 +400,7 @@ function stripEncryptedContentDeep(value: unknown): unknown {
       changed = true;
       continue;
     }
-    const rewritten = stripEncryptedContentDeep(nested);
+    const rewritten = stripEncryptedContentDeep(nested, budget, depth + 1);
     if (rewritten !== nested) changed = true;
     next[key] = rewritten;
   }
@@ -348,6 +431,7 @@ export function ollamaSseTransform(
   return sseRewriteTransform(
     (value) => {
       if (guard?.failure) return SSE_OMIT_LINE;
+      if (guard?.overflow) return SSE_OMIT_LINE;
       if (declaration && guard) {
         const failure = inspectOllamaSseEvent(value, declaration);
         if (failure) {
@@ -356,7 +440,16 @@ export function ollamaSseTransform(
         }
       }
       if (track && observeOllamaSseFrame(track, value) !== "relay") return SSE_OMIT_LINE;
-      const normalized = normalizeOllamaResponse(value, catalogModel, bridge, declaration?.applyPatch);
+      let normalized: unknown;
+      try {
+        normalized = normalizeOllamaResponse(value, catalogModel, bridge, declaration?.applyPatch);
+      } catch (error) {
+        if (error instanceof OllamaJsonOverflowError && guard) {
+          guard.overflow = error.overflow;
+          return SSE_OMIT_LINE;
+        }
+        throw error;
+      }
       return normalized === APPLY_PATCH_OMIT ? SSE_OMIT_LINE : normalized;
     },
     undefined,
@@ -387,6 +480,7 @@ export type OllamaForwardResult = {
   response: Response;
   bridge: ToolSearchBridge;
   declaration: OllamaToolDeclaration;
+  stream: boolean;
 };
 
 export async function forwardOllamaResponses(opts: {
@@ -400,6 +494,10 @@ export async function forwardOllamaResponses(opts: {
   supportsReasoning?: boolean;
   applyPatch?: ApplyPatchPolicyInput;
   allowTrustedApplyPatchAliasHistory?: boolean;
+  /** Caller-verified cloud verdict from catalog/tag evidence; overrides the name-only classification. */
+  cloudRoute?: boolean;
+  /** Called after the final provider wire is prepared, before the one fetch. */
+  onWirePrepared?: (wire: Pick<OllamaForwardResult, "bridge" | "stream">) => void;
 }): Promise<OllamaForwardResult | OllamaReject> {
   const base = (opts.ollamaUrl ?? DEFAULT_OLLAMA_URL).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as UpstreamFetch);
@@ -407,9 +505,11 @@ export async function forwardOllamaResponses(opts: {
     supportsReasoning: opts.supportsReasoning,
     applyPatch: opts.applyPatch,
     allowTrustedApplyPatchAliasHistory: opts.allowTrustedApplyPatchAliasHistory,
+    cloudRoute: opts.cloudRoute,
   });
   if (isOllamaReject(wire)) return wire;
   const stream = wire.payload.stream === true;
+  opts.onWirePrepared?.({ bridge: wire.bridge, stream });
   const body = Buffer.from(JSON.stringify(wire.payload), "utf8");
   const tools = summarizeRequest(wire.payload, body.length);
   console.error(
@@ -434,6 +534,7 @@ export async function forwardOllamaResponses(opts: {
       aliasesRemoved: wire.bridge.aliasesRemoved,
       aliasesReplaced: wire.bridge.aliasesReplaced,
       usedAliasMissing: wire.bridge.usedAliasMissing,
+      hostedToolsDroppedN: wire.bridge.hostedToolsDroppedN,
     })} declared_n=${wire.declaration.count} declared_sha=${wire.declaration.sha8}`,
   );
   const response = await fetchWithHeadersTimeout(
@@ -447,13 +548,28 @@ export async function forwardOllamaResponses(opts: {
     },
     opts.headersMs ?? opts.connectMs ?? OLLAMA_HEADERS_TIMEOUT_MS,
   );
-  return { response, bridge: wire.bridge, declaration: wire.declaration };
+  return { response, bridge: wire.bridge, declaration: wire.declaration, stream };
 }
 
 export function ollamaHeaders(stream = false): Record<string, string> {
   return {
     "content-type": "application/json",
     accept: stream ? "text/event-stream" : "application/json",
+  };
+}
+
+/** Stable request-side 400 for a traversal overflow; content-free by design. */
+function ollamaJsonOverflowReject(overflow: { code: string }): OllamaReject {
+  return {
+    status: 400,
+    body: {
+      error: {
+        type: "invalid_request_error",
+        code: overflow.code,
+        message:
+          "Request JSON exceeded the Ollama-route traversal safety budget; resend a simpler request. Diagnostics never include request content.",
+      },
+    },
   };
 }
 

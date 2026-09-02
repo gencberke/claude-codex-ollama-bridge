@@ -8,13 +8,13 @@ Isolation rule for every live run: a temporary `CODEX_HOME` / `COB_CODEX_HOME`
 gateway at the real `~/.codex` unless the goal is an explicit
 restore/config-byte check, and then snapshot `config.toml` first. The globally
 installed cob on port 18790 is the ChatGPT Desktop path. Cut that install with
-[RELEASE.md](./RELEASE.md). Current live is global cob **0.2.2** (installed
-2026-08-29, pre-hardening bytes); the `master` hardening at `e6a3449` is not
-installed there. G12/G14/G17 traces remain
-historical **0.1.13** evidence and are not credited to the current live
+[RELEASE.md](./RELEASE.md). This file does not track the current live version
+— see [STATUS.md](../STATUS.md) for that. Each gate's verdict remains
+attributed to the recorded artifact it was measured on: G12/G14/G17 traces
+are historical **0.1.13** evidence and are not credited to any later live
 artifact.
 
-Official spawn harness (Codex 0.147.0):
+Official spawn harness (Codex 0.149.0):
 
 - `-p cob` loads `$CODEX_HOME/cob.config.toml`. Do **not** pass
   `--ignore-user-config`; that skips `$CODEX_HOME/config.toml` and can drop
@@ -65,6 +65,8 @@ inferred from Codex UI text.
 | G20 (Gate 5) | In an isolated, explicit opt-in, a real 0731 child receives the declared freeform patch capability, emits a Codex-facing `custom_tool_call(name="apply_patch")` plus matching output, and changes the fixture without a shell write | No custom call/output pair, parent-applied patch, `exec_command`/temporary patch binary/heredoc write, capability on a native/non-spawn/live row, shell enabled, or patch/alias/content leakage |
 | G21 (Gate 6) | One isolated 0731 child receives two `send_message` payloads while still active, then two `followup_task` turns after idle/completed, all in one session/id with nonce order preserved | Second spawn, send after the child already completed, wait between the two active sends, duplicate/lost/wrong-id delivery, or Sol `GATE6_PASS` without those child-session rows |
 | G21-H (Gate 6-H) | Workspace `npm run gate6h` watches parent/child rollout JSONL; two same-turn `send_message` calls with no wait/list/final between them, then two idle `followup_task` rows on one 0731 child | `controller_sequencing_fail` (wait/list/interrupt/final/exec before send2); three such fails record `controller_sequencing_observed` and `transport_unmeasured`. Do not add a cob queue or open Gate 7–10 |
+
+| G26-A/B | G26-A: direct picker-selected Ollama main turn; G26-B: native GPT/Luna parent → Ollama V1 child → same-child follow-up. Record routing, continuity, usage, latency, request outcomes, and content-free diagnostic evidence. | PASS requires `invalid_json`, provider retries, controller retries, no-progress repeats, and duplicate signatures all zero, with every required metric visible. Missing/ambiguous counters or content-bearing evidence fails auditability |
 
 Ollama child catalog rows carry no `apply_patch_tool_type` by default, and
 `shell_type` follows fresh `/api/tags` tools evidence: an exact lowercase
@@ -154,7 +156,7 @@ and 146 tool pairs (decoded ~1.14MB); summarizer outbound `tools_n=0`
 follow-up.
 
 2026-08-23 20:29 Desktop auto-compact on the same 0731 thread (live cob
-0.1.7, pid 49194, `cob_cmp_6bebd81b54f9377ddb3de5bcac3647ff`) is the G8
+0.1.7, pid 49194, correlation SHA-8 `aacb29b6`) is the G8
 pass: flatten summarizer `wire_bytes=266304` `tools_n=0`; Codex-facing
 `cob1.` compaction item; first continuation `b_input=32885` / `input_n=7`
 (`replay_ratio ≈ 0.029` vs trigger `b_input=1121805`); next Ollama wire
@@ -533,6 +535,21 @@ every declared lane to pass without false positives, and zero checkpoint
 publication for rejected turns. A green unit suite alone is not G19; a real
 declared tool call alone does not prove the rejection boundary.
 
+## Issue #1 / tool-capable `unified_exec` canary
+
+The merge-separated 2026-08-30 canary passed on isolated
+`~/.codex-cob-dev` / `:18791` with bundled Codex
+`0.151.0-alpha.7.2`. Fresh exact lowercase `tools` evidence produced
+`shell_type="unified_exec"`; the override producer generated and validated a
+14-model catalog with that row intact. A real 0731 turn emitted the declared
+`exec_command` function for `echo cob-canary-ok`, received the matching
+`function_call_output`, returned the exact output, and exited 0. Gateway
+metrics recorded one function call plus one output; no `shell_call`,
+`local_shell_call`, or V2 signal appeared. Cleanup stopped `:18791`; live
+`:18790`, root config, and Claude were untouched. This is the issue #1
+capability gate, not a rewrite of historical G20 evidence and not a live
+Desktop gold retrace.
+
 ## G20 / Gate 5 — isolated child-native apply_patch
 
 This gate is default-off and may run only with `cob start --dev` plus an
@@ -564,6 +581,20 @@ Gold requires structural child-session evidence and a real filesystem effect:
 
 The 2026-08-24 run passed these checks. It does not close repeated messaging,
 worktree, nested V2, replay/compact/restart, or Desktop gates.
+
+### Current Gate 5 disposition (2026-09-01 fresh evidence)
+
+The latest clean isolated opt-in run is authoritative for current readiness.
+The catalog default-off and explicit dev-only enablement were correct, and a
+native GPT parent created a real Ollama V1 child. That child emitted no
+child-native command execution, custom call/output pair, or filesystem edit.
+Parent events and an earlier main-agent edit were excluded, and no retry ran.
+Result: **FAIL-CLOSED / not gold**. The 2026-08-24 PASS above remains historical
+evidence, not a current bridge claim. Before another authorized canary, the
+content-safe Gate 5 observation must distinguish declaration missing,
+outbound-alias missing, model decline, restoration/delivery failure, and
+execution-without-effect; it must not retain a tool name, alias, arguments,
+output, patch body, id, or user content.
 
 ## G21 / Gate 6 — isolated same-child message queue
 
@@ -654,15 +685,64 @@ Two distinct lanes:
 
 ## G24 / Gate 9 — isolated Ollama-thread compact + continuation
 
+The workspace G24 corpus is **version 2** (pinned SHA in
+`eval-g24-corpus.test.ts`): it adds a transcript-V2 adversarial lane — a
+historical developer instruction that must survive only as escaped transcript
+data, a nested tool/search note lane, and a pinned successful handoff
+skeleton. Workspace corpus/scorer/receipt readiness is **not** gold. Historical
+pre-transcript-V2 attempts and the current authoritative transcript-V2 run are
+recorded separately below. Any further isolated G24 rerun needs explicit
+authorization and must use the versioned corpus and `transcriptFormatVersion`
+receipts.
+
 Do not count live G8 as this gate. Gold needs a `compaction_trigger` on the
 0731 child, a cob summarizer handoff (`cob1.` Codex-facing, none on Ollama),
-and two same-child continuations with `replay_ratio << 1`. The workspace
+and two same-child continuations with `replay_ratio << 1`. The workspace G24
+preflight codifies `<< 1` as `post/pre < 0.25` (recorded decision: observed
+gold ≈ 0.029 keeps ~8x headroom); it re-validates the raw summarizer handoff
+with the shared seven-section validator, so a plain recap or reordered
+headings fails `compact_handoff_sections_incomplete`, and a ratio at or above
+the line fails `compact_shrink_below_threshold`. The workspace
 protocol fixture fail-closes incomplete summaries without cob retry; a
 later compact-ok without those continuations is
 `compaction_continuation_incomplete`, not PASS. The 2026-08-25 8k-catalog
 canary triggered compact but failed closed on
 `compaction_summary_incomplete` for the spawn turn; a later compact-ok
-follow-up did not make the parent wait succeed. Not live G8 gold.
+follow-up did not make the parent wait succeed. Not live G8 gold. Two
+isolated real-child attempts ran on 2026-08-31; no further reruns.
+Attempt A: real compaction triggered, the summarizer request was 10,353
+bytes, the response summary was 222 bytes with all seven required sections
+absent, and the run failed `compaction_summary_incomplete`. Attempt B: the
+first compact succeeded (request 10,371 bytes, summary 1,234 bytes, all
+seven sections present) and one post-compact turn ran, then a second compact
+triggered; its summarizer request was 11,851 bytes with a 347-byte summary
+missing all seven sections, and the run failed `compaction_summary_incomplete`
+before two same-child continuations. The corrected harness classifies this
+as FAIL and writes a content-safe failure receipt; its narrow tests pass.
+Both runs removed temp homes and closed `:18791`; live hashes unchanged.
+Not G24 gold.
+
+The latest authorized fresh transcript-V2 run supersedes those attempts for
+current disposition. Corpus SHA prefix was `cc5a6426…`; every observed
+summarizer handoff was valid and contained all seven required sections. The
+same child nevertheless repeated the same tool-heavy post-compact turn and
+immediately re-entered compaction, never producing the two required
+continuations. Bounded termination reported `INCONCLUSIVE: codex_exec_failed`;
+that terminal code was a symptom, not a demonstrated root cause. Cleanup
+proved `port_closed=true` and `homes_removed=true`; no second run/retry occurred.
+Result: **FAIL-CLOSED / not gold**.
+
+The pack-excluded harness now uses a fixed 8192 window, correlates each valid
+summarizer with its own replacement/descendant episode, uses only exact
+upstream `usage.input_tokens` for the window-floor classifier, and records
+harness-owned termination explicitly. A second summarizer after a valid
+post-compact handoff is stopped before another upstream model request: exact
+floor evidence yields `g24_window_below_postcompact_floor`; otherwise the
+neutral result is `g24_postcompact_retrigger_before_completion`. Intervening
+turn captures do not hide either condition, a real incomplete second summary
+remains a FAIL, and an unowned signal never proves harness ownership. These
+source/test corrections are not canary evidence; no rerun was performed while
+implementing them.
 
 ## G25 / Gate 10 — isolated nested V2 / child-originated spawn
 
@@ -670,6 +750,309 @@ Ollama catalog rows stay `multi_agent_version=v1`. Gold would be a depth-2
 leaf child with a readable nested task. The 2026-08-25 canary failed closed:
 the 0731 child had no `collaboration.spawn_agent` tool (tool_search returned
 only GitHub). Do not advertise Ollama V2 to paper over this.
+
+## G26 — end-to-end reliability / efficiency
+
+G26 is a live, content-safe measurement gate for the two supported Ollama
+surfaces. Run G26-A as a direct picker-selected Ollama main conversation. Run
+G26-B as a native GPT/Luna parent that creates one Ollama V1 child and then
+continues that same child. The parent/model names, child identity, prompts,
+task ids, and model content must not be retained in the receipt or diagnostics.
+
+### G26 capture procedure (workspace implementation)
+
+The default live behavior is unchanged: human log lines remain the default.
+For an authorized workspace run, set `COB_DIAGNOSTIC_JSONL=1`. The opt-in
+also persists bounded JSONL at `$CODEX_HOME/cob-diagnostics.jsonl` with mode
+`0600`, a 4 MiB active file, and one rotated 4 MiB backup at
+`cob-diagnostics.jsonl.1`; individual lines are capped at 16 KiB. `cob restore`
+removes both diagnostic files. Opening, writing, rotation, or cleanup is
+best-effort and non-failing: a diagnostic sink error must not fail a gateway
+request. Existing typed diagnostic events may still emit JSON to stderr.
+
+Persisted `request_start`/`request_end` pairs cover model-bearing Responses,
+compact, and standalone-search POST calls and correlate by `pid` plus a
+process-local `request_seq`; `request_fp8` is an ephemeral process-local
+fingerprint and `model_sha8` is a model hash. Health, catalog, shutdown,
+unsupported-protocol, and 404 traffic is excluded so it cannot inflate the
+provider-request count. The pairs retain only structural
+request metrics, status/timing, `provider_attempts`, `gateway_retry_count`,
+retry-after presence, and the exact usage fields supplied by the provider.
+Structural metrics include bounded byte/item counts and the relevant effort,
+tool/instruction hashes, and continuation-presence flags; no raw prompt,
+response, task id, raw model id, or model content is retained.
+
+Duplicate/controller-resend findings are derived offline from repeated
+`request_fp8` values (with the persisted process/sequence/timing context).
+cob does not invent controller-retry or no-progress counters; if the
+controller does not expose them, record them as unavailable rather than
+converting duplicate signatures into those counters. This workspace
+implementation was absent from burned 0.2.4-preview.0 and cannot retroactively
+change that historical G26-B record. It is installed in 0.2.4-preview.1 and is
+the source of the instrumented live receipt recorded below.
+
+For each lane, the receipt must make these metrics visible: lane and outcome;
+parent turns; provider request count and HTTP outcome categories (including
+`possible_sse → invalid_json`); outbound stream mode (`outbound_stream`),
+response content-type class (`response_content_type_class`), selected decoder mode
+(`decoder_mode`), and dropped hosted tools count (`hosted_tools_dropped_n`);
+provider retry count; controller retry count;
+agent-local `retry_count`; no-progress repeat count; duplicate-signature
+repeat count and maximum; same-child continuity; aggregate successful usage
+(`input_tokens`, `output_tokens`); parent, child, and total wall time; and
+content-free diagnostic/audit status. `agent-local retry_count` is the
+model/agent's own reported or locally measured retry field. It is separate
+from retries performed by the provider transport and from controller retries;
+never combine those counters or infer one from another.
+
+Gold requires both lanes to show `invalid_json=0`, provider retries `=0`,
+controller retries `=0`, no-progress repeats `=0`, duplicate signatures `=0`,
+successful routing/continuity, and all metrics above present. A successful
+turn with hidden, conflated, or content-bearing evidence is not gold.
+
+The current 0.2.4-preview.1 G26-A/G26-B receipt is recorded below. The
+0.2.4-preview.0 G26-B result that follows remains immutable historical
+evidence.
+
+G26-B — 2026-09-01 preview artifact SHA
+`5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd` — is
+**NOT GOLD**. It recorded 93 child provider requests: 52 HTTP 200
+`possible_sse → invalid_json` outcomes and 41 successes. One duplicate
+signature repeated 25 times. There were 42 parent turns; successful usage
+minimum was approximately 2,102,600 input tokens and 60,163 output tokens;
+total wall time was 19m42s. Child wall time was 12m35s for the initial turn and
+3m45s for the same-child follow-up; the remaining observed parent/controller
+overhead was approximately 3m22s. Agent-local `retry_count` and cob's own
+provider retry count were both zero. The controller resend count and
+no-progress repeat count were not exposed as authoritative counters; the
+content-free gateway evidence instead showed 11 duplicate request signatures,
+including the one repeated 25 times. Provider-internal retries and failed-turn
+token usage were unavailable and were not estimated. Independent child
+tool/final trace visibility was also unavailable, so auditability failed.
+Routing and same-child continuity passed, but reliability, efficiency, and
+auditability failed the G26 gate. This is a preview measurement only, not a
+product or release claim.
+
+### G26-B interpretation boundary
+
+The following is directly observed evidence: 52 provider responses returned
+HTTP 200 but were classified `possible_sse → invalid_json`; the request set
+contained 11 duplicate signatures, with one signature occurring 25 times; and
+only successful provider responses exposed usage. These observations prove
+response-format failures, repeated structurally equivalent requests, and a
+successful-token floor. They do not identify which upstream component decided
+to submit a later request.
+
+A plausible working hypothesis is that an SSE-shaped body arriving where cob
+requires a JSON response fails closed as `invalid_json`, after which an
+upstream parent/controller submits the same logical work again. That sequence
+would explain the duplicate signatures, repeated large context, elapsed time,
+and token cost seen together in this run. It is an inference to test, not a
+causal finding from the current artifact. In particular, duplicate signatures
+must not be renamed as controller retries, provider-internal retries, or
+no-progress repeats: 0.2.4-preview.0 exposed none of those authoritative
+counters, and its later workspace diagnostic sidecar was not installed.
+
+The next instrumented run must therefore preserve all three evidence classes:
+observed provider/gateway outcomes, explicitly unavailable controller/provider
+counters, and separately labelled inference. A later trace may confirm or
+reject the working hypothesis; it must not rewrite this historical receipt.
+
+A1 sufficiency predicate (D5): normal-relay response sniffing (conditional
+package A2) remains blocked by evidence unless an instrumented A1 canary proves
+on the same request that `outbound_stream = true`, hosted `web_search` was
+absent from the final wire request, the provider response content-type was not
+SSE, and the body was still classified as `possible_sse` and failed the JSON
+decoder. If A1 criteria pass with zero `invalid_json` and zero duplicate
+signatures, the response-dialect work is closed without opening A2.
+
+### G26 Track A Phase P1 isolated dev smoke — PASS (2026-09-02)
+
+User-authorized workspace smoke only; this is not a preview artifact, Desktop
+run, live `:18790` canary, or G26 gold disposition.
+
+- Built workspace source, confirmed `:18791` had no listener, then started
+  workspace 0.2.4-preview.0 with `COB_DIAGNOSTIC_JSONL=1` under
+  `~/.codex-cob-dev`. Health passed and the isolated catalog exposed native plus
+  Ollama rows.
+- Issued two content-safe, model-bearing requests through the isolated gateway.
+  The buffered lane completed HTTP 200 with
+  `outbound_stream=false`, `response_content_type_class=json`,
+  `decoder_mode=json`, and `hosted_tools_dropped_n=1`. The streaming lane
+  emitted one `response.created`, one `response.completed`, no
+  `response.failed`, and one `[DONE]`; its end event recorded
+  `outbound_stream=true`, `response_content_type_class=sse`,
+  `decoder_mode=sse_header`, and `hosted_tools_dropped_n=1`.
+- Both end events recorded `provider_attempts=1` and
+  `gateway_retry_count=0`. The sidecar held exactly two start/end pairs plus
+  their two route events; sequence/fingerprint joins matched with two unique
+  request sequences.
+- The diagnostic file was mode 0600, 2,251 bytes, six JSONL lines, maximum line
+  610 bytes, and did not rotate. Content-safety checks found no retained prompt
+  sentinel, output sentinel, hosted tool type, or raw model id. The appended
+  human log retained its established ingress, typed route, wire-metric, and
+  usage line shapes and retained no prompt/tool/output sentinel.
+- Cleanup stopped the temporary gateway, confirmed `:18791` closed, and removed
+  the active/rotated diagnostic paths. Live global 0.2.4-preview.0 stayed healthy
+  on `:18790` with pid 98662. Before/after SHA-256 values were identical:
+  root config `f0e879138d1f962d98d7a4d4bdb693723a12d30a37f13eef1a7f9caedea42bfa`,
+  catalog `f2ba2980d1d7a2717468600b9844192629d34d37d44b72d944fc658bb8ed85b1`,
+  and catalog meta
+  `74de0180a630230285e1f4b8f8be048e5b943ffd77b12f2056eac97df388b91d`.
+
+Disposition: **P1 PASS / isolated workspace evidence**. This verifies the A1
+filter and diagnostic seams in both JSON and proper-header SSE lanes. It does
+not prove the historical G26-B root-cause hypothesis, production reliability,
+or permission to cut/install/activate a preview. Phase P2 remains separately
+authorization-gated.
+
+### G26 Track A Phase P4 live canary — transport PASS / audit incomplete (2026-09-02)
+
+User-authorized real-environment canary against the exact globally installed
+0.2.4-preview.1 artifact (SHA-256 `4345c4a5…`) on `127.0.0.1:18790`. The
+gateway ran with the bounded sidecar enabled. G26-A was a direct
+picker-selected Ollama main conversation with one initial turn and one
+falsification continuation. G26-B was one native parent, exactly one Ollama V1
+child, and exactly one follow-up delivered to that same child. The receipt
+retains no prompt, task/child id, raw model slug, tool name, argument, output,
+or raw error.
+
+| Metric | G26-A direct main | G26-B native parent → child |
+| --- | ---: | ---: |
+| Ollama request pairs | 45 / 45 matched | 19 / 19 matched |
+| Initial / continuation requests | 12 / 33 | 15 / 4 |
+| HTTP / upstream / terminal | 45× `200/200/completed` | 19× `200/200/completed` |
+| `invalid_json` | 0 | 0 |
+| Provider attempts | 45 total; max 1; retry excess 0 | 19 total; max 1; retry excess 0 |
+| Gateway retries | 0 | 0 |
+| Decoder tuple | 45× `true/sse/sse_header` | 19× `true/sse/sse_header` |
+| Hosted tools dropped | 45× `1` | 19× `1` |
+| Duplicate fingerprints | 0; max repeat 1 | 0; max repeat 1 |
+| Successful usage | 2,033,002 input; 68,837 output; 2,101,839 total | 934,997 input; 77,725 output; 1,012,722 total |
+| Ollama latency sum / max | 809,575 / 79,038 ms | 774,186 / 161,020 ms |
+| Task wall time | 13m52s | 15m37.283s |
+| Child wall time | n/a | initial 9m25.652s; follow-up 3m30.907s |
+| Screenshot request delta | +45 | +19 |
+| Routing / continuity | direct two-turn completion PASS | 1 spawn, 1 child, 1 same-child follow-up, 0 fallback: PASS |
+
+Machine-readable observable-transport receipts are frozen at
+[`docs/receipts/g26-preview1-a.json`](./receipts/g26-preview1-a.json) (SHA-256
+`0c68f0592c61252d73bdea837d124611bf15252a9166733daa12561ba759f26e`)
+and [`docs/receipts/g26-preview1-b.json`](./receipts/g26-preview1-b.json)
+(SHA-256
+`40bea9389ed10319f6157e9d2a7def1d834b42a73a16a4516ca589c3630c0728`).
+They are derived artifacts, not substitutes for the independently inspected
+task/continuity trace or the unavailable authoritative counters.
+
+Three successful native auxiliary requests were visible in the G26-A window.
+The G26-B parent made 36 successful native requests. Every native request had
+one provider attempt and zero gateway retries; native usage was not supplied
+to the sidecar and was not estimated. Wait calls in G26-B were polling, not
+child recreation, provider retry, fallback, or follow-up replay. The child
+revised and narrowed its initial finding during the follow-up, which provides
+semantic as well as identity-level continuity evidence.
+
+The DeepSeek request-count deltas visible in the three user-supplied account
+screenshots (`245 → 290 → 309`) exactly matched the two sidecar slices. The
+sidecar was mode 0600. All pairs matched, and targeted privacy scans found no
+retained workload terms, task label, raw model slug, or prompt/tool/output
+content. No repository file changed during either task window; the working
+tree already contained the separately reviewed release batch. G26-A did use
+temporary scratch storage outside the repository and exceeded its requested
+source-file budget by one, so its task-policy compliance is partial even
+though its gateway transport and semantic continuation completed.
+
+Authoritative controller retry/reconnect, no-progress, and agent-local retry
+counters remained unavailable. Duplicate signatures are zero but are not
+renamed as those counters. Provider-internal retry and native-provider usage
+were also unavailable. Therefore the strict G26 disposition is:
+
+> **OBSERVABLE TRANSPORT PASS / FILTER CONFIRMED / FUNCTIONAL CONTINUITY PASS /
+> AUDIT INCOMPLETE / NOT GOLD**
+
+This is the first instrumented live proof for both supported Ollama surfaces.
+It confirms that the exact hosted-tool filter removed the observed failure
+trigger: every Ollama request dropped one hosted definition, every response
+arrived with a proper SSE content type and selected the header-driven decoder,
+and neither invalid JSON nor structural resubmission recurred. The D5 mismatch
+predicate was not observed, so conditional A2 response sniffing remains
+closed. No new cob runtime fix is indicated by this canary. Production or
+whole-product promotion remains a separate decision because the required
+upstream counters are unavailable and unrelated gates retain their recorded
+dispositions.
+
+## Workspace fixtures and evaluators (pack-excluded, not live gold)
+
+These harnesses run entirely in the workspace against temp homes, isolated
+loopback ports, and fake upstreams. They are **workspace evidence**, distinct
+from isolated `:18791` canaries and from live `:18790` gold:
+
+- `src/eval-g26.ts` (`node dist/eval-g26.js --input <jsonl> [--input
+  <rotated-jsonl>] --lane A|B --from <iso> --to <iso> --model <slug>
+  --expected-hosted-drop <n> --out <receipt.json>`): bounded, content-free G26
+  sidecar aggregator. It accepts at most one active and one rotated sidecar
+  under their combined byte budget. The raw model
+  is used only to select its hash and is never written to the receipt. It
+  calculates request-pair completeness, outcomes, one-fetch/retry evidence,
+  decoder/drop tuples, duplicate counts, exact successful usage, and latency
+  for an explicit dynamic window. Its `observable_transport_pass` is not a
+  Gold verdict; controller/no-progress/agent-local counters, continuity, task
+  outcome, and the final gate decision stay in the independently reviewed
+  trace receipt.
+
+- `src/eval-codex-contract.ts` (`node dist/eval-codex-contract.js <producer-bin>
+  <validator-bin> --out receipt.json`): exact Codex contract-diff sentinel.
+  Generates the experimental app-server JSON schema for two explicit binaries,
+  hashes raw + normalized contracts over cob-consumed surfaces, and classifies
+  `identical` | `additive` | `breaking` into a content-free receipt. Required
+  methods: `model/list`, `modelProvider/capabilities/read`,
+  `experimentalFeature/list`, `thread/compact/start`. Public `agentControl/*`
+  presence is only a future Gate 6 research trigger, never an authorization.
+  No home sidecar, root config, or feature flag is touched.
+- `src/eval-run-guard.ts`: reusable isolated run guard (exclusive run id,
+  temp homes/ports without live paths, env-independent live-home SHA
+  snapshots, exactly-once cleanup proof, content-free receipts). G24
+  (`eval-g24-child-run.ts`) and the WP1.4 outage canary
+  (`eval-wp14-outage-canary.ts`) use it as the shared ownership seam.
+- `src/eval-gateway-memory.ts` (`node dist/eval-gateway-memory.js [--lane
+  default|full] [--out receipt.json]`): gateway memory amplification benchmark.
+  In-process gateway plus fake upstream; safe default lane is 1 MiB at
+  concurrency 1 and 3; the full lane (1/8/32 MiB at c1/c3/c5) is explicit
+  opt-in and never run automatically. Records Node version, fixture hash,
+  iterations, RSS baseline/peak/delta, event-loop delay, latency p50/p95,
+  completed/rejected, and an output hash. The CLI parser rejects unknown
+  arguments and empty or option-shaped `--out` values. Measurement only — no
+  queue, semaphore, admission policy, or body-limit change is authorized by a
+  receipt.
+- `src/eval-ws-fallback.ts` (`node dist/eval-ws-fallback.js [--out receipt.json]
+  [--turns 1,10,20]`): Responses WebSocket fallback benchmark. Per turn it
+  probes the raw WebSocket upgrade (cob answers 426 `upgrade_required`) and
+  then the successful HTTP request, compared with direct HTTP for 1, 10, and 20
+  sequential continuation turns. Records connection/request counts, fallback
+  count, latency p50/p95, bytes, and a deterministic output hash. The CLI
+  parser is fail-closed: unknown arguments, dangling flags, empty `--turns`,
+  and empty or option-shaped `--out` values are rejected. Feasibility receipt
+  only — no product WebSocket, persistent sessions, multiplexing,
+  backpressure, or replay.
+- `src/eval-wp15-state-scan.ts` (`node dist/eval-wp15-state-scan.js
+  [population ...]`): checkpoint state-scan cost benchmark (lookup, publish,
+  and cleanup lanes over 0/100/300/500/corrupt/permission/nearcap
+  populations, 30 warm-up + 100 measured iterations with a determinism gate).
+  The lookup lane treats only the expected `state_checkpoint_missing` state as
+  a measured miss; conflicts, incompatible checkpoints, and I/O or programming
+  errors fail the benchmark instead of appearing as deterministic success.
+- `src/codex/diagnostic-event.ts`: versioned gateway diagnostic events
+  (`schema_version: 1`). Default live output stays human text; setting
+  `COB_DIAGNOSTIC_JSONL=1` opts into the bounded persisted JSONL sink under
+  `$CODEX_HOME/cob-diagnostics.jsonl`; existing typed events may still emit
+  JSON to stderr.
+  Events cover request routing (JSONL-only), compact start/success/failure,
+  upstream terminal, and guard rejection, and are content-free by contract.
+  New eval runs should prefer JSONL events over parsing human log lines.
+
+Recorded safe-lane workspace runs from the transcript-V2 batch are recorded in
+[STATUS.md](../STATUS.md) with per-lane measurements and receipt SHA-256s.
+None of these fixtures is a G-gate, an isolated canary, or live gold.
 
 ## What static tests are for
 

@@ -8,12 +8,14 @@ import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
   assessV1Roster,
+  ollamaDiscoveryEvidence,
   parseCatalogMetadata,
   parseCatalogProvenance,
   shouldPrintDesktopRestartHint,
   writeCatalogProvenance,
   writeCatalogValidationFailure,
 } from "./codex/catalog/provenance.js";
+import { OLLAMA_REVIEWED_VERSION } from "./codex/ollama-dialect.js";
 import {
   discoverCodexBins,
   fileIdentityFromFs,
@@ -418,6 +420,209 @@ describe("catalog provenance sidecar", () => {
     assert.equal(shouldPrintDesktopRestartHint(false, true), false);
     assert.match(LIVE_DESKTOP_RESTART_HINT, /Fully quit and reopen ChatGPT Desktop/);
     assert.doesNotMatch(LIVE_DESKTOP_RESTART_HINT, /hot reload|app-server/);
+  });
+});
+
+describe("Ollama discovery evidence in the sidecar", () => {
+  const TS = "2026-08-31T00:00:00.000Z";
+  const SPAWNABLE = "deepseek-v4-flash:0731-cloud";
+
+  function sidecar(path: string): { schema_version: number; ollama_discovery?: Record<string, unknown> } {
+    return JSON.parse(readFileSync(path, "utf8"));
+  }
+
+  function writeSidecar(
+    dir: string,
+    opts: { error?: string; tagNames?: { name: string; capabilities?: string[] }[] },
+  ): { metaPath: string; catalogPath: string; discovery: { liveHome: false; platform: "darwin"; pathBin: string } } {
+    const bin = writeFakeCodex(dir, "codex");
+    const sources = resolveCatalogSources(
+      { liveHome: false, platform: "darwin", desktopBins: [], pathBin: bin },
+      ioFor(),
+    );
+    const catalog = serializeCatalog(pickerCatalog());
+    const catalogPath = join(dir, "cob-catalog.json");
+    writeFileSync(catalogPath, catalog);
+    const metaPath = join(dir, "cob-catalog.meta.json");
+    writeCatalogProvenance({
+      metaPath,
+      catalogBytes: catalog,
+      sources,
+      generatedAt: TS,
+      ollamaDiscovery: ollamaDiscoveryEvidence({
+        tags: opts.tagNames ?? [],
+        spawnable: [SPAWNABLE],
+        error: opts.error,
+        observedAt: TS,
+      }),
+    });
+    return { metaPath, catalogPath, discovery: { liveHome: false, platform: "darwin" as const, pathBin: bin } };
+  }
+
+  it("persists degraded discovery as a future-facing schema with a stable code and no raw upstream text", () => {
+    const dir = tempDir("cob-prov-ollama-degraded-");
+    const { metaPath } = writeSidecar(dir, { error: "connect ECONNREFUSED 127.0.0.1:43451" });
+    const raw = readFileSync(metaPath, "utf8");
+    const meta = sidecar(metaPath);
+    assert.equal(meta.schema_version, 3);
+    const evidence = meta.ollama_discovery as Record<string, unknown>;
+    assert.equal(evidence.state, "degraded");
+    assert.equal(String(evidence.observed_at), TS);
+    assert.equal(evidence.tag_count, 0);
+    assert.equal(evidence.missing_spawn_count, 1);
+    assert.deepEqual(evidence.diagnostic, { code: "tags_unreachable" });
+    assert.doesNotMatch(raw, /ECONNREFUSED|43451/);
+    // Round-trips through the strict metadata parser.
+    const parsed = parseCatalogMetadata(raw);
+    assert.equal(parsed.schema_version, 3);
+    const polluted = JSON.parse(raw) as Record<string, unknown>;
+    (polluted.ollama_discovery as Record<string, unknown>).unexpectedKey = "unexpected";
+    writeFileSync(metaPath, `${JSON.stringify(polluted)}\n`);
+    const reparsed = parseCatalogMetadata(readFileSync(metaPath, "utf8")) as {
+      schema_version: number;
+      ollama_discovery?: Record<string, unknown>;
+    };
+    assert.equal(reparsed.schema_version, 3);
+    assert.equal("unexpectedKey" in (reparsed.ollama_discovery ?? {}), false);
+  });
+
+  it("records fresh success evidence beside schema 1 with a capability digest that excludes model names", () => {
+    const dir = tempDir("cob-prov-ollama-success-");
+    const { metaPath } = writeSidecar(dir, {
+      tagNames: [
+        { name: "deepseek-v4-flash:0731-cloud", capabilities: ["tools"] },
+        { name: "some-local-model", capabilities: ["tools", "thinking"] },
+      ],
+    });
+    const meta = sidecar(metaPath);
+    assert.equal(meta.schema_version, 1);
+    const evidence = meta.ollama_discovery as Record<string, unknown>;
+    assert.equal(evidence.state, "success");
+    assert.equal(evidence.tag_count, 2);
+    assert.equal(evidence.missing_spawn_count, 0);
+    assert.equal(evidence.dialect_revision, OLLAMA_REVIEWED_VERSION);
+    assert.equal(evidence.diagnostic, undefined);
+    assert.match(String(evidence.capability_digest), /^[0-9a-f]{64}$/);
+    // The digest must not depend on model names.
+    const other = ollamaDiscoveryEvidence({
+      tags: [
+        { name: "renamed-model", capabilities: ["tools"] },
+        { name: "another-name", capabilities: ["tools", "thinking"] },
+      ],
+      spawnable: [SPAWNABLE],
+      observedAt: TS,
+    });
+    assert.equal(other.capability_digest, evidence.capability_digest);
+  });
+
+  it("classifies tag discovery errors into stable codes", () => {
+    const evidenceOf = (error: string) =>
+      ollamaDiscoveryEvidence({ tags: [], spawnable: [SPAWNABLE], error, observedAt: TS });
+    assert.equal(evidenceOf("Ollama /api/tags timed out after 5000ms").diagnostic?.code, "tags_timeout");
+    assert.equal(evidenceOf("Ollama /api/tags failed: 503 Service Unavailable").diagnostic?.code, "tags_http_503");
+    assert.equal(evidenceOf("Ollama /api/tags returned a malformed body").diagnostic?.code, "tags_malformed");
+    assert.equal(evidenceOf("Ollama /api/tags returned an unexpected payload").diagnostic?.code, "tags_malformed");
+    assert.equal(evidenceOf("fetch failed").diagnostic?.code, "tags_unreachable");
+    for (const error of ["anything raw", "Authorization: sk-secret"]) {
+      const raw = JSON.stringify(ollamaDiscoveryEvidence({ tags: [], spawnable: [SPAWNABLE], error, observedAt: TS }));
+      assert.doesNotMatch(raw, /raw|sk-secret/);
+    }
+  });
+
+  it("status separates Codex provenance freshness from Ollama discovery state", () => {
+    const dir = tempDir("cob-prov-ollama-status-");
+    const { catalogPath, metaPath, discovery } = writeSidecar(dir, {
+      error: "Ollama /api/tags timed out after 5000ms",
+    });
+    const assess = () =>
+      assessCatalogProvenance({ catalogPath, metaPath, discovery });
+
+    const degraded = assess();
+    assert.equal(degraded.freshness, "fresh");
+    const degradedLines = degraded.lines.join("\n");
+    assert.match(degradedLines, /ollama discovery: degraded \(tags_timeout\)/);
+    assert.doesNotMatch(degradedLines, /5000ms/);
+
+    // Recovery records fresh Ollama evidence again without touching Codex provenance.
+    const bin = join(dir, "codex");
+    const sources = resolveCatalogSources(
+      { liveHome: false, platform: "darwin", desktopBins: [], pathBin: bin },
+      ioFor(),
+    );
+    writeCatalogProvenance({
+      metaPath,
+      catalogBytes: readFileSync(catalogPath),
+      sources,
+      generatedAt: TS,
+      ollamaDiscovery: ollamaDiscoveryEvidence({
+        tags: [{ name: SPAWNABLE, capabilities: ["tools"] }],
+        spawnable: [SPAWNABLE],
+        observedAt: TS,
+      }),
+    });
+    const recovered = assess();
+    assert.equal(recovered.freshness, "fresh");
+    const recoveredLines = recovered.lines.join("\n");
+    assert.match(recoveredLines, /ollama discovery: success \(1 tag\)/);
+    assert.doesNotMatch(recoveredLines, /degraded/);
+  });
+
+  it("fails closed when degraded sidecar evidence is missing or the schema is unsupported", () => {
+    const dir = tempDir("cob-prov-ollama-bad-");
+    const { catalogPath, metaPath, discovery } = writeSidecar(dir, {
+      error: "connect ECONNREFUSED 127.0.0.1:1",
+    });
+    const assess = () =>
+      assessCatalogProvenance({ catalogPath, metaPath, discovery });
+    const json = sidecar(metaPath) as Record<string, unknown>;
+
+    delete json.ollama_discovery;
+    writeFileSync(metaPath, `${JSON.stringify(json)}\n`);
+    assert.throws(() => parseCatalogMetadata(readFileSync(metaPath, "utf8")));
+    assert.equal(assess().freshness, "stale");
+
+    json.schema_version = 4;
+    writeFileSync(metaPath, `${JSON.stringify(json)}\n`);
+    assert.throws(() => parseCatalogMetadata(readFileSync(metaPath, "utf8")));
+    assert.equal(assess().freshness, "stale");
+  });
+
+  it("rejects degraded evidence recorded under schema 1 where schema 3 is required", () => {
+    const dir = tempDir("cob-prov-schema1-degraded-");
+    const { catalogPath, metaPath, discovery } = writeSidecar(dir, {
+      error: "connect ECONNREFUSED 127.0.0.1:1",
+    });
+    const json = sidecar(metaPath) as Record<string, unknown>;
+    json.schema_version = 1;
+    writeFileSync(metaPath, `${JSON.stringify(json)}\n`);
+    assert.throws(() => parseCatalogMetadata(readFileSync(metaPath, "utf8")));
+    assert.equal(
+      assessCatalogProvenance({ catalogPath, metaPath, discovery }).freshness,
+      "stale",
+    );
+  });
+
+  it("preserves degraded discovery evidence through validation-failure retention", () => {
+    const dir = tempDir("cob-prov-degraded-retained-");
+    const { catalogPath, metaPath, discovery } = writeSidecar(dir, {
+      error: "Ollama /api/tags timed out after 5000ms",
+    });
+    const sources = resolveCatalogSources(discovery, ioFor());
+    writeCatalogValidationFailure({
+      metaPath,
+      candidateBytes: readFileSync(catalogPath),
+      retainedCatalogBytes: readFileSync(catalogPath),
+      retainedMetadataBytes: readFileSync(metaPath),
+      sources,
+      error: new Error(`Codex rejected cob catalog (path ${realpathSync(sources.producer.path)} codex-cli test)`),
+    });
+    const assessment = assessCatalogProvenance({ catalogPath, metaPath, discovery });
+    // Human lines and the JSON evidence field stay in parity across the
+    // validation-failure state; safe degraded evidence is not converted away.
+    assert.equal(assessment.freshness, "stale");
+    assert.match(assessment.lines.join("\n"), /ollama discovery: degraded \(tags_timeout\)/);
+    assert.equal(assessment.discovery_evidence?.state, "degraded");
+    assert.equal(assessment.discovery_evidence?.diagnostic?.code, "tags_timeout");
   });
 });
 

@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
+import { OLLAMA_TOOL_SEARCH_ALIAS } from "./ollama-dialect.js";
 import { collectOllamaWireToolNames } from "./ollama-response-boundary.js";
 import { jsonUtf8Bytes, sha256Hex8 } from "./request-metrics.js";
+import {
+  checkOllamaJsonNode,
+  newOllamaTraversalBudget,
+  OllamaJsonOverflowError,
+  scanOllamaJsonBudget,
+  type OllamaTraversalBudget,
+} from "./bounded-json.js";
 import type { JsonObject } from "../core/json.js";
 import { isRecord } from "../core/json.js";
+export const TOOL_SEARCH_NAME = OLLAMA_TOOL_SEARCH_ALIAS;
 
-export const TOOL_SEARCH_NAME = "tool_search";
 export const PROMOTED_LEAF_CAP = 16;
 export const PROMOTED_BYTES_CAP = 32 * 1024;
 
@@ -46,6 +54,7 @@ export type ToolSearchBridge = {
   aliasesRemoved: number;
   aliasesReplaced: number;
   usedAliasMissing: number;
+  hostedToolsDroppedN: number;
 };
 
 export type ToolSearchToOllamaOptions = {
@@ -78,6 +87,7 @@ export function emptyToolSearchBridge(): ToolSearchBridge {
     aliasesRemoved: 0,
     aliasesReplaced: 0,
     usedAliasMissing: 0,
+    hostedToolsDroppedN: 0,
   };
 }
 
@@ -98,8 +108,8 @@ export function applyDeferredToolsToOllama(
   const leafCap = options.leafCap ?? PROMOTED_LEAF_CAP;
   const bytesCap = options.bytesCap ?? PROMOTED_BYTES_CAP;
   registerNamespacedWireTools(payload.tools, bridge);
-  if (bridge.blockedAliases.size > 0 && Array.isArray(payload.tools)) {
-    payload.tools = removeBlockedWireTools(payload.tools, bridge);
+  if (Array.isArray(payload.tools)) {
+    payload.tools = filterWireTools(payload.tools, bridge);
   }
   const usedAliases = collectUsedFunctionAliases(payload.input, bridge);
   let promotion: PromotionResult = { appendedAliases: [], candidateAliases: new Set() };
@@ -107,12 +117,14 @@ export function applyDeferredToolsToOllama(
     promotion = promoteSearchOutputLeaves(payload, bridge, leafCap, bytesCap);
   }
   flattenNamespacedHistoryCalls(payload, bridge);
-  if (Array.isArray(payload.tools)) payload.tools = rewriteToolDefinitions(payload.tools, bridge);
+  if (Array.isArray(payload.tools)) {
+    payload.tools = rewriteToolDefinitions(payload.tools, bridge);
+  }
   if (Array.isArray(payload.input)) payload.input = payload.input.map(rewriteHistoryItemToOllama);
   recordAliasMetrics(
     bridge,
     promotion,
-    new Set(collectOllamaWireToolNames(payload.tools)),
+    new Set(collectOllamaWireToolNames(payload.tools, newOllamaTraversalBudget("request"))),
     usedAliases,
   );
   if (Array.isArray(payload.output)) payload.output = payload.output.map(rewriteHistoryItemToOllama);
@@ -124,11 +136,17 @@ export function rewriteToolSearchFromOllama(value: unknown, bridge?: ToolSearchB
   return rewriteFromOllama(value, bridge ?? emptyToolSearchBridge());
 }
 
-function rewriteFromOllama(value: unknown, bridge: ToolSearchBridge): unknown {
+function rewriteFromOllama(
+  value: unknown,
+  bridge: ToolSearchBridge,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("upstream"),
+  depth = 1,
+): unknown {
+  checkOllamaJsonNode(budget, depth);
   if (Array.isArray(value)) {
     let changed = false;
     const next = value.map((item) => {
-      const rewritten = rewriteFromOllama(item, bridge);
+      const rewritten = rewriteFromOllama(item, bridge, budget, depth + 1);
       if (rewritten !== item) changed = true;
       return rewritten;
     });
@@ -139,7 +157,7 @@ function rewriteFromOllama(value: unknown, bridge: ToolSearchBridge): unknown {
   let changed = false;
   const next: JsonObject = {};
   for (const [key, nested] of Object.entries(value)) {
-    const rewritten = rewriteFromOllama(nested, bridge);
+    const rewritten = rewriteFromOllama(nested, bridge, budget, depth + 1);
     if (rewritten !== nested) changed = true;
     next[key] = rewritten;
   }
@@ -160,7 +178,10 @@ function rewriteToolDefinitions(
   tools: unknown[],
   bridge: ToolSearchBridge,
   topLevel = true,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
 ): unknown[] {
+  checkOllamaJsonNode(budget, depth);
   const rewritten: unknown[] = [];
   for (const tool of tools) {
     if (!isRecord(tool)) {
@@ -180,7 +201,7 @@ function rewriteToolDefinitions(
       }
       rewritten.push({
         ...tool,
-        tools: rewriteToolDefinitions(tool.tools, bridge, false),
+        tools: rewriteToolDefinitions(tool.tools, bridge, false, budget, depth + 1),
       });
       continue;
     }
@@ -379,7 +400,8 @@ function registerNamespacedWireTools(
   tools: unknown,
   bridge: ToolSearchBridge,
 ): void {
-  const entries = collectNamespacedWireTools(tools);
+  const budget = newOllamaTraversalBudget("request");
+  const entries = collectNamespacedWireTools(tools, [], budget);
   const reservedEntries = entries.filter((entry) => entry.reservedFunctions === true);
   const reservedByAlias = new Map<string, DeferredToolIdentity>();
   const blocked = new Set<string>();
@@ -418,7 +440,10 @@ type NamespacedWireTool = {
 function collectNamespacedWireTools(
   tools: unknown,
   namespaceParts: string[] = [],
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
 ): NamespacedWireTool[] {
+  checkOllamaJsonNode(budget, depth);
   if (!Array.isArray(tools)) return [];
   const entries: NamespacedWireTool[] = [];
   for (const tool of tools) {
@@ -438,7 +463,7 @@ function collectNamespacedWireTools(
             }
           }
         }
-        const nested = collectNamespacedWireTools(tool.tools, [RESERVED_FUNCTIONS_NAMESPACE]);
+        const nested = collectNamespacedWireTools(tool.tools, [RESERVED_FUNCTIONS_NAMESPACE], budget, depth + 1);
         entries.push(...nested.map((entry) => ({
           ...entry,
           wireName: qualifyOllamaNamespaceName(RESERVED_FUNCTIONS_NAMESPACE, entry.wireName),
@@ -446,7 +471,7 @@ function collectNamespacedWireTools(
         continue;
       }
       const childParts = own ? [...namespaceParts, own] : namespaceParts;
-      const nested = collectNamespacedWireTools(tool.tools, childParts);
+      const nested = collectNamespacedWireTools(tool.tools, childParts, budget, depth + 1);
       entries.push(...nested.map((entry) => ({
         ...entry,
         wireName: own ? qualifyOllamaNamespaceName(own, entry.wireName) : entry.wireName,
@@ -474,20 +499,23 @@ function collectTopLevelWireNames(tools: unknown): Set<string> {
   return names;
 }
 
-function removeBlockedWireTools(tools: unknown[], bridge: ToolSearchBridge): unknown[] {
-  return filterBlockedWireTools(tools, bridge);
-}
-
-function filterBlockedWireTools(
+function filterWireTools(
   tools: unknown[],
   bridge: ToolSearchBridge,
   namespaceParts: string[] = [],
   reservedRoot = false,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
 ): unknown[] {
+  checkOllamaJsonNode(budget, depth);
   const filtered: unknown[] = [];
   for (const tool of tools) {
     if (!isRecord(tool)) {
       filtered.push(tool);
+      continue;
+    }
+    if (tool.type === "web_search") {
+      bridge.hostedToolsDroppedN += 1;
       continue;
     }
     if (tool.type === "namespace" && Array.isArray(tool.tools)) {
@@ -496,7 +524,7 @@ function filterBlockedWireTools(
       const childParts = own ? [...namespaceParts, own] : namespaceParts;
       filtered.push({
         ...tool,
-        tools: filterBlockedWireTools(tool.tools, bridge, childParts, isReservedRoot),
+        tools: filterWireTools(tool.tools, bridge, childParts, isReservedRoot, budget, depth + 1),
       });
       continue;
     }
@@ -577,24 +605,38 @@ function parseToolsPayload(output: unknown): unknown[] | undefined {
   if (typeof output !== "string" || output.trim().length === 0) return undefined;
   try {
     const parsed: unknown = JSON.parse(output);
-    if (isRecord(parsed) && Array.isArray(parsed.tools)) return parsed.tools;
-  } catch {
+    if (isRecord(parsed) && Array.isArray(parsed.tools)) {
+      // Decoded provider/client JSON was invisible to the payload pre-scan:
+      // bound it before any promotion walk touches the decoded tree.
+      scanOllamaJsonBudget(parsed, "request");
+      return parsed.tools;
+    }
+  } catch (error) {
+    if (error instanceof OllamaJsonOverflowError) throw error;
     return undefined;
   }
   return undefined;
 }
 
-function collectFunctionLeaves(tools: unknown, parentNamespace?: string): JsonObject[] {
+function collectFunctionLeaves(
+  tools: unknown,
+  parentNamespace?: string,
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
+): JsonObject[] {
   if (!Array.isArray(tools)) return [];
   const leaves: JsonObject[] = [];
+  checkOllamaJsonNode(budget, depth);
   for (const tool of tools) {
+    checkOllamaJsonNode(budget, depth);
     if (!isRecord(tool)) continue;
     if (tool.type === "namespace" && Array.isArray(tool.tools)) {
       const namespace = typeof tool.name === "string" && tool.name.trim().length > 0
         ? tool.name.trim()
         : undefined;
       if (!namespace) continue;
-      leaves.push(...collectFunctionLeaves(tool.tools, namespace));
+      const nestedNamespace = parentNamespace ? `${parentNamespace}.${namespace}` : namespace;
+      leaves.push(...collectFunctionLeaves(tool.tools, nestedNamespace, budget, depth + 1));
       continue;
     }
     if (parentNamespace && typeof tool.namespace !== "string") {
@@ -618,12 +660,18 @@ function isDirectFunctionLeaf(tool: JsonObject): boolean {
   return functionName(tool) !== undefined;
 }
 
-function flattenToolDefs(tools: unknown[]): JsonObject[] {
+function flattenToolDefs(
+  tools: unknown[],
+  budget: OllamaTraversalBudget = newOllamaTraversalBudget("request"),
+  depth = 1,
+): JsonObject[] {
   const flat: JsonObject[] = [];
+  checkOllamaJsonNode(budget, depth);
   for (const tool of tools) {
+    checkOllamaJsonNode(budget, depth);
     if (!isRecord(tool)) continue;
     if (tool.type === "namespace" && Array.isArray(tool.tools)) {
-      flat.push(...flattenToolDefs(tool.tools));
+      flat.push(...flattenToolDefs(tool.tools, budget, depth + 1));
       continue;
     }
     flat.push(tool);
@@ -684,6 +732,9 @@ function normalizePromotedFunction(
 ): JsonObject | undefined {
   const parameters = functionParameters(tool);
   if (parameters === undefined) return undefined;
+  // A promoted parameter shape can be arbitrarily nested even when the
+  // surrounding leaf is shallow; bound it before clone/serialize.
+  scanOllamaJsonBudget(parameters, "request");
   const original = functionDescription(tool);
   const qualified = identity.namespace ? `${identity.namespace}.${identity.name}` : identity.name;
   const description = alias === identity.name
@@ -769,7 +820,7 @@ function functionParameters(tool: JsonObject): JsonObject | undefined {
 }
 
 function canonicalAlias(namespace: string | undefined, name: string): string {
-  const raw = namespace ? `${namespace}__${name}` : name;
+  const raw = namespace ? `${namespace.replaceAll(".", "__")}__${name}` : name;
   const cleaned = raw.replace(ALIAS_RE, "_");
   if (cleaned === raw && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(cleaned)) return cleaned;
   const hash = createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 8);
