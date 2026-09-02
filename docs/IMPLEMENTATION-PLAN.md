@@ -1,7 +1,7 @@
 # cob Codex G26 Reliability Implementation Plan
 
 - Date: 2026-09-02
-- Status: implemented and live-measured; 0.3.0 source cut prepared, artifact validation pending
+- Status: implemented, live-measured, and published as v0.3.0
 - Scope: cob Codex only
 - Authority: repository source, `AGENTS.md`, `README.md`, `STATUS.md`,
   `docs/LIVE-TESTING.md`, `docs/RELEASE.md`, exact local protocol evidence,

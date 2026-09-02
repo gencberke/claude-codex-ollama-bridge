@@ -28,9 +28,11 @@ cob Claude remains frozen and no experimental gate is promoted to live.
   reports observable transport only, and cannot manufacture controller-owned
   counters or a Gold verdict.
 - Reconcile the live snapshot, implementation-plan completion, release
-  history, and A2 decision. The source cut changes package metadata to 0.3.0;
-  artifact installation, tag, push, and GitHub release remain later verified
-  steps and do not alter the historical preview receipts.
+  history, and A2 decision. The exact 91-entry artifact was installed and
+  published from source commit `762adf3` under tag `v0.3.0`; its SHA-256 is
+  `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`.
+  The downloaded GitHub asset was byte-identical and does not alter the
+  historical preview receipts.
 
 ## 0.2.4-preview.1 — 2026-09-02
 

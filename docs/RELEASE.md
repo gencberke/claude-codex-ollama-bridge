@@ -16,6 +16,36 @@ single tarball built from that commit is installed and validated. No 0.3.0
 artifact identity, tag, push, or GitHub release is claimed here before those
 steps actually complete.
 
+Completed 0.3.0 artifact/install/publish event (2026-09-02, 17:09 local):
+source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a` passed the 791-test
+workspace gate and is the target of annotated tag `v0.3.0`. Exactly one
+tarball was packed from that commit: `codex-ollama-bridge-0.3.0.tgz`, 91
+entries, 186,931 bytes, SHA-256
+`39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`.
+It contains 85 production `dist` files plus the six allowlisted package files;
+tests, harnesses, `gate6h`, `eval-*`, receipts, sources, and IDE files are
+absent. Its production `dist` tree is byte-identical to the instrumented
+0.2.4-preview.1 artifact.
+
+The user stopped global preview.1, confirmed `:18790` closed, installed the
+exact 0.3.0 tarball, and started global cob. Independent post-install checks
+reported pid **27409**, health and overlay `ok`, catalog provenance `fresh`
+from bundled Codex **0.152.1**, validators 2, Ollama discovery success, and
+`/v1/models` HTTP 200. Root `config.toml` stayed byte-identical at SHA-256
+`1a4ae0ea10a93cbb5ee7c5478f565227aabee08fba86159b1f89dcfa49f4b16c`;
+the catalog stayed at `2c603684…` and catalog meta was re-stamped to
+`1ed55186e09ca292923796b6062b67aeac48bf26a2719500c80d10946d07f958`.
+The installed `dist/cli.js` matched the tarball member at SHA-256
+`3b5bfec38cdf82f6b80434aee29a9bf5302f73eb6b21a99f93d1179ebf3dd2ed`.
+
+`master` and the tag were pushed atomically. GitHub release
+[`v0.3.0`](https://github.com/gencberke/claude-codex-ollama-bridge/releases/tag/v0.3.0)
+is public with the exact tarball attached; GitHub reports the same SHA-256 and
+size, and a fresh download was byte-identical. No rebuild occurred after the
+single pack. The release inherits the byte-identical preview runtime's scoped
+G26 transport/continuity evidence; strict Gold remains audit-incomplete due
+to unavailable controller-owned counters. cob Claude remains frozen.
+
 Completed preview artifact/install event (2026-09-01, 17:20 local): the global
 install serving Codex `:18790` was cob **0.2.4-preview.0**, a preview cut of
 that workspace. Its exact 90-entry tarball SHA-256 is

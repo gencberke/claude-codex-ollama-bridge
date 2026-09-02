@@ -1,4 +1,4 @@
-# Status — 2026-09-02 (as of 16:30 +03)
+# Status — 2026-09-02 (as of 17:11 +03)
 
 This file is the current maintainer checkpoint: what is live, what exists only
 in the workspace, what is blocked, and what may happen next. It is not a
@@ -20,24 +20,25 @@ authority for the current live/workspace snapshot.
 ## Current snapshot
 
 This is the sole current live/workspace snapshot authority. The facts below
-are from the latest **real-environment** probe at 2026-09-02 16:30 +03 after
-the authorized instrumented G26-A/G26-B canary. A sandboxed
+are from the latest **real-environment** probe at 2026-09-02 17:07 +03 after
+the authorized 0.3.0 global replacement. A sandboxed
 loopback probe can falsely report the gateway as unreachable; live health
 claims require a real-environment `cob status` probe.
 
-| Surface | Current state as of 2026-09-02 16:30 +03 |
+| Surface | Current state as of 2026-09-02 17:11 +03 |
 | --- | --- |
 | Product scope | **cob Codex only.** Direct Ollama main and native GPT parent → Ollama V1 child are the validated product paths. |
-| Live Codex gateway | Global cob **0.2.4-preview.1**, pid **5952**, `127.0.0.1:18790`; real-environment `cob status --json`: health `ok`, overlay `ok`, catalog provenance `fresh`. |
-| Live artifact | Exact 0.2.4-preview.1 preview tarball, 91 entries, 184,558 bytes, SHA-256 `4345c4a5c0de2467aa96f475e3ee7777d63ae77eaca65718220543f727265ed5`. Installed globally on 2026-09-02 11:36 +03; the installed `dist/cli.js` matched the tarball member. Do not repack these bytes. |
-| Prior live artifact | Burned 0.2.4-preview.0 preview tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. All 0.2.4-preview.0 G26 evidence remains attributed to these bytes; history only. |
+| Live Codex gateway | Global cob **0.3.0**, pid **27409**, `127.0.0.1:18790`; real-environment `cob status --json`: health `ok`, overlay `ok`, catalog provenance `fresh`. |
+| Live artifact | Exact 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`. Installed and verified on 2026-09-02 17:07 +03; the installed `dist/cli.js` matched the tarball member. Source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. Never repack these bytes. |
+| Prior live artifact | Burned 0.2.4-preview.1 preview tarball, SHA-256 `4345c4a5c0de2467aa96f475e3ee7777d63ae77eaca65718220543f727265ed5`. Its 85 production `dist` files are byte-identical to 0.3.0 and retain the instrumented G26 evidence; history only. |
+| Earlier preview | Burned 0.2.4-preview.0 tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. Its failed G26-B evidence remains historical. |
 | Rollback artifact | Burned 0.2.3 tarball, SHA-256 `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`; history/rollback only. |
-| Source checkout | Product code on `master`; release metadata is **0.3.0**. The commit containing this checkpoint is the exact source authority; no 0.3.0 artifact is installed yet. |
+| Source checkout | Release source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a` is tagged `v0.3.0` and published. Post-release audit documentation may advance `master` without changing that tag or artifact. |
 | Codex | PATH Codex **0.149.0**; current Desktop catalog producer **0.152.1**. |
 | Ollama | Client/daemon **0.33.2**, re-probed at this checkpoint. Spawn preference remains DeepSeek 0731, GLM-5.3 Flash, then Kimi K3 overflow. |
 | Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned. Current real-environment SHA-256: `1a4ae0ea10a93cbb5ee7c5478f565227aabee08fba86159b1f89dcfa49f4b16c`; byte-identical before and after the instrumented G26 runs. Its change from the P3-era `f0e87913…` predates this canary and is not attributed to cob. |
-| Live catalog | Current SHA-256 `2c603684a3866fbec396f09779e11e185b81fdca104aa27d2cec1b62c5bdcdfb`; meta SHA-256 `b6b2e680bd3e77576122aba53b202564d1d5c5a2a3e86fec5fd2e2523312d7d0`. Provenance is fresh from bundled Codex **0.152.1**, validators 2, Ollama discovery success. The new identities supersede the P3-era catalog snapshot after the Desktop producer update; the burned artifact identity is unchanged. |
-| Diagnostic sidecar | Explicitly enabled for the canary at `~/.codex/cob-diagnostics.jsonl`, mode 0600. It remains bounded, content-free, and diagnostic-only; current live behavior otherwise remains unchanged. |
+| Live catalog | Current SHA-256 `2c603684a3866fbec396f09779e11e185b81fdca104aa27d2cec1b62c5bdcdfb`; meta SHA-256 `1ed55186e09ca292923796b6062b67aeac48bf26a2719500c80d10946d07f958` after the 0.3.0 start. Provenance is fresh from bundled Codex **0.152.1**, validators 2, Ollama discovery success. |
+| Diagnostic sidecar | The mode-0600 canary sidecar remains historical evidence at `~/.codex/cob-diagnostics.jsonl`. The ordinary 0.3.0 restart did not claim a new instrumented canary; structured persistence remains opt-in and default-off. |
 | Live experiments | `apply_patch = false`; `native_plaintext_spawn = false`. Ollama rows remain Multi-Agent V1. |
 | Isolated dev port | No `:18791` listener after the authorized 2026-09-02 P1 cleanup. The temporary workspace gateway was stopped and its diagnostic JSONL removed. |
 | cob Claude | No `:18792` listener at the 2026-09-01 23:36 read-only check. Claude feature work and live restart remain frozen pending explicit authorization. |
@@ -51,11 +52,11 @@ claims require a real-environment `cob status` probe.
 - cob does not write the user-owned root `~/.codex/config.toml`.
 - Keep 0.2.3 only as the exact rollback/history artifact; do not repack it or
   any historical 0.1.11–0.2.2 artifact.
-- The installed preview is a validation cut, not a production promotion. Any
-  next version cut, live replacement, or touch to Claude requires separate
-  authorization.
+- The installed 0.3.0 release is Codex-scoped, not a new whole-product or cob
+  Claude readiness claim. Any next version cut, live replacement, or touch to
+  Claude requires separate authorization.
 - Gate 5 `apply_patch` and native-plaintext collaboration remain isolated,
-  default-off experiments; neither is enabled on live 0.2.4-preview.1.
+  default-off experiments; neither is enabled on live 0.3.0.
 - Source tests and workspace fixtures are evidence, not live gold.
 
 ## G26 canary history
@@ -73,13 +74,15 @@ unavailable, so strict G26 is **AUDIT INCOMPLETE / NOT GOLD**. The historical
 content-free receipts and interpretation boundaries are in the G26 section of
 [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 
-## Workspace checkpoint
+## Release checkpoint
 
-The runtime portion of the current uncommitted batch was frozen and installed
-globally as 0.2.4-preview.1 for the bounded canary above. The later receipt
-evaluator and documentation checkpoint remain workspace-only until the next
-versioned cut. The canary result does not silently promote either artifact or
-the whole product.
+The reviewed batch is published as the Codex-scoped `v0.3.0` release. The
+source commit, annotated tag, global install, and GitHub release all resolve to
+the exact artifact recorded above. The GitHub asset was downloaded again and
+proved byte-identical to the local/live-installed tarball. Its production
+`dist` tree is byte-identical to the canaried 0.2.4-preview.1 runtime; only
+version/package and release-document metadata changed. This carries forward
+the scoped G26 evidence without claiming a new canary or whole-product Gold.
 
 ### Post-preview workspace source: bounded diagnostic sidecar
 
@@ -395,10 +398,9 @@ preview-canary record and is not a production promotion.
   authoritative retry/reconnect, no-progress, or agent-local retry counters.
   Repeating the same canary cannot manufacture those fields; keep them
   unavailable and keep strict G26 NOT GOLD.
-- **Production promotion:** the scoped Codex runtime has no new serious defect
-  from the instrumented canary, but a versioned production cut, clean install,
-  source/tag publication, and whole-product claim remain separate decisions.
-  Unrelated gate dispositions and the frozen Claude surface are unchanged.
+- **Production promotion:** the scoped Codex runtime is now released and live
+  as 0.3.0. This does not promote the frozen Claude surface, unavailable G26
+  audit counters, or unrelated gate dispositions.
 - **Active implementation plan:** [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md)
   G26 Track A workspace package (WP1 exact hosted-tool filter, WP2 outbound/
   decoder diagnostics, WP3 documentation reconciliation, WP4 verification) is
@@ -407,31 +409,20 @@ preview-canary record and is not a production promotion.
   `docs/RELEASE.md`, and Phase P3 installed it globally on `:18790` with all
   post-install checks passing. Phase P4 G26-A/G26-B canaries completed with
   observable transport and continuity PASS, A2 closed, and the strict audit
-  incomplete because controller-owned counters were unavailable.
+  incomplete because controller-owned counters were unavailable. The
+  byte-identical production runtime is now installed and published as 0.3.0.
 
 ## Next decisions
 
-1. **Checkpoint review:** the content-free, rotation-aware G26 evaluator,
-   canonical documentation, frozen receipts, and complete workspace gates are
-   finished. Review this checkpoint before changing release metadata. Do not
-   rewrite either burned preview artifact.
-2. **0.3.0 source cut:** package and changelog metadata are prepared. Run the
-   clean gates and create the exact source commit before packing. No unrelated
-   Claude or deferred-gate work enters the cut.
-3. **0.3.0 artifact and clean live install:** pack once from the clean source
-   checkpoint, record exact contents/size/SHA, replace global `:18790` using
-   `docs/RELEASE.md`, and verify health, overlay, catalog provenance, config
-   preservation, and a bounded post-install smoke before tagging.
-4. **Publish:** only after the exact artifact passes live verification, tag
-   the matching source commit `v0.3.0`, push commit and tag, and create the
-   GitHub release with the exact verified tarball. Never `npm publish` while
-   the package remains private.
-5. **Gate 5/G24 rerun:** each real isolated 0731 canary requires separate
+1. **0.3.0 complete:** source commit, workspace gates, single immutable
+   artifact, clean global install, health/models smoke, annotated tag, atomic
+   push, GitHub release, and downloaded-asset equality check all passed.
+2. **Gate 5/G24 rerun:** each real isolated 0731 canary requires separate
    explicit authorization. Results remain isolated evidence unless separately
    promoted by the live-gate standard.
-6. **Gate 6:** wait for or contribute a Codex-side deterministic driver, then
+3. **Gate 6:** wait for or contribute a Codex-side deterministic driver, then
    remeasure on isolated `:18791` only.
-7. **Next Desktop update:** revalidate picker visibility, the 0731 route, and
+4. **Next Desktop update:** revalidate picker visibility, the 0731 route, and
    native-parent → Ollama-V1-child spawn.
 
 ## Ownership and recovery
