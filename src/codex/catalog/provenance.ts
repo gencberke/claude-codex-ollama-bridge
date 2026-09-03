@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { writeFileAtomic } from "../../core/atomic.js";
-import { FEATURED_NATIVE_SLUGS } from "../constants.js";
-import { isSpawnableMatch, listVisibleTopSlugs, parseCatalogJson } from "./catalog.js";
+import { isSpawnableMatch, listVisibleSlugs, parseCatalogJson } from "./catalog.js";
 import { CatalogConsumerRejectedError } from "./validator.js";
 import {
   errorMessage,
@@ -18,7 +17,6 @@ import {
   type InspectCodexIo,
 } from "./source.js";
 import type { CatalogFile } from "../types.js";
-import { asSlug, asVisibility } from "../types.js";
 import { OLLAMA_DIALECT_VERSION, OLLAMA_REVIEWED_VERSION } from "../ollama-dialect.js";
 import { isRecord } from "../../core/json.js";
 
@@ -30,7 +28,6 @@ import { isRecord } from "../../core/json.js";
 export const CATALOG_PROVENANCE_SCHEMA = 1;
 export const CATALOG_PROVENANCE_FAILURE_SCHEMA = 2;
 export const CATALOG_PROVENANCE_DEGRADED_SCHEMA = 3;
-export const V1_ROSTER_SLOTS = 5;
 export const LIVE_DESKTOP_RESTART_HINT =
   "Fully quit and reopen ChatGPT Desktop before judging picker changes.";
 
@@ -117,13 +114,10 @@ export type CatalogProvenanceAssessment = {
   discovery_evidence?: OllamaDiscoveryEvidence;
 };
 
-export type RosterAssessment = {
+export type ConfiguredModelAssessment = {
   listed: string[];
-  nativeListed: number;
-  ollamaSlots: number;
-  listedSpawnable: string[];
-  omitted: string[];
-  headroom: number;
+  configured: string[];
+  missing: string[];
 };
 
 export function serializeCatalogProvenance(meta: CatalogProvenance): string {
@@ -370,53 +364,33 @@ export function writeCatalogValidationFailure(opts: {
 }
 
 export function missingRequiredPickerRows(catalog: CatalogFile): string[] {
-  const slugs = catalog.models.map(asSlug);
-  const listed = new Set(
-    catalog.models.filter((model) => asVisibility(model) === "list").map(asSlug),
-  );
   const missing: string[] = [];
-  for (const slug of FEATURED_NATIVE_SLUGS) {
-    if (slugs.includes(slug) && !listed.has(slug)) missing.push(slug);
-  }
-  if (catalog.models.length > 0 && listVisibleTopSlugs(catalog.models).length === 0) {
+  if (catalog.models.length > 0 && listVisibleSlugs(catalog.models).length === 0) {
     missing.push("(no visibility=list rows)");
   }
   return missing;
 }
 
-export function assessV1Roster(
+export function assessConfiguredModels(
   catalog: CatalogFile,
-  spawnableSlugs: readonly string[],
-): RosterAssessment {
-  const listed = listVisibleTopSlugs(catalog.models, V1_ROSTER_SLOTS);
-  const nativeListed = listed.filter((slug) => !slug.startsWith("ollama/")).length;
-  const listedSpawnable = listed.filter((slug) => slug.startsWith("ollama/"));
-  const omitted: string[] = [];
-  for (const wanted of spawnableSlugs) {
+  configuredSlugs: readonly string[],
+): ConfiguredModelAssessment {
+  const listed = listVisibleSlugs(catalog.models);
+  const configured: string[] = [];
+  const missing: string[] = [];
+  for (const wanted of configuredSlugs) {
     const slug = wanted.startsWith("ollama/") ? wanted : `ollama/${wanted}`;
-    const inWindow = listed.some((row) => isSpawnableMatch(row, wanted));
-    if (!inWindow) omitted.push(slug);
+    if (listed.some((row) => isSpawnableMatch(row, wanted))) configured.push(slug);
+    else missing.push(slug);
   }
-  return {
-    listed,
-    nativeListed,
-    ollamaSlots: Math.max(0, V1_ROSTER_SLOTS - nativeListed),
-    listedSpawnable,
-    omitted,
-    headroom: Math.max(0, V1_ROSTER_SLOTS - listed.length),
-  };
+  return { listed, configured, missing };
 }
 
-export function formatRosterLines(roster: RosterAssessment): string[] {
-  const listed = roster.listed.length > 0 ? roster.listed.join(", ") : "(none)";
-  const lines = [
-    `v1 roster: ${listed} (${roster.headroom} slot${roster.headroom === 1 ? "" : "s"} free)`,
-  ];
-  if (roster.headroom === 0 && roster.listed.length >= V1_ROSTER_SLOTS) {
-    lines.push("  warning: no V1 child roster headroom");
-  }
-  if (roster.omitted.length > 0) {
-    lines.push(`  warning: V1 roster overflow omitted ${roster.omitted.join(", ")}`);
+export function formatConfiguredModelLines(assessment: ConfiguredModelAssessment): string[] {
+  const listed = assessment.listed.length > 0 ? assessment.listed.join(", ") : "(none)";
+  const lines = [`picker models: ${listed}`];
+  if (assessment.missing.length > 0) {
+    lines.push(`  warning: configured models missing from picker: ${assessment.missing.join(", ")}`);
   }
   return lines;
 }
@@ -551,7 +525,7 @@ export function assessCatalogProvenance(opts: {
     return finish(stale(validatorProblem.reason, validatorProblem.detail));
   }
 
-  const roster = assessV1Roster(catalog, opts.spawnableOllamaSlugs ?? []);
+  const configuredModels = assessConfiguredModels(catalog, opts.spawnableOllamaSlugs ?? []);
   return finish({
     freshness: "fresh",
     repair: "none",
@@ -560,7 +534,7 @@ export function assessCatalogProvenance(opts: {
       `catalog provenance: fresh`,
       `  producer: ${formatBinary(meta.producer)}`,
       `  validators: ${meta.validators.map(formatBinary).join("; ")}`,
-      ...formatRosterLines(roster),
+      ...formatConfiguredModelLines(configuredModels),
     ],
   });
 }

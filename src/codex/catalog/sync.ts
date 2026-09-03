@@ -9,7 +9,7 @@ import { isLiveCodexHome } from "../home.js";
 import { writeCobProfile } from "../profile.js";
 import type { CobPaths } from "../paths.js";
 import type { CatalogFile } from "../types.js";
-import { assertSpawnRowsCarryTools, mergeCatalogWithFallback, parseCatalogJson, serializeCatalog } from "./catalog.js";
+import { mergeCatalogWithFallback, parseCatalogJson, serializeCatalog } from "./catalog.js";
 import { writeCatalogIfChanged } from "./file.js";
 import { ollamaDiscoveryEvidence, writeCatalogProvenance, writeCatalogValidationFailure } from "./provenance.js";
 import { discoverCodexBins, loadBundledCatalog, resolveCatalogSources, type CatalogDiscovery, type InspectCodexIo } from "./source.js";
@@ -61,9 +61,6 @@ export async function syncCatalogControlPlane(opts: {
   } catch (error) {
     ollamaError = error instanceof Error ? error.message : String(error);
   }
-  if (tags.length > 0) {
-    assertSpawnRowsCarryTools(tags, spawnable);
-  }
   const retainedCatalogBytes = readFileBufferOrNull(opts.paths.catalog);
   const retainedMetadataBytes = readFileBufferOrNull(opts.paths.catalogMeta);
   let previous: CatalogFile | null = null;
@@ -76,6 +73,8 @@ export async function syncCatalogControlPlane(opts: {
   }
   const catalog = mergeCatalogWithFallback(bundled, tags, previous, Boolean(ollamaError), {
     spawnableOllamaSlugs: spawnable,
+    nativeInclude: cob.catalog?.nativeInclude,
+    nativeExclude: cob.catalog?.nativeExclude,
     supportsSearchTool,
     applyPatch,
     advertiseCloudMaxContext: cob.catalog?.advertiseCloudMaxContext === true,

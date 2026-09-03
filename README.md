@@ -258,9 +258,9 @@ failures never fail a request, and diagnostics make no model/provider calls,
 retries, queue, or background worker. Controller retry/no-progress handling
 remains external and unavailable.
 
-This is workspace-source behavior after the burned preview; it is not installed
-on the live gateway. [STATUS.md](./STATUS.md) remains the authority for live
-state and evidence.
+This behavior is present in the current global build. Structured persistence
+remains opt-in; its historical presence is not evidence of a new canary.
+[STATUS.md](./STATUS.md) remains the authority for live state and evidence.
 
 Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation,
 spawn, workspace R/W, compaction, restart, and restore procedures plus current
@@ -279,16 +279,25 @@ A successful live catalog write is not visible in an already-open Desktop
 session — fully quit and reopen ChatGPT Desktop before judging picker
 changes. Native GPT rows are not "repaired" from a different Codex version.
 
-Ollama rows are discovered from `/api/tags` on every start/sync. The picker
-lists `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, then up to two configured
-Ollama slugs from `cob.toml` `[subagents].models` inside the five-row V1 window
-(default first row `ollama/deepseek-v4-flash:0731-cloud`). Additional configured
-models remain catalogued and directly routable but are reported as V1 roster
-overflow. Other native and discovered Ollama rows stay in `cob-catalog.json`
-with `visibility=hide` so routing still works. Ollama `display_name` equals the
-catalog slug (`ollama/...`). Do not steal GPT ids (`nativeAlias`). Ollama rows
-get cob-owned `base_instructions` and a child-only capability profile; GPT
-personality templates and unproven tool capabilities are not copied onto them.
+Native picker visibility follows the bundled catalog from the Codex binary
+that will consume it. A future upstream-visible GPT model therefore appears
+after `cob sync` without a cob build. Exact `catalog.native_include` and
+`catalog.native_exclude` overrides can force an existing native catalog row in
+or out; exclusion wins. Ollama rows are discovered from `/api/tags` on every
+start/sync, and every slug in `cob.toml` `[subagents].models` follows the
+visible native rows in configured order (the default is
+`ollama/deepseek-v4-flash:0731-cloud`). cob has no five-row roster cap: add,
+remove, or reorder any discovered `ollama/...` model in that list and run
+`cob sync`. Other discovered Ollama rows stay in `cob-catalog.json` with
+`visibility=hide` so routing still works. Current Codex
+may show only five model names in the generated `spawn_agent` tool description,
+but that text is non-exhaustive; an explicit `model` override is resolved
+against the complete available catalog ([upstream issue](https://github.com/openai/codex/issues/34166),
+[implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/multi_agents_common.rs)).
+Ollama `display_name` equals the catalog slug (`ollama/...`). Do not steal GPT
+ids (`nativeAlias`). Ollama rows get cob-owned `base_instructions` and a
+child-only capability profile; GPT personality templates and unproven tool
+capabilities are not copied onto them.
 
 DeepSeek thinking rows retain `none` / `low` / `high` / `max` (default `high`). GLM-5.3 Flash thinking is always on and advertises only `low` / `high` / `max` (default `max`); Codex `none`/`off`/`minimal` map to `low`, `medium` to `high`, and `xhigh` to `max` on that wire. For the DeepSeek ladder, `medium` / `xhigh` / `minimal` still map to `high`. The Ollama request is clipped to the reviewed Responses fields. Structured output is route-dependent: `text.format.type = "text"` is accepted on cloud and local routes, `json_schema` stays accepted only on the reviewed local Ollama Responses route, and a verified cloud route rejects `json_schema` locally with `ollama_text_format_cloud_unsupported` before upstream dispatch (the supplied schema is never echoed or logged). Exact hosted `web_search` definitions (`type === "web_search"`) are removed from Ollama request tools because the corresponding output dialect is unsupported; standalone `POST /v1/alpha/search` remains native ChatGPT-hosted search passthrough, and deferred `tool_search` remains cob's function-aliased discovery shim. Codex-only extras such as `client_metadata` and `stream_options` are dropped. Missing usage is omitted, never estimated. 429 is not retried inside cob. Header wait is a TTFB deadline (30s native, 240s Ollama; `upstream_headers_timeout`), and stream idle is 300s unless the client is applying backpressure. Advertised `context_window` is `min(tag context_length, 256000)` unless
 `catalog.active_context_window` opts in to a different active cap.
@@ -297,15 +306,11 @@ DeepSeek thinking rows retain `none` / `low` / `high` / `max` (default `high`). 
 used-% bar is that advertised window; it is not proof of cob merging an older
 thread. Live notes: [STATUS.md](./STATUS.md).
 
-The V1 spawn window is the first five `visibility=list` rows (priority ASC):
-
-| priority | slug |
-| --- | --- |
-| 0 | `gpt-5.6-sol` |
-| 1 | `gpt-5.6-terra` |
-| 2 | `gpt-5.6-luna` |
-| 3 | first configured Ollama slug from `cob.toml` `[subagents].models` |
-| 20+ | second configured Ollama slug; later configured slugs overflow the five-row window |
+Configured Ollama models receive consecutive picker priorities after all
+upstream-visible or explicitly included native rows. The list is unbounded by
+cob; availability still depends on the exact slug being present in Ollama
+`/api/tags`. An explicit empty `models = []` hides every Ollama row from the
+picker.
 
 Encrypted V2 child tasks return HTTP 400 and are never sent to Ollama. v1 is Responses-only: Chat Completions are not translated. For an Ollama `POST /v1/responses`, a top-level `previous_response_id` is resolved from cob's local checkpoint archive, provider-safe history is merged with the new input, and the field is removed before the Ollama request. Missing, corrupt, incompatible, or unsafe state fails closed with a structured 4xx response asking for full context. Native compaction is triggered only by one terminal `compaction_trigger` item; the trigger is transient and never enters Ollama history. Ollama threads summarize that history locally and return a cob-owned compaction envelope to Codex.
 
@@ -333,8 +338,8 @@ whose current tag carries the exact lowercase `tools` capability advertises
 tools only), and no-tools, unknown, or fallback evidence keeps
 `shell_type = "disabled"`. Parallel tool calls, V2 child content, apply_patch,
 shell_call, and local_shell_call are never opened through that shell. A
-configured spawn row that loses its fresh `tools` capability fails the sync
-closed instead of keeping a stale `unified_exec` row.
+configured row without fresh `tools` evidence remains selectable with its
+shell disabled instead of keeping a stale `unified_exec` capability.
 
 Ollama accepts a string as a complete first-turn `input`, but replayed history
 uses `input[]`, whose entries must be typed items. cob preserves the first-turn
@@ -374,6 +379,10 @@ models = [
 ]
 
 [catalog]
+# Native visibility follows the bundled Codex catalog by default.
+# Optional exact-slug overrides; exclude wins if a slug appears in both.
+# native_include = ["gpt-preview-codex"]
+# native_exclude = ["gpt-legacy-codex"]
 # Default true. Desktop defers MCP behind tool_search. cob translates the
 # wire shape and promotes discovered leaves onto the next Ollama tools[]
 # (aliased). Set false to send the full tool list every turn.
@@ -404,6 +413,7 @@ and measurements: [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 
 Every policy key above also has a `COB_*` environment override (for example
 `COB_COMPACTION_OLLAMA_THREADS`, `COB_SUBAGENT_MODELS`,
+`COB_NATIVE_MODEL_INCLUDE`, `COB_NATIVE_MODEL_EXCLUDE`,
 `COB_ACTIVE_CONTEXT_WINDOW`, `COB_NATIVE_PLAINTEXT_SPAWN`); see
 `src/codex/config/resolve.ts` for the full list.
 
@@ -465,3 +475,41 @@ publication failure is sent as one terminal error event followed by one DONE.
 - Gateway binds `127.0.0.1` only
 - No Codex binary shim, launchd, custom `[model_providers.ollama]`, or Chat Completions translator
 - Ollama client-executed tool calls must match the exact final outbound `tools[]` for that request. Undeclared or invalid names return HTTP 502 (`ollama_undeclared_tool_call` / `ollama_tool_call_invalid`) and do not create a checkpoint. There is no runtime opt-out.
+
+## Menu-bar panel (repo developer MVP)
+
+The optional native macOS 13+ panel is built without extra packages or a
+daemon. It does not start cob automatically, install a Login Item, or write
+`~/.codex/config.toml`. It is a repo-developer app and is not bundled into the
+global npm package:
+
+```sh
+sh apps/cob-menu/build.sh
+open "apps/cob-menu/.build/app/Cob Menu.app"
+```
+
+The production build script performs a real release compile before assembling
+the `.app`. The panel uses a code-drawn monochrome template icon, sizes its
+main popover to the current content, and opens logs in a separate resizable
+window. It discovers `cob` from the saved executable, the runtime record,
+Homebrew, and `/usr/local/bin`; if none validates with `cob version`, use
+`Select cob executable…`. It provides read-only status, manual Start/Stop/Sync
+and Verify actions, a bounded log window, picker visibility/order drafts, and
+safe compaction/search settings. Changes are sent only by `Apply & Sync`.
+
+The machine-readable interface is `cob config show --json` and
+`cob config apply --json` (the latter reads a schema-versioned JSON patch from
+stdin and requires the `expected_revision` returned by `show`). Unknown or
+experimental fields and environment-controlled fields are rejected. A
+successful live catalog change requires fully quitting and reopening ChatGPT
+Desktop; the panel reports that restart requirement.
+
+Detached human gateway logs are private and bounded to a 5 MiB current file
+plus one 5 MiB archive. A genuinely new detached gateway clears both files;
+repeated `cob start` against a healthy process leaves them untouched. The
+panel tails at most 512 KiB/2,000 lines on a background queue. While the log
+window is open it watches only the selected active file, coalesces bursts,
+skips unchanged file signatures, and temporarily watches the containing
+directory only when the active file is missing. Closing the log window stops
+watching and reading. Diagnostic JSONL remains opt-in and keeps its existing
+policy.

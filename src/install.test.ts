@@ -316,6 +316,15 @@ describe("cli session", () => {
 });
 
 describe("strict cli grammar", () => {
+  it("parses config show/apply as exact nested Codex commands", () => {
+    assert.equal(parseCliArgs(["node", "cob", "config", "show", "--json"]).command, "config show");
+    assert.equal(parseCliArgs(["node", "cob", "config", "apply", "--json"]).command, "config apply");
+    assert.equal(parseCliArgs(["node", "cob", "codex", "config", "show", "--json"]).command, "config show");
+    assert.throws(() => parseCliArgs(["node", "cob", "config"]), /unknown cob config command/);
+    assert.throws(() => parseCliArgs(["node", "cob", "config", "show", "extra"]), /unexpected positional/);
+    assert.throws(() => parseCliArgs(["node", "cob", "config", "prune"]), /unknown cob config command/);
+  });
+
   it("rejects unknown flags, missing values, and extra positionals", () => {
     assert.throws(() => parseCliArgs(["node", "cob", "start", "--portt", "18790"]), /unknown flag/);
     assert.throws(() => parseCliArgs(["node", "cob", "start", "--home"]), /requires a value/);

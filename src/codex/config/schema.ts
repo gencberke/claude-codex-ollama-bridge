@@ -27,6 +27,10 @@ export type SubagentPolicy = {
 };
 
 export type CatalogPolicy = {
+  /** Native slugs forced visible in addition to the bundled Codex visibility. */
+  nativeInclude?: string[];
+  /** Native slugs hidden even when the bundled Codex catalog lists them. */
+  nativeExclude?: string[];
   /**
    * When true, Ollama catalog rows advertise `supports_search_tool` so Desktop
    * defers MCP behind `tool_search`. cob translates the wire shape. Default true.
@@ -174,6 +178,29 @@ export function parseOllamaSlugList(values: readonly string[], field: string): s
   return values.slice();
 }
 
+export function parseNativeSlugList(values: readonly string[], field: string): string[] {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (
+      trimmed !== value ||
+      trimmed.length === 0 ||
+      trimmed.startsWith("ollama/") ||
+      /[\s\u0000-\u001f\u007f]/.test(trimmed)
+    ) {
+      throw new CobConfigError(
+        "invalid_native_slug",
+        `${field} must contain exact native model slugs without whitespace: ${JSON.stringify(value)}`,
+      );
+    }
+    if (seen.has(trimmed)) {
+      throw new CobConfigError("invalid_native_slug", `${field} lists a duplicate native model: ${trimmed}`);
+    }
+    seen.add(trimmed);
+  }
+  return values.slice();
+}
+
 export function parseOllamaCompactEffort(value: string | undefined): OllamaCompactEffort | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -233,6 +260,8 @@ export function compactionPolicy(opts: {
 
 export function catalogPolicy(opts: {
   supportsSearchTool: boolean;
+  nativeInclude?: string[];
+  nativeExclude?: string[];
   advertiseCloudMaxContext?: boolean;
   activeContextWindow?: number;
   autoCompactTokenLimit?: number;
@@ -241,6 +270,8 @@ export function catalogPolicy(opts: {
   return {
     supportsSearchTool: opts.supportsSearchTool,
     applyPatch: opts.applyPatch === true,
+    ...(opts.nativeInclude !== undefined ? { nativeInclude: opts.nativeInclude.slice() } : {}),
+    ...(opts.nativeExclude !== undefined ? { nativeExclude: opts.nativeExclude.slice() } : {}),
     ...(opts.advertiseCloudMaxContext === true ? { advertiseCloudMaxContext: true } : {}),
     ...(typeof opts.activeContextWindow === "number" ? { activeContextWindow: opts.activeContextWindow } : {}),
     ...(typeof opts.autoCompactTokenLimit === "number" ? { autoCompactTokenLimit: opts.autoCompactTokenLimit } : {}),

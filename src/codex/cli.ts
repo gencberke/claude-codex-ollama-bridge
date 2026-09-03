@@ -4,7 +4,7 @@ import { closePrivateLogFd, openPrivateLogFd } from "./runtime/log-fd.js";
 import type { CliFlags } from "../cli-session.js";
 import { readFileBufferOrNull } from "../core/atomic.js";
 import { formatInstallLine } from "../core/install-detection.js";
-import { listVisibleTopSlugs, parseCatalogJson } from "./catalog/catalog.js";
+import { listVisibleSlugs, parseCatalogJson } from "./catalog/catalog.js";
 import { LIVE_DESKTOP_RESTART_HINT, shouldPrintDesktopRestartHint } from "./catalog/provenance.js";
 import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./config/schema.js";
 import { resolveCliSession, type CliSession } from "./session.js";
@@ -12,6 +12,8 @@ import { restoreCob, serveForeground, startGatewayDetached, stopGateway, syncCat
 import { statusReport } from "./runtime/status.js";
 import { formatStateVerifyReport, verifyStateIntegrity } from "./state/verify.js";
 import { runSmoke } from "./smoke.js";
+import { configApply, configShow } from "./config/control.js";
+import { isHealthyRuntime, readRuntime } from "./runtime/runtime.js";
 
 type StartCompaction = { provider: "native"; model?: string };
 
@@ -33,73 +35,77 @@ export async function runCodexCli(flags: CliFlags): Promise<void> {
       }
       mkdirSync(paths.codexHome, { recursive: true, mode: 0o700 });
       const catalogBefore = readFileBufferOrNull(paths.catalog);
-      // The launcher keeps the log fd open only long enough to hand it to the
-      // detached child; close it on every success and error path afterwards.
-      const logFd = openPrivateLogFd(paths.log);
-      try {
-        const started = await startGatewayDetached({
-          paths,
-          port,
-          ollamaUrl: flags.ollamaUrl,
-          spawnServe: ({ token, nonce }) => {
-            const args = [
-              process.argv[1] ?? "",
-              "serve",
-              "--port",
-              String(port),
-              "--ollama-url",
-              flags.ollamaUrl,
-            ];
-            if (flags.compactionProvider) {
-              args.push("--compaction-provider", flags.compactionProvider);
-            }
-            if (flags.compactionModel) {
-              args.push("--compaction-model", flags.compactionModel);
-            }
-            if (flags.liveHome) args.push("--live-home");
-            return spawn(process.execPath, args, {
-              detached: true,
-              stdio: ["ignore", logFd, logFd],
-              env: {
-                ...process.env,
-                COB_CODEX_HOME: paths.codexHome,
-                COB_LOCK_TOKEN: token,
-                COB_RUNTIME_NONCE: nonce,
-                ...(flags.liveHome ? { COB_ALLOW_LIVE_HOME: "1" } : {}),
-                ...(flags.compactionProvider ? { COB_COMPACTION_PROVIDER: flags.compactionProvider } : {}),
-                ...(flags.compactionModel ? { COB_COMPACTION_MODEL: flags.compactionModel } : {}),
-              },
-            });
-          },
-        });
-        const runtime = started.runtime;
-        if (started.alreadyRunning) {
-          console.log(`cob already running on 127.0.0.1:${runtime.port} (pid ${runtime.pid})`);
-          printLaunchHint(isolated, paths.codexHome);
-          return;
-        }
-        const catalog = (() => {
-          try {
-            return parseCatalogJson(readFileSync(paths.catalog, "utf8"));
-          } catch {
-            return { models: [] };
-          }
-        })();
-        const top = listVisibleTopSlugs(catalog.models);
-        printStarted(port, isolated, paths.codexHome, install, runtime.pid);
-        console.log(
-          `compaction: provider=${runtime.compaction?.provider ?? "native"}${runtime.compaction?.model ? ` model=${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction?.ollamaThreads ?? "summarize"}`,
-        );
-        console.log(`featured picker: ${top.join(", ")}`);
-        if (
-          shouldPrintDesktopRestartHint(!isolated, catalogBytesChanged(catalogBefore, readFileBufferOrNull(paths.catalog)))
-        ) {
-          console.log(LIVE_DESKTOP_RESTART_HINT);
-        }
-        printLaunchHint(isolated, paths.codexHome);
-      } finally {
-        closePrivateLogFd(logFd);
+      // Establish a private target for diagnostics only when this is not an
+      // already healthy runtime. A repeated `cob start` must not even open the
+      // existing log; a genuinely new child performs the reset itself.
+      const existing = readRuntime(paths);
+      if (!existing || !(await isHealthyRuntime(existing))) {
+        const targetFd = openPrivateLogFd(paths.log);
+        closePrivateLogFd(targetFd);
       }
+      const started = await startGatewayDetached({
+        paths,
+        port,
+        ollamaUrl: flags.ollamaUrl,
+        spawnServe: ({ token, nonce }) => {
+          const args = [
+            process.argv[1] ?? "",
+            "serve",
+            "--port",
+            String(port),
+            "--ollama-url",
+            flags.ollamaUrl,
+          ];
+          if (flags.compactionProvider) {
+            args.push("--compaction-provider", flags.compactionProvider);
+          }
+          if (flags.compactionModel) {
+            args.push("--compaction-model", flags.compactionModel);
+          }
+          if (flags.liveHome) args.push("--live-home");
+          return spawn(process.execPath, args, {
+            detached: true,
+            // The child owns the rotating writer. Ignoring these descriptors
+            // also guarantees a detached child cannot block on a full pipe.
+            stdio: ["ignore", "ignore", "ignore"],
+            env: {
+              ...process.env,
+              COB_CODEX_HOME: paths.codexHome,
+              COB_LOCK_TOKEN: token,
+              COB_RUNTIME_NONCE: nonce,
+              COB_DETACHED_LOG: "1",
+              ...(flags.liveHome ? { COB_ALLOW_LIVE_HOME: "1" } : {}),
+              ...(flags.compactionProvider ? { COB_COMPACTION_PROVIDER: flags.compactionProvider } : {}),
+              ...(flags.compactionModel ? { COB_COMPACTION_MODEL: flags.compactionModel } : {}),
+            },
+          });
+        },
+      });
+      const runtime = started.runtime;
+      if (started.alreadyRunning) {
+        console.log(`cob already running on 127.0.0.1:${runtime.port} (pid ${runtime.pid})`);
+        printLaunchHint(isolated, paths.codexHome);
+        return;
+      }
+      const catalog = (() => {
+        try {
+          return parseCatalogJson(readFileSync(paths.catalog, "utf8"));
+        } catch {
+          return { models: [] };
+        }
+      })();
+      const visible = listVisibleSlugs(catalog.models);
+      printStarted(port, isolated, paths.codexHome, install, runtime.pid);
+      console.log(
+        `compaction: provider=${runtime.compaction?.provider ?? "native"}${runtime.compaction?.model ? ` model=${runtime.compaction.model}` : ""} ollama_threads=${runtime.compaction?.ollamaThreads ?? "summarize"}`,
+      );
+      console.log(`picker models: ${visible.join(", ")}`);
+      if (
+        shouldPrintDesktopRestartHint(!isolated, catalogBytesChanged(catalogBefore, readFileBufferOrNull(paths.catalog)))
+      ) {
+        console.log(LIVE_DESKTOP_RESTART_HINT);
+      }
+      printLaunchHint(isolated, paths.codexHome);
       return;
     }
     case "serve":
@@ -161,6 +167,18 @@ export async function runCodexCli(flags: CliFlags): Promise<void> {
       if (!report.clean) process.exitCode = 1;
       return;
     }
+    case "config show": {
+      if (!flags.json) throw new Error("cob config show requires --json");
+      console.log(JSON.stringify(configShow(paths), null, 2));
+      return;
+    }
+    case "config apply": {
+      if (!flags.json) throw new Error("cob config apply requires --json");
+      const patch = readFileSync(0, "utf8");
+      const result = await configApply(paths, parseConfigStdin(patch), { ollamaUrl: flags.ollamaUrl });
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     case "smoke":
       await runSmoke({ live: flags.live, ollamaUrl: flags.ollamaUrl });
       return;
@@ -170,6 +188,17 @@ export async function runCodexCli(flags: CliFlags): Promise<void> {
       if (flags.command !== "help") {
         process.exitCode = 1;
       }
+  }
+}
+
+function parseConfigStdin(raw: string): unknown {
+  if (Buffer.byteLength(raw, "utf8") > 64 * 1024) {
+    throw new Error("config patch exceeds 64 KiB");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("config patch is not valid JSON");
   }
 }
 
@@ -226,6 +255,8 @@ Usage (Codex):
   cob sync
   cob status [--json]
   cob state verify [--json]   read-only state integrity audit
+  cob config show --json       read-only panel configuration and picker state
+  cob config apply --json      apply a versioned panel patch from stdin
   cob smoke [--live]
   cob pack                           workspace only: npm pack (no tests in the tarball)
   cob version
@@ -258,12 +289,16 @@ summarize via Ollama /v1/responses (not /compact). --compaction-model still
 selects the native ChatGPT slug. --compaction-provider, if passed, must be
 native. Policy is written to cob.toml, not the Codex profile.
 
-Spawnable Ollama children are listed in cob.toml:
+Picker-visible Ollama children are listed in cob.toml. Add, remove, or reorder
+any discovered ollama/ slug; cob does not impose a roster-size cap:
 
   [subagents]
   models = ["${defaultSpawnable}"]
 
   [catalog]
+  # Native picker rows follow the bundled Codex catalog automatically.
+  # native_include = ["gpt-preview-codex"]
+  # native_exclude = ["gpt-legacy-codex"]
   supports_search_tool = true
 
 cob never writes ~/.codex/config.toml. restore deletes cob overlays and the

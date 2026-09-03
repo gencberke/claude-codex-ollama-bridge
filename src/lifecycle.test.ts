@@ -927,7 +927,7 @@ describe("overlay rollback and start lease", () => {
     );
   });
 
-  it("fails sync closed when a configured spawn row lacks a fresh tools capability", async () => {
+  it("keeps a configured no-tools model visible with shell disabled", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-sync-spawn-tools-"));
     const paths = resolvePaths(dir);
     const bin = join(dir, "fake-codex");
@@ -953,18 +953,21 @@ describe("overlay rollback and start lease", () => {
       server.listen(ollamaPort, "127.0.0.1", () => resolve());
     });
     try {
-      await assert.rejects(
-        () =>
-          syncCatalog({
-            paths,
-            ollamaUrl: `http://127.0.0.1:${ollamaPort}`,
-            locked: true,
-            discovery: { liveHome: false, platform: "darwin", pathBin: bin },
-            inspect: { readVersion: () => "codex-cli test" },
-          }),
-        /fresh tools capability/,
+      await syncCatalog({
+        paths,
+        ollamaUrl: `http://127.0.0.1:${ollamaPort}`,
+        locked: true,
+        discovery: { liveHome: false, platform: "darwin", pathBin: bin },
+        inspect: { readVersion: () => "codex-cli test" },
+      });
+      const catalog = JSON.parse(readFileSync(paths.catalog, "utf8")) as {
+        models: Array<Record<string, unknown>>;
+      };
+      const row = catalog.models.find(
+        (model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud",
       );
-      assert.equal(existsSync(paths.catalog), false);
+      assert.equal(row?.visibility, "list");
+      assert.equal(row?.shell_type, "disabled");
     } finally {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());

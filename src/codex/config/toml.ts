@@ -10,6 +10,7 @@ import {
   catalogPolicy,
   compactionPolicy,
   experimentalPolicy,
+  parseNativeSlugList,
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
   parseOllamaSlugList,
@@ -28,6 +29,8 @@ const KNOWN_COB_TOML_KEYS: Record<string, Set<string>> = {
   compaction: new Set(["provider", "model", "ollama_threads", "ollama_model", "ollama_effort"]),
   subagents: new Set(["models"]),
   catalog: new Set([
+    "native_include",
+    "native_exclude",
     "supports_search_tool",
     "advertise_cloud_max_context",
     "active_context_window",
@@ -93,6 +96,8 @@ export function parseCobToml(text: string): CobFileConfig {
   let ollamaEffort: OllamaCompactEffort | undefined;
   let subagentModels: string[] | undefined;
   let supportsSearchTool: boolean | undefined;
+  let nativeInclude: string[] | undefined;
+  let nativeExclude: string[] | undefined;
   let advertiseCloudMaxContext: boolean | undefined;
   let activeContextWindow: number | undefined;
   let autoCompactTokenLimit: number | undefined;
@@ -108,6 +113,12 @@ export function parseCobToml(text: string): CobFileConfig {
     if (arrayKey === "models" && section === "subagents") {
       subagentModels = arrayItems.slice();
     }
+    if (arrayKey === "native_include" && section === "catalog") {
+      nativeInclude = arrayItems.slice();
+    }
+    if (arrayKey === "native_exclude" && section === "catalog") {
+      nativeExclude = arrayItems.slice();
+    }
     arrayKey = undefined;
     arrayItems = [];
   };
@@ -121,6 +132,9 @@ export function parseCobToml(text: string): CobFileConfig {
     }
     if (section === "subagents" && key === "models") {
       throw new CobConfigError("invalid_cob_toml", "subagents.models must be an array of quoted strings");
+    }
+    if (section === "catalog" && (key === "native_include" || key === "native_exclude")) {
+      throw new CobConfigError("invalid_cob_toml", `catalog.${key} must be an array of quoted strings`);
     }
     if (section === "catalog" && key === "supports_search_tool") {
       supportsSearchTool = parseTomlBool(value, "catalog.supports_search_tool");
@@ -147,6 +161,14 @@ export function parseCobToml(text: string): CobFileConfig {
   const assignList = (key: string, items: string[]): void => {
     if (section === "subagents" && key === "models") {
       subagentModels = items;
+      return;
+    }
+    if (section === "catalog" && key === "native_include") {
+      nativeInclude = items;
+      return;
+    }
+    if (section === "catalog" && key === "native_exclude") {
+      nativeExclude = items;
       return;
     }
     throw new CobConfigError("invalid_cob_toml", `key "${section}.${key}" must not be an array`);
@@ -205,7 +227,12 @@ export function parseCobToml(text: string): CobFileConfig {
       assertScalarTokenKind(rawValue, `${section}.${key}`);
     }
     if (rawValue === "[" || (rawValue.startsWith("[") && !rawValue.endsWith("]"))) {
-      if (!(section === "subagents" && key === "models")) {
+      if (
+        !(
+          (section === "subagents" && key === "models") ||
+          (section === "catalog" && (key === "native_include" || key === "native_exclude"))
+        )
+      ) {
         throw new CobConfigError("invalid_cob_toml", `key "${section}.${key}" must not be an array`);
       }
       arrayKey = key;
@@ -228,6 +255,12 @@ export function parseCobToml(text: string): CobFileConfig {
   if (subagentModels !== undefined) {
     parseOllamaSlugList(subagentModels, "subagents.models");
   }
+  if (nativeInclude !== undefined) {
+    parseNativeSlugList(nativeInclude, "catalog.native_include");
+  }
+  if (nativeExclude !== undefined) {
+    parseNativeSlugList(nativeExclude, "catalog.native_exclude");
+  }
 
   return {
     compaction: compactionPolicy({
@@ -240,6 +273,8 @@ export function parseCobToml(text: string): CobFileConfig {
     subagents: subagentModels ? { models: subagentModels } : {},
     catalog: catalogPolicy({
       supportsSearchTool: supportsSearchTool ?? DEFAULT_CATALOG_POLICY.supportsSearchTool,
+      nativeInclude,
+      nativeExclude,
       advertiseCloudMaxContext,
       activeContextWindow,
       autoCompactTokenLimit,
@@ -357,6 +392,8 @@ function parseTomlArrayItem(line: string): string {
 
 export function renderCobToml(config: CobFileConfig): string {
   const models = config.subagents.models ?? [...DEFAULT_SPAWNABLE_OLLAMA_SLUGS];
+  const nativeInclude = config.catalog?.nativeInclude ?? [];
+  const nativeExclude = config.catalog?.nativeExclude ?? [];
   const lines = [
     "# Owned by cob. This is not a Codex profile; cob restore deletes it.",
     "[compaction]",
@@ -380,6 +417,15 @@ export function renderCobToml(config: CobFileConfig): string {
     "]",
     "",
     "[catalog]",
+    "# Native rows follow the bundled Codex catalog. These exact-slug lists are optional overrides.",
+  );
+  if (nativeInclude.length > 0) {
+    lines.push(`native_include = [${nativeInclude.map(tomlString).join(", ")}]`);
+  }
+  if (nativeExclude.length > 0) {
+    lines.push(`native_exclude = [${nativeExclude.map(tomlString).join(", ")}]`);
+  }
+  lines.push(
     "# Default true. Set false to send the full tool list on every Ollama turn.",
     `supports_search_tool = ${config.catalog?.supportsSearchTool !== false ? "true" : "false"}`,
     "# Gate 5: isolated --dev only; default false. Enables freeform apply_patch on configured Ollama spawn rows.",

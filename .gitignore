@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.build/
+apps/cob-menu/.build/
+.idea/
 *.log
 *.tgz
 .DS_Store

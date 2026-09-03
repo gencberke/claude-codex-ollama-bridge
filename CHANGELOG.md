@@ -8,6 +8,46 @@ untagged preview is valid. How to cut a release: [RELEASE.md](./docs/RELEASE.md)
 Ship decisions still follow live traces in [LIVE-TESTING.md](./docs/LIVE-TESTING.md),
 not this file.
 
+## 0.3.1 — 2026-09-03
+
+Codex-scoped catalog/config and repo-developer menu-panel cut. The exact
+92-entry tarball was installed globally for Desktop validation. Its source
+checkpoint is pushed on `master` without a tag or GitHub release; cob Claude
+remains frozen.
+
+- Remove cob's obsolete five-row V1 roster assumption. Every Ollama slug in
+  `[subagents].models` is now picker-visible in configured order, and status
+  reports the complete picker list instead of artificial capacity warnings.
+- Derive native picker visibility from the bundled Codex catalog, so future
+  upstream-visible GPT models require only `cob sync`, not a cob build. Add
+  exact `catalog.native_include` and `catalog.native_exclude` overrides;
+  exclusion wins.
+- Keep configured models without an exact fresh `tools` capability selectable
+  with `shell_type = "disabled"`; only fresh capability evidence enables the
+  unified shell.
+- Document that Codex's generated `spawn_agent` description may show only five
+  model names while explicit overrides are resolved against the complete
+  available catalog. Ollama children remain Multi-Agent V1, and encrypted V2
+  child content still fails closed.
+- Add fail-closed `cob config show --json` and revision-checked
+  `cob config apply --json` for the model list, native include/exclude, safe
+  compaction settings, and search-tool policy. Apply preserves unmanaged
+  config bytes and rolls config/catalog publication back on sync failure.
+- Bound detached human gateway logging to a private 5 MiB active file plus one
+  5 MiB archive. A genuine new detached start clears prior human logs; an
+  already-healthy start leaves them untouched.
+- Add the optional, dependency-free macOS 13+ SwiftUI menu panel under
+  `apps/cob-menu`. It remains a separately built repo-developer app and is not
+  embedded in the npm tarball. Its log window reads at most 512 KiB/2,000
+  lines off the main thread, watches only the active file, coalesces events,
+  and uses a directory watcher only while that file is absent.
+- Record the exact installation candidate
+  `codex-ollama-bridge-0.3.1.tgz`: 195,596 bytes, SHA-256
+  `0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`.
+  Workspace gates passed 802 tests (798 pass, 4 intentional skips), six Swift
+  tests, and clean TypeScript/diff checks. Post-install status is healthy; the
+  user-owned Desktop picker/chat smoke remains pending.
+
 ## 0.3.0 — 2026-09-02
 
 Codex-scoped stable cut of the instrumented preview runtime. The production

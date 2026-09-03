@@ -2,7 +2,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mergeCatalog, listVisibleTopSlugs } from "./catalog/catalog.js";
+import { mergeCatalog, listVisibleSlugs } from "./catalog/catalog.js";
 import { loadBundledCatalog } from "./catalog/source.js";
 import { assertCodexAcceptsCatalog } from "./catalog/validator.js";
 import { OLLAMA_BASE_INSTRUCTIONS } from "./constants.js";
@@ -37,8 +37,8 @@ export async function runSmoke(opts: SmokeOptions = {}): Promise<void> {
   }
 
   try {
-    t2Roster();
-    pass("T2 featured top-5 roster");
+    t2ConfiguredPicker();
+    pass("T2 configured picker models");
   } catch (error) {
     fail("T2", error);
   }
@@ -116,7 +116,7 @@ async function t1BundledParse(): Promise<CatalogFile> {
   return merged;
 }
 
-function t2Roster(): void {
+function t2ConfiguredPicker(): void {
   const bundled = loadBundledCatalog();
   const merged = mergeCatalog(bundled, [
     {
@@ -130,11 +130,11 @@ function t2Roster(): void {
       details: { context_length: 1048576 },
     },
   ]);
-  const top = listVisibleTopSlugs(merged.models);
-  if (top.join(",") !== `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`) {
-    throw new Error(`featured window should be sol, terra, luna, the default Ollama child; got ${top.join(", ")}`);
+  const top = listVisibleSlugs(merged.models);
+  if (!top.includes(`ollama/${DEFAULT_OLLAMA_SPAWN_MODEL}`)) {
+    throw new Error(`picker should list the default Ollama child; got ${top.join(", ")}`);
   }
-  if (top.includes("gpt-5.5") || top.includes("ollama/deepseek-v4-flash:cloud")) {
+  if (top.includes("ollama/deepseek-v4-flash:cloud")) {
     throw new Error(`picker leaked a hidden slug: ${top.join(", ")}`);
   }
 }

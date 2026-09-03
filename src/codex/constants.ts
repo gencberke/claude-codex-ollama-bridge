@@ -4,13 +4,6 @@ export const NATIVE_RESPONSES_URL =
 export const NATIVE_SEARCH_URL =
   "https://chatgpt.com/backend-api/codex/alpha/search";
 
-/** Picker list order (priority ASC), then the first spawnable Ollama slug. */
-export const FEATURED_NATIVE_SLUGS = [
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-] as const;
-
 /** Advertised Codex window for Ollama rows. Not Ollama n_ctx. */
 export const OLLAMA_CATALOG_CONTEXT_CAP = 256_000;
 

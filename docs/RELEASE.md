@@ -8,6 +8,28 @@ Current live version, health, overlay, workspace, and catalog authority are
 recorded only in [STATUS.md](../STATUS.md). This file records release/install
 events and the rollback procedure.
 
+Completed 0.3.1 installation-candidate event (2026-09-03, 16:57 local): the
+working tree was versioned as 0.3.1 and passed `npx tsc --noEmit`, 802 Node
+tests (798 pass, 4 intentional skips), and six Swift menu-app tests. Exactly
+one npm artifact was packed: `codex-ollama-bridge-0.3.1.tgz`, 92 entries
+(86 production `dist` files plus the six allowlisted package files), 195,596
+bytes, SHA-256
+`0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`.
+Tests, harnesses, `gate6h`, `eval-*`, sources, IDE files, and the separately
+built menu app are absent. Do not repack 0.3.1 with different bytes.
+
+The user installed that exact candidate globally and started it. Read-only
+post-install status reported cob **0.3.1**, gateway pid **212** healthy on
+`127.0.0.1:18790`, overlay `ok`, and fresh catalog provenance from Desktop
+`codex-cli 0.153.0-alpha.5` with two validators and successful Ollama
+discovery. Installed `dist/cli.js` matches the tar member at SHA-256
+`3b5bfec38cdf82f6b80434aee29a9bf5302f73eb6b21a99f93d1179ebf3dd2ed`.
+Current post-install root config/catalog/meta hashes are recorded in STATUS;
+there is no claimed before/after install hash receipt. Desktop picker/chat and
+menu-driven sync validation remain pending. This documentation reconciliation
+occurred after the immutable candidate was packed. The source checkpoint was
+then committed and pushed on `master`; no tag or GitHub release was created.
+
 Prepared 0.3.0 source cut (2026-09-02): package and lock metadata now identify
 `0.3.0`, the canonical G26 receipts and release procedure are frozen, and the
 complete workspace gate passed before the exact source commit. This is a source

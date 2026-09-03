@@ -1,4 +1,4 @@
-# Status — 2026-09-02 (as of 17:11 +03)
+# Status — 2026-09-03 (as of 16:57 +03)
 
 This file is the current maintainer checkpoint: what is live, what exists only
 in the workspace, what is blocked, and what may happen next. It is not a
@@ -20,24 +20,24 @@ authority for the current live/workspace snapshot.
 ## Current snapshot
 
 This is the sole current live/workspace snapshot authority. The facts below
-are from the latest **real-environment** probe at 2026-09-02 17:07 +03 after
-the authorized 0.3.0 global replacement. A sandboxed
+are from the latest **real-environment** probe at 2026-09-03 16:57 +03 after
+the user-installed 0.3.1 candidate. A sandboxed
 loopback probe can falsely report the gateway as unreachable; live health
 claims require a real-environment `cob status` probe.
 
-| Surface | Current state as of 2026-09-02 17:11 +03 |
+| Surface | Current state as of 2026-09-03 16:57 +03 |
 | --- | --- |
 | Product scope | **cob Codex only.** Direct Ollama main and native GPT parent → Ollama V1 child are the validated product paths. |
-| Live Codex gateway | Global cob **0.3.0**, pid **27409**, `127.0.0.1:18790`; real-environment `cob status --json`: health `ok`, overlay `ok`, catalog provenance `fresh`. |
-| Live artifact | Exact 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`. Installed and verified on 2026-09-02 17:07 +03; the installed `dist/cli.js` matched the tarball member. Source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. Never repack these bytes. |
-| Prior live artifact | Burned 0.2.4-preview.1 preview tarball, SHA-256 `4345c4a5c0de2467aa96f475e3ee7777d63ae77eaca65718220543f727265ed5`. Its 85 production `dist` files are byte-identical to 0.3.0 and retain the instrumented G26 evidence; history only. |
+| Live Codex gateway | Global cob **0.3.1**, pid **212**, `127.0.0.1:18790`; real-environment `cob status --json`: health `ok`, overlay `ok`, catalog provenance `fresh` from Desktop `codex-cli 0.153.0-alpha.5`, validators 2, Ollama discovery success. |
+| Live artifact | Exact 0.3.1 installation candidate, 92 entries, 195,596 bytes, SHA-256 `0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`. Installed `dist/cli.js` matches the tar member at `3b5bfec38cdf82f6b80434aee29a9bf5302f73eb6b21a99f93d1179ebf3dd2ed`. The source checkpoint is pushed on `master`; no tag, GitHub release, or completed Desktop UI smoke is claimed. Never repack these bytes. |
+| Prior live artifact | Published 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`; source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. History/rollback only. |
 | Earlier preview | Burned 0.2.4-preview.0 tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. Its failed G26-B evidence remains historical. |
 | Rollback artifact | Burned 0.2.3 tarball, SHA-256 `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`; history/rollback only. |
-| Source checkout | Release source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a` is tagged `v0.3.0` and published. Post-release audit documentation may advance `master` without changing that tag or artifact. |
+| Source checkout | The 0.3.1 product source is committed and pushed on `master`; its npm runtime was packed and installed, while the repo-only Swift menu app is built separately and excluded from that tarball. The last tagged/GitHub release remains `v0.3.0` at `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`. |
 | Codex | PATH Codex **0.149.0**; current Desktop catalog producer **0.152.1**. |
-| Ollama | Client/daemon **0.33.2**, re-probed at this checkpoint. Spawn preference remains DeepSeek 0731, GLM-5.3 Flash, then Kimi K3 overflow. |
-| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned. Current real-environment SHA-256: `1a4ae0ea10a93cbb5ee7c5478f565227aabee08fba86159b1f89dcfa49f4b16c`; byte-identical before and after the instrumented G26 runs. Its change from the P3-era `f0e87913…` predates this canary and is not attributed to cob. |
-| Live catalog | Current SHA-256 `2c603684a3866fbec396f09779e11e185b81fdca104aa27d2cec1b62c5bdcdfb`; meta SHA-256 `1ed55186e09ca292923796b6062b67aeac48bf26a2719500c80d10946d07f958` after the 0.3.0 start. Provenance is fresh from bundled Codex **0.152.1**, validators 2, Ollama discovery success. |
+| Ollama | Client/daemon **0.33.2**. The installed 0.3.1 runtime discovers configured Ollama rows without cob's former five-row picker cap; exact availability still follows fresh `/api/tags` evidence. |
+| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned. Current post-install SHA-256: `d8aab0eac10e18a1573db6748b8d05ee07baf121a3ea915c626efcb889caa575`; no before/after 0.3.1 install equality claim is recorded. |
+| Live catalog | Current SHA-256 `7e9a2720055022ee928473fa1f32707f477300db3064ca71edbff31c4277636b`; meta SHA-256 `cd463c5804cd5c83d5d061e0b2ff37c7f3bc58a5a0f5f54302d72753d5cd958c`. Provenance is fresh from Desktop `codex-cli 0.153.0-alpha.5`, validators 2, Ollama discovery success. |
 | Diagnostic sidecar | The mode-0600 canary sidecar remains historical evidence at `~/.codex/cob-diagnostics.jsonl`. The ordinary 0.3.0 restart did not claim a new instrumented canary; structured persistence remains opt-in and default-off. |
 | Live experiments | `apply_patch = false`; `native_plaintext_spawn = false`. Ollama rows remain Multi-Agent V1. |
 | Isolated dev port | No `:18791` listener after the authorized 2026-09-02 P1 cleanup. The temporary workspace gateway was stopped and its diagnostic JSONL removed. |
@@ -52,11 +52,11 @@ claims require a real-environment `cob status` probe.
 - cob does not write the user-owned root `~/.codex/config.toml`.
 - Keep 0.2.3 only as the exact rollback/history artifact; do not repack it or
   any historical 0.1.11–0.2.2 artifact.
-- The installed 0.3.0 release is Codex-scoped, not a new whole-product or cob
+- The installed 0.3.1 candidate is Codex-scoped, not a new whole-product or cob
   Claude readiness claim. Any next version cut, live replacement, or touch to
   Claude requires separate authorization.
 - Gate 5 `apply_patch` and native-plaintext collaboration remain isolated,
-  default-off experiments; neither is enabled on live 0.3.0.
+  default-off experiments; neither is enabled on live 0.3.1.
 - Source tests and workspace fixtures are evidence, not live gold.
 
 ## G26 canary history
@@ -76,13 +76,45 @@ content-free receipts and interpretation boundaries are in the G26 section of
 
 ## Release checkpoint
 
-The reviewed batch is published as the Codex-scoped `v0.3.0` release. The
-source commit, annotated tag, global install, and GitHub release all resolve to
-the exact artifact recorded above. The GitHub asset was downloaded again and
-proved byte-identical to the local/live-installed tarball. Its production
-`dist` tree is byte-identical to the canaried 0.2.4-preview.1 runtime; only
-version/package and release-document metadata changed. This carries forward
-the scoped G26 evidence without claiming a new canary or whole-product Gold.
+The last published source/tag remains the Codex-scoped `v0.3.0` release. The
+exact 0.3.1 installation candidate recorded above is now global and healthy,
+and its source checkpoint is on `master`. Desktop picker/chat and
+menu-driven configuration smoke are still pending; no tag, GitHub
+release, or new Gold claim follows from the status probe alone. Any runtime
+change after this immutable artifact requires a new version.
+
+### 0.3.1 workspace/install candidate: catalog and menu panel
+
+The installed 0.3.1 runtime removes cob's obsolete five-row roster assumption. Every
+discovered `ollama/...` slug named in `[subagents].models` is visible in the
+picker in configured order, and status reports the complete list. Native
+visibility now follows the bundled Codex catalog, so a newly bundled
+upstream-visible GPT row needs only `cob sync`; exact
+`catalog.native_include` / `catalog.native_exclude` lists provide local
+overrides and exclusion wins. A configured
+model without fresh `tools` evidence remains selectable with
+`shell_type = "disabled"`; only fresh evidence enables the unified shell.
+
+This does not enable Ollama Multi-Agent V2 or accept encrypted V2 child
+content. Current Codex may truncate the model examples in the generated
+`spawn_agent` description to five names, but explicit overrides are resolved
+against the complete available catalog.
+
+The same source adds revision-checked config show/apply, bounded 5+5 MiB human
+gateway logs, and the separately built native menu panel. The panel has a
+content-sized main popover, programmatic template icon, explicit AppKit log
+window, and a 512 KiB/2,000-line viewer. It watches only the active file,
+debounces bursts, skips unchanged signatures, reads off the main thread, and
+uses a directory fallback only while the selected file is absent. The release
+app is 864 KiB on disk in this workspace; a post-restart closed-window sample
+showed 0.0% CPU across six two-second samples. This local observation is not a
+long-duration performance certification.
+
+Workspace verification on 2026-09-03: `npx tsc --noEmit` passed; `npm test`
+passed 802 tests (798 pass, 4 documented skips); six Swift tests passed;
+`git diff --check` passed. Pack-time root config/catalog/meta hashes were
+unchanged. The later install has a post-install snapshot only, so no
+before/after install equality is claimed.
 
 ### Post-preview workspace source: bounded diagnostic sidecar
 
@@ -188,11 +220,12 @@ Final workspace gates:
 | Check | Result |
 | --- | --- |
 | `npx tsc --noEmit` | PASS |
-| `npm test` | PASS — **791 total, 787 pass, 4 skip, 0 fail** (rerun against the 0.3.0 source cut on 2026-09-02; no live mutation) |
+| `npm test` | PASS — **802 total, 798 pass, 4 skip, 0 fail** (0.3.1 candidate, 2026-09-03) |
 | `npm run build` | PASS |
-| `node dist/cli.js version` | PASS — `cob 0.3.0 (workspace)` |
+| `node dist/cli.js version` | PASS — version `0.3.1` |
 | `git diff --check` | PASS |
-| `npm pack --dry-run --json` | PASS — 91 production entries; no test, harness, `gate6h`, `eval-*`, or receipt. Dry-run only; no 0.3.0 tarball or release yet. |
+| `npm run pack` | PASS — exact 92-entry 0.3.1 artifact, 195,596 bytes, SHA-256 `0456a310…`; exclusions verified. |
+| `swift test --package-path apps/cob-menu` | PASS — **6/6** |
 
 ### G26 Track A Phase P1 isolated smoke (2026-09-02)
 

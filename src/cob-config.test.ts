@@ -92,6 +92,46 @@ auto_compact_token_limit = 230400
     );
   });
 
+  it("round-trips native picker include/exclude overrides and accepts env overrides", () => {
+    const parsed = parseCobToml(`
+[catalog]
+native_include = ["gpt-next-codex"]
+native_exclude = [
+  "gpt-legacy",
+]
+`);
+    assert.deepEqual(parsed.catalog?.nativeInclude, ["gpt-next-codex"]);
+    assert.deepEqual(parsed.catalog?.nativeExclude, ["gpt-legacy"]);
+    const rendered = renderCobToml(parsed);
+    assert.deepEqual(parseCobToml(rendered).catalog?.nativeInclude, ["gpt-next-codex"]);
+    assert.deepEqual(parseCobToml(rendered).catalog?.nativeExclude, ["gpt-legacy"]);
+
+    const fromEnv = resolveCobConfig({
+      env: {
+        COB_NATIVE_MODEL_INCLUDE: "gpt-a,gpt-b",
+        COB_NATIVE_MODEL_EXCLUDE: "gpt-c",
+      },
+    });
+    assert.deepEqual(fromEnv.catalog?.nativeInclude, ["gpt-a", "gpt-b"]);
+    assert.deepEqual(fromEnv.catalog?.nativeExclude, ["gpt-c"]);
+    const dir = mkdtempSync(join(tmpdir(), "cob-native-models-"));
+    const path = join(dir, "cob.toml");
+    writeCobToml(path, parsed);
+    const envOverFile = resolveCobConfig({
+      paths: { cobConfig: path },
+      env: {
+        COB_NATIVE_MODEL_INCLUDE: "gpt-env",
+        COB_NATIVE_MODEL_EXCLUDE: "gpt-env-old",
+      },
+    });
+    assert.deepEqual(envOverFile.catalog?.nativeInclude, ["gpt-env"]);
+    assert.deepEqual(envOverFile.catalog?.nativeExclude, ["gpt-env-old"]);
+    assert.throws(
+      () => parseCobToml('[catalog]\nnative_include = ["ollama/not-native"]\n'),
+      (error: unknown) => error instanceof CobConfigError && error.code === "invalid_native_slug",
+    );
+  });
+
   it("prefers flags over env over file over default native", () => {
     const dir = mkdtempSync(join(tmpdir(), "cob-toml-"));
     const path = join(dir, "cob.toml");

@@ -11,6 +11,7 @@ import {
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
   parseOllamaSlugList,
+  parseNativeSlugList,
   parseOllamaThreadCompaction,
   parsePositiveInt,
   parseSchemaSha256,
@@ -28,6 +29,8 @@ export function resolveCobConfig(opts: {
   ollamaEffort?: string;
   subagentModels?: string[];
   supportsSearchTool?: boolean;
+  nativeInclude?: string[];
+  nativeExclude?: string[];
   advertiseCloudMaxContext?: boolean;
   activeContextWindow?: number;
   autoCompactTokenLimit?: number;
@@ -63,6 +66,14 @@ export function resolveCobConfig(opts: {
     parseEnvBool(env.COB_SUPPORTS_SEARCH_TOOL) ??
     file?.catalog?.supportsSearchTool ??
     DEFAULT_CATALOG_POLICY.supportsSearchTool;
+  const nativeInclude =
+    opts.nativeInclude ??
+    parseNativeModelEnv(env.COB_NATIVE_MODEL_INCLUDE, "COB_NATIVE_MODEL_INCLUDE") ??
+    file?.catalog?.nativeInclude;
+  const nativeExclude =
+    opts.nativeExclude ??
+    parseNativeModelEnv(env.COB_NATIVE_MODEL_EXCLUDE, "COB_NATIVE_MODEL_EXCLUDE") ??
+    file?.catalog?.nativeExclude;
   const advertiseCloudMaxContext =
     opts.advertiseCloudMaxContext ??
     parseEnvBool(env.COB_ADVERTISE_CLOUD_MAX_CONTEXT) ??
@@ -99,6 +110,8 @@ export function resolveCobConfig(opts: {
     subagents: subagentModels ? { models: subagentModels } : {},
     catalog: catalogPolicy({
       supportsSearchTool,
+      nativeInclude,
+      nativeExclude,
       advertiseCloudMaxContext,
       activeContextWindow,
       autoCompactTokenLimit,
@@ -138,6 +151,11 @@ function parseSubagentEnv(value: string | undefined): string[] | undefined {
   // Empty entries are passed through so the shared validator sees the raw
   // env value; filtering them here would silently normalize malformed input.
   return parseOllamaSlugList(value.split(","), "COB_SUBAGENT_MODELS");
+}
+
+function parseNativeModelEnv(value: string | undefined, field: string): string[] | undefined {
+  if (value === undefined || value.length === 0) return undefined;
+  return parseNativeSlugList(value.split(","), field);
 }
 
 function parseEnvBool(value: string | undefined, field = "COB_SUPPORTS_SEARCH_TOOL"): boolean | undefined {

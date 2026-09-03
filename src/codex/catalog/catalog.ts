@@ -1,5 +1,4 @@
 import {
-  FEATURED_NATIVE_SLUGS,
   GPT_IDENTITY_FIELDS,
   OLLAMA_BASE_INSTRUCTIONS,
   OLLAMA_CATALOG_CONTEXT_CAP,
@@ -26,6 +25,10 @@ const IDENTITY_DROP = new Set<string>(
 
 export type CatalogMergeOptions = {
   spawnableOllamaSlugs?: readonly string[];
+  /** Exact native slugs forced visible in addition to upstream-visible rows. */
+  nativeInclude?: readonly string[];
+  /** Exact native slugs hidden even when upstream lists them. Exclusion wins. */
+  nativeExclude?: readonly string[];
   /** Advertise supports_search_tool on Ollama rows. Requires the cob tool_search shim. */
   supportsSearchTool?: boolean;
   /** Advertise cob's freeform apply_patch alias on configured spawn rows only. */
@@ -61,12 +64,11 @@ export function parseCatalogJson(text: string): CatalogFile {
   return { models: parsed.models.filter(isRecord) };
 }
 
-export function listVisibleTopSlugs(models: JsonObject[], limit = 5): string[] {
+export function listVisibleSlugs(models: JsonObject[]): string[] {
   return models
     .filter((model) => asVisibility(model) === "list")
     .slice()
     .sort((a, b) => asPriority(a) - asPriority(b) || asSlug(a).localeCompare(asSlug(b)))
-    .slice(0, limit)
     .map(asSlug);
 }
 
@@ -168,20 +170,6 @@ export function isVerifiedCloudOllamaSlug(slug: string): boolean {
   return isVerifiedCloudOllamaName(name);
 }
 
-/**
- * A configured spawn row is admitted only on a fresh exact lowercase `tools`
- * capability from this discovery round. A capability-less or unknown tag never
- * silently takes over a configured spawn slot; the sync fails closed instead.
- */
-export function assertSpawnRowsCarryTools(tags: readonly OllamaTag[], spawnable: readonly string[]): void {
-  for (const tag of tags) {
-    if (!spawnable.some((wanted) => isSpawnableMatch(tag.name, wanted))) continue;
-    if (!evidenceFromOllamaTag(tag).tools) {
-      throw new Error(`configured spawn row ${tag.name} does not carry a fresh tools capability`);
-    }
-  }
-}
-
 export function ollamaCatalogWindows(opts: {
   tagLength?: number;
   reportedMax?: number;
@@ -200,26 +188,29 @@ export function ollamaCatalogWindows(opts: {
   return { contextWindow, maxContextWindow: contextWindow };
 }
 
-export function assignFeaturedPriorities(
+export function assignPickerPriorities(
   native: JsonObject[],
   ollamaIds: string[],
   spawnableOllamaSlugs: readonly string[] = DEFAULT_SPAWNABLE_OLLAMA_SLUGS,
 ): Map<string, number> {
-  const nativeSlugs = new Set(native.map(asSlug));
   const spawnableIds = matchingSpawnableIds(ollamaIds, spawnableOllamaSlugs);
   const used = new Set<string>();
   const window: string[] = [];
 
-  for (const slug of FEATURED_NATIVE_SLUGS) {
-    if (nativeSlugs.has(slug) && !used.has(slug)) {
+  const listedNative = native
+    .filter((model) => asVisibility(model) === "list")
+    .slice()
+    .sort((a, b) => asPriority(a) - asPriority(b) || asSlug(a).localeCompare(asSlug(b)));
+  for (const model of listedNative) {
+    const slug = asSlug(model);
+    if (!used.has(slug)) {
       window.push(slug);
       used.add(slug);
     }
   }
 
-  const primarySpawn = spawnableIds[0];
-  if (primarySpawn) {
-    const slug = ollamaCatalogSlug(primarySpawn);
+  for (const spawnableId of spawnableIds) {
+    const slug = ollamaCatalogSlug(spawnableId);
     if (!used.has(slug)) {
       window.push(slug);
       used.add(slug);
@@ -237,7 +228,7 @@ export function assignFeaturedPriorities(
       priorities.set(slug, 10 + asPriority(model));
     }
   }
-  let extra = 20;
+  let extra = Math.max(20, window.length);
   for (const id of ollamaIds) {
     const slug = ollamaCatalogSlug(id);
     if (!priorities.has(slug)) {
@@ -248,17 +239,22 @@ export function assignFeaturedPriorities(
   return priorities;
 }
 
-function applyPickerVisibility(models: JsonObject[], spawnableOllamaSlugs: readonly string[]): void {
-  const featured = new Set<string>(FEATURED_NATIVE_SLUGS);
+function applyPickerVisibility(
+  models: JsonObject[],
+  spawnableOllamaSlugs: readonly string[],
+  nativeInclude: readonly string[] = [],
+  nativeExclude: readonly string[] = [],
+): void {
+  const included = new Set(nativeInclude);
+  const excluded = new Set(nativeExclude);
   for (const model of models) {
     const slug = asSlug(model);
     if (slug.startsWith("ollama/")) {
       model.visibility = spawnableOllamaSlugs.some((wanted) => isSpawnableMatch(slug, wanted))
         ? "list"
         : "hide";
-    } else {
-      model.visibility = featured.has(slug) ? "list" : "hide";
-    }
+    } else if (excluded.has(slug)) model.visibility = "hide";
+    else if (included.has(slug)) model.visibility = "list";
   }
 }
 
@@ -299,7 +295,7 @@ export function mergeCatalogWithFallback(
   const ids = previousOllama.map((model) => asSlug(model).slice("ollama/".length));
   const spawnable = options?.spawnableOllamaSlugs ?? DEFAULT_SPAWNABLE_OLLAMA_SLUGS;
   const fallbackSpawnable = fallbackSpawnableSlugs(previousOllama, spawnable);
-  const priorities = assignFeaturedPriorities(nativeOnly, ids, fallbackSpawnable);
+  const priorities = assignPickerPriorities(nativeOnly, ids, fallbackSpawnable);
   for (const model of nativeOnly) {
     model.priority = priorities.get(asSlug(model)) ?? asPriority(model);
   }
@@ -315,7 +311,12 @@ export function mergeCatalogWithFallback(
     if (rebuilt) ollama.push(rebuilt);
   }
   const catalog = { models: [...nativeOnly, ...ollama] };
-  applyPickerVisibility(catalog.models, fallbackSpawnable);
+  applyPickerVisibility(
+    catalog.models,
+    fallbackSpawnable,
+    options?.nativeInclude,
+    options?.nativeExclude,
+  );
   assertOllamaRowsSafe(catalog, {
     allowSearchTool: options?.supportsSearchTool === true,
     allowApplyPatch: options?.applyPatch === true,
@@ -424,7 +425,13 @@ export function mergeCatalog(
     }
   }
   const spawnable = options?.spawnableOllamaSlugs ?? DEFAULT_SPAWNABLE_OLLAMA_SLUGS;
-  const priorities = assignFeaturedPriorities(native, ollamaIds, spawnable);
+  applyPickerVisibility(
+    [...native, ...ollamaModels],
+    spawnable,
+    options?.nativeInclude,
+    options?.nativeExclude,
+  );
+  const priorities = assignPickerPriorities(native, ollamaIds, spawnable);
 
   for (const model of native) {
     model.priority = priorities.get(asSlug(model)) ?? asPriority(model);
@@ -434,7 +441,6 @@ export function mergeCatalog(
   }
 
   const catalog = { models: [...native, ...ollamaModels] };
-  applyPickerVisibility(catalog.models, spawnable);
   return catalog;
 }
 

@@ -37,7 +37,19 @@ const VALUE_FLAGS = new Set([
 
 const BOOLEAN_FLAGS = new Set(["--foreground", "--live", "--dev", "--live-home", "--desktop", "--json"]);
 
-const SESSION_COMMANDS = new Set(["start", "serve", "stop", "restore", "status", "sync", "smoke", "agents", "state verify"]);
+const SESSION_COMMANDS = new Set([
+  "start",
+  "serve",
+  "stop",
+  "restore",
+  "status",
+  "sync",
+  "smoke",
+  "agents",
+  "state verify",
+  "config show",
+  "config apply",
+]);
 
 function flagApplies(flag: string, surface: CobSurface, command: string): boolean {
   if (command === "version" || command === "pack" || command === "help") return false;
@@ -64,7 +76,8 @@ function flagApplies(flag: string, surface: CobSurface, command: string): boolea
     case "--compaction-model":
       return surface === "codex" && (command === "start" || command === "serve");
     case "--json":
-      return surface === "codex" && (command === "status" || command === "state verify");
+      return surface === "codex" &&
+        (command === "status" || command === "state verify" || command === "config show" || command === "config apply");
     default:
       return false;
   }
@@ -112,8 +125,21 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   }
   const surfaceArg = positionals[0];
   const surfacePrefix = surfaceArg !== undefined && isCobSurface(surfaceArg);
-  // The exact narrow nested subcommand `cob state verify` (read-only audit).
+  // The exact narrow nested subcommands `cob state verify` and
+  // `cob config {show,apply}`. Keeping these explicit prevents a future
+  // positional from being silently interpreted as a different command.
   const isStateVerify = !surfacePrefix && surfaceArg === "state" && positionals[1] === "verify";
+  const isConfig = !surfacePrefix && surfaceArg === "config";
+  const isConfigCommand = isConfig && (positionals[1] === "show" || positionals[1] === "apply");
+  const isExplicitCodexConfig =
+    surfacePrefix && surfaceArg === "codex" && positionals[1] === "config" &&
+    (positionals[2] === "show" || positionals[2] === "apply");
+  if (isConfig && !isConfigCommand) {
+    throw new Error(`unknown cob config command: ${positionals[1] ?? ""}`.trim());
+  }
+  if (surfacePrefix && surfaceArg === "codex" && positionals[1] === "config" && !isExplicitCodexConfig) {
+    throw new Error(`unknown cob config command: ${positionals[2] ?? ""}`.trim());
+  }
   let surface: CobSurface = DEFAULT_SURFACE;
   let command = "help";
   if (surfacePrefix && surfaceArg) {
@@ -123,7 +149,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     command = surfaceArg;
   }
   if (isStateVerify) command = "state verify";
-  const maxPositionals = isStateVerify ? 2 : surfacePrefix ? 2 : 1;
+  if (isConfigCommand) command = `config ${positionals[1]}`;
+  if (isExplicitCodexConfig) command = `config ${positionals[2]}`;
+  const maxPositionals = isStateVerify || isConfigCommand ? 2 : isExplicitCodexConfig ? 3 : surfacePrefix ? 2 : 1;
   if (positionals.length > maxPositionals) {
     throw new Error(`unexpected positional argument: ${positionals[maxPositionals]}`);
   }

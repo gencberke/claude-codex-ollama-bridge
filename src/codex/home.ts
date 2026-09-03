@@ -21,7 +21,7 @@ export function isLiveCodexHome(codexHome: string, liveHome = defaultLiveHome())
   return samePath(codexHome, liveHome);
 }
 
-const MUTATING_COMMANDS = new Set(["start", "serve", "stop", "restore", "sync"]);
+const MUTATING_COMMANDS = new Set(["start", "serve", "stop", "restore", "sync", "config apply"]);
 
 export function assertWorkspaceMayTouchHome(opts: {
   command: string;

@@ -5,7 +5,7 @@ import {mkdtempSync, readFileSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import { join } from "node:path";
 import { createServer, type AddressInfo } from "node:net";
-import { mergeCatalog, listVisibleTopSlugs, serializeCatalog } from "./codex/catalog/catalog.js";
+import { mergeCatalog, listVisibleSlugs, serializeCatalog } from "./codex/catalog/catalog.js";
 import { listenGateway } from "./codex/gateway.js";
 import { renderCobProfile } from "./codex/profile.js";
 import { resolvePaths } from "./codex/paths.js";
@@ -53,7 +53,7 @@ function bundled(): CatalogFile {
       native({ slug: "gpt-5.6-sol", priority: 1 }),
       native({ slug: "gpt-5.6-terra", priority: 2 }),
       native({ slug: "gpt-5.6-luna", priority: 3 }),
-      native({ slug: "gpt-5.5", priority: 7 }),
+      native({ slug: "gpt-5.5", priority: 7, visibility: "hide" }),
     ],
   };
 }
@@ -81,7 +81,7 @@ describe("picker visibility", () => {
     writeFileSync(paths.catalog, serializeCatalog(catalog));
     writeFileSync(paths.profile, renderCobProfile({ port: 18790, catalogPath: paths.catalog }));
 
-    const top = listVisibleTopSlugs(catalog.models);
+    const top = listVisibleSlugs(catalog.models);
     assert.deepEqual(top, [
       "gpt-5.6-sol",
       "gpt-5.6-terra",

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   assertOllamaRowsSafe,
-  assignFeaturedPriorities,
+  assignPickerPriorities,
   buildOllamaEntry,
   isVerifiedCloudOllamaTag,
-  listVisibleTopSlugs,
+  listVisibleSlugs,
   ollamaCatalogWindows,
   mergeCatalog,
   mergeCatalogWithFallback,
@@ -66,7 +66,7 @@ function bundled(): CatalogFile {
       native({ slug: "gpt-5.6-sol", priority: 1, multi_agent_version: "v2" }),
       native({ slug: "gpt-5.6-terra", priority: 2 }),
       native({ slug: "gpt-5.6-luna", priority: 3 }),
-      native({ slug: "gpt-5.5", priority: 7 }),
+      native({ slug: "gpt-5.5", priority: 7, visibility: "hide" }),
       native({ slug: "gpt-5.4", priority: 16, visibility: "hide" }),
     ],
   };
@@ -116,11 +116,11 @@ describe("catalog merge", () => {
     assert.equal(ollama.support_verbosity, false);
   });
 
-  it("lists sol, terra, luna, then spawnable 0731 and hides the rest", () => {
+  it("lists upstream-visible native rows before configured Ollama rows", () => {
     const merged = mergeCatalog(bundled(), tags, {
       spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:0731-cloud"],
     });
-    const top = listVisibleTopSlugs(merged.models);
+    const top = listVisibleSlugs(merged.models);
     assert.deepEqual(top, [
       "gpt-5.6-sol",
       "gpt-5.6-terra",
@@ -131,6 +131,40 @@ describe("catalog merge", () => {
     const hiddenOllama = merged.models.find((model) => model.slug === "ollama/deepseek-v4-flash:cloud");
     assert.equal(hiddenNative?.visibility, "hide");
     assert.equal(hiddenOllama?.visibility, "hide");
+  });
+
+  it("automatically lists a newly bundled upstream-visible native model", () => {
+    const source = bundled();
+    source.models.push(native({ slug: "gpt-next-codex", priority: 0, visibility: "list" }));
+    const merged = mergeCatalog(source, tags, {
+      spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:0731-cloud"],
+    });
+    assert.deepEqual(listVisibleSlugs(merged.models), [
+      "gpt-next-codex",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "ollama/deepseek-v4-flash:0731-cloud",
+    ]);
+  });
+
+  it("applies exact native include and exclude overrides with exclusion winning", () => {
+    const source = bundled();
+    source.models.push(native({ slug: "gpt-future-state", priority: 8, visibility: "preview" }));
+    const merged = mergeCatalog(source, tags, {
+      spawnableOllamaSlugs: [],
+      nativeInclude: ["gpt-5.5", "gpt-5.6-luna"],
+      nativeExclude: ["gpt-5.6-luna"],
+    });
+    assert.deepEqual(listVisibleSlugs(merged.models), [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.5",
+    ]);
+    assert.equal(
+      merged.models.find((model) => model.slug === "gpt-future-state")?.visibility,
+      "preview",
+    );
   });
 
   it("keeps original bundled fields on native rows except rewritten priority", () => {
@@ -178,7 +212,7 @@ describe("catalog merge", () => {
     );
     assert.equal(entry.default_reasoning_level, "max");
     assert.equal(entry.visibility, "list");
-    assert.deepEqual(listVisibleTopSlugs(merged.models), [
+    assert.deepEqual(listVisibleSlugs(merged.models), [
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -368,7 +402,7 @@ describe("catalog merge", () => {
   });
 
   it("does not pad the picker with gpt-5.5 when gpt-5.6 is absent", () => {
-    const priorities = assignFeaturedPriorities(
+    const priorities = assignPickerPriorities(
       bundled().models,
       ["deepseek-v4-flash:0731-cloud"],
       ["ollama/deepseek-v4-flash:0731-cloud"],
@@ -384,7 +418,7 @@ describe("catalog merge", () => {
     const merged = mergeCatalog(bundled(), tags, {
       spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:cloud"],
     });
-    const top = listVisibleTopSlugs(merged.models);
+    const top = listVisibleSlugs(merged.models);
     assert.equal(top.includes("ollama/deepseek-v4-flash:cloud"), true);
     assert.equal(top.includes("ollama/deepseek-v4-flash:0731-cloud"), false);
     const extra = merged.models.find((model) => model.slug === "ollama/deepseek-v4-flash:0731-cloud");
@@ -392,17 +426,29 @@ describe("catalog merge", () => {
     assert.equal(extra.visibility, "hide");
   });
 
-  it("keeps gpt-5.6-sol listed when multiple Ollama models are spawnable", () => {
-    const merged = mergeCatalog(bundled(), tags, {
-      spawnableOllamaSlugs: ["ollama/deepseek-v4-flash:cloud", "ollama/deepseek-v4-flash:0731-cloud"],
+  it("lists every configured Ollama model in configured order beyond five picker rows", () => {
+    const merged = mergeCatalog(bundled(), [
+      ...tags,
+      {
+        name: "glm-5.3-flash:cloud",
+        capabilities: ["completion", "tools", "thinking"],
+        details: { context_length: 1048576 },
+      },
+    ], {
+      spawnableOllamaSlugs: [
+        "ollama/deepseek-v4-flash:cloud",
+        "ollama/deepseek-v4-flash:0731-cloud",
+        "ollama/glm-5.3-flash:cloud",
+      ],
     });
-    const top = listVisibleTopSlugs(merged.models);
+    const top = listVisibleSlugs(merged.models);
     assert.deepEqual(top, [
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "ollama/deepseek-v4-flash:cloud",
       "ollama/deepseek-v4-flash:0731-cloud",
+      "ollama/glm-5.3-flash:cloud",
     ]);
   });
 
@@ -450,7 +496,7 @@ describe("catalog merge", () => {
     assert.equal(deepseek.visibility, "list");
     assert.equal(deepseek.priority, 3);
     assert.equal(extra?.visibility, "hide");
-    assert.deepEqual(listVisibleTopSlugs(fallback.models), [
+    assert.deepEqual(listVisibleSlugs(fallback.models), [
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -460,6 +506,16 @@ describe("catalog merge", () => {
       fallback.models.some((model) => model.slug === "ollama/glm-5.3-flash:cloud"),
       false,
     );
+  });
+
+  it("applies native visibility overrides while rebuilding a discovery fallback", () => {
+    const previous = mergeCatalog(bundled(), tags);
+    const fallback = mergeCatalogWithFallback(bundled(), [], previous, true, {
+      nativeInclude: ["gpt-5.5"],
+      nativeExclude: ["gpt-5.6-luna"],
+    });
+    assert.equal(fallback.models.find((model) => model.slug === "gpt-5.5")?.visibility, "list");
+    assert.equal(fallback.models.find((model) => model.slug === "gpt-5.6-luna")?.visibility, "hide");
   });
 
   it("advertises supports_search_tool on Ollama rows only when opted in", () => {

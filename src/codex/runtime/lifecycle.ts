@@ -41,6 +41,7 @@ import { clearConversationState } from "../state/store.js";
 import { isPidAlive, ownStartKey, processStartKey, reapChild } from "../../core/process-info.js";
 import type { CatalogFile } from "../types.js";
 import { isRecord } from "../../core/json.js";
+import { createPrivateRotatingLogWriter, type PrivateLogWriter } from "./log-fd.js";
 
 export { isCobProcess } from "../../core/process-info.js";
 export { adoptLock, heldLockToken } from "../../core/lock.js";
@@ -425,6 +426,7 @@ export function restrictExperimentalToIsolatedHome(cob: CobFileConfig, liveHome:
 export async function serveForeground(opts: StartOptions = {}): Promise<void> {
   const paths = opts.paths ?? resolvePaths();
   const handoffToken = process.env.COB_LOCK_TOKEN;
+  let detachedLog: PrivateLogWriter | undefined;
   const boot = async () => {
     const existing = readRuntime(paths);
     if (existing && existing.pid !== process.pid && (await isHealthyRuntime(existing))) {
@@ -433,6 +435,12 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
     if (existing && !isPidAlive(existing.pid)) {
       unlinkIfExists(paths.pid);
       unlinkIfExists(paths.runtime);
+    }
+    // Only a detached child that has passed the healthy-runtime check owns a
+    // fresh log. This keeps repeated `cob start` and failed preflight paths
+    // from truncating an existing human log.
+    if (process.env.COB_DETACHED_LOG === "1") {
+      detachedLog = installDetachedLogWriter(paths.log);
     }
     const snapshot = snapshotOverlays(paths);
     let server: Awaited<ReturnType<typeof listenGateway>> | undefined;
@@ -492,26 +500,62 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
   };
 
   let prepared: Awaited<ReturnType<typeof boot>>;
-  if (handoffToken) {
-    adoptLock(paths.lock, handoffToken);
-    try {
+  try {
+    if (handoffToken) {
+      adoptLock(paths.lock, handoffToken);
+      try {
+        prepared = await boot();
+      } finally {
+        releaseLock(paths.lock);
+      }
+    } else if (opts.locked) {
       prepared = await boot();
-    } finally {
-      releaseLock(paths.lock);
+    } else {
+      prepared = await withCobLock(paths, boot);
     }
-  } else if (opts.locked) {
-    prepared = await boot();
-  } else {
-    prepared = await withCobLock(paths, boot);
-  }
 
-  await new Promise<void>((resolve) => {
-    const shutdown = () => {
-      prepared.server.close(() => resolve());
-    };
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
-  });
+    await new Promise<void>((resolve) => {
+      const shutdown = () => {
+        prepared.server.close(() => {
+          detachedLog?.close();
+          resolve();
+        });
+      };
+      process.once("SIGTERM", shutdown);
+      process.once("SIGINT", shutdown);
+    });
+  } catch (error) {
+    detachedLog?.close();
+    throw error;
+  }
+}
+
+/** Route detached child console output through the bounded file writer. */
+function installDetachedLogWriter(logPath: string): PrivateLogWriter {
+  const writer = createPrivateRotatingLogWriter(logPath, true);
+  const stdout = process.stdout;
+  const stderr = process.stderr;
+  const originalStdout = stdout.write.bind(stdout);
+  const originalStderr = stderr.write.bind(stderr);
+  const write = (
+    chunk: string | Uint8Array,
+    encodingOrCallback?: BufferEncoding | ((error?: Error) => void),
+    maybeCallback?: (error?: Error) => void,
+  ): boolean => {
+    writer.write(chunk);
+    if (typeof encodingOrCallback === "function") encodingOrCallback();
+    else maybeCallback?.();
+    return true;
+  };
+  stdout.write = write as typeof stdout.write;
+  stderr.write = write as typeof stderr.write;
+  const close = writer.close.bind(writer);
+  writer.close = () => {
+    stdout.write = originalStdout;
+    stderr.write = originalStderr;
+    close();
+  };
+  return writer;
 }
 
 export async function stopGateway(paths: CobPaths = resolvePaths(), opts?: { locked?: boolean }): Promise<boolean> {

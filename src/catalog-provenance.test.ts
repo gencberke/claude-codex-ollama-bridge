@@ -7,7 +7,7 @@ import { realpathSync } from "node:fs";
 import {
   LIVE_DESKTOP_RESTART_HINT,
   assessCatalogProvenance,
-  assessV1Roster,
+  assessConfiguredModels,
   ollamaDiscoveryEvidence,
   parseCatalogMetadata,
   parseCatalogProvenance,
@@ -626,8 +626,8 @@ describe("Ollama discovery evidence in the sidecar", () => {
   });
 });
 
-describe("v1 roster capacity", () => {
-  it("warns at zero headroom and names omitted configured slugs in order", () => {
+describe("configured model visibility", () => {
+  it("keeps every configured model visible beyond five picker rows", () => {
     const catalog: CatalogFile = {
       models: [
         { slug: "gpt-5.6-sol", visibility: "list", priority: 0 },
@@ -638,13 +638,17 @@ describe("v1 roster capacity", () => {
         { slug: "ollama/extra:cloud", visibility: "list", priority: 21 },
       ],
     };
-    const roster = assessV1Roster(catalog, [
+    const assessment = assessConfiguredModels(catalog, [
       "ollama/deepseek-v4-flash:0731-cloud",
       "ollama/deepseek-v4-flash:cloud",
       "ollama/extra:cloud",
     ]);
-    assert.equal(roster.headroom, 0);
-    assert.equal(roster.ollamaSlots, 2);
-    assert.deepEqual(roster.omitted, ["ollama/extra:cloud"]);
+    assert.equal(assessment.listed.length, 6);
+    assert.deepEqual(assessment.configured, [
+      "ollama/deepseek-v4-flash:0731-cloud",
+      "ollama/deepseek-v4-flash:cloud",
+      "ollama/extra:cloud",
+    ]);
+    assert.deepEqual(assessment.missing, []);
   });
 });
