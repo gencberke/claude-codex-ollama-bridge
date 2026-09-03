@@ -24,4 +24,6 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <key>LSUIElement</key><true/>
 </dict></plist>
 PLIST
+/usr/bin/codesign --force --sign - --identifier dev.gencberke.cobmenu "$APP_DIR"
+/usr/bin/codesign --verify --deep --strict "$APP_DIR"
 echo "$APP_DIR"

@@ -8,6 +8,17 @@ untagged preview is valid. How to cut a release: [RELEASE.md](./docs/RELEASE.md)
 Ship decisions still follow live traces in [LIVE-TESTING.md](./docs/LIVE-TESTING.md),
 not this file.
 
+## Unreleased
+
+- Make the repo-developer menu panel derive its icon from the authoritative
+  overall status, cache validation of an unchanged `cob` executable, and load
+  the three-line recent log summary off the main thread from a smaller tail.
+- Replace the legacy gateway controls with compact hover-responsive action
+  cards and add native macOS help text for Start, Stop, Sync, and Verify.
+- Use Swift Testing so a missing XCTest installation cannot silently turn the
+  menu test command into a successful zero-test run. Ad-hoc sign and strictly
+  verify the assembled development app bundle.
+
 ## 0.3.1 — 2026-09-03
 
 Codex-scoped catalog/config and repo-developer menu-panel cut. The exact

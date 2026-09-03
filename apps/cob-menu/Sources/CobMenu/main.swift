@@ -6,6 +6,7 @@ import SwiftUI
 
 let maxCommandOutput = 64 * 1024
 let maxLogBytes = 512 * 1024
+let maxLogSummaryBytes = 32 * 1024
 let maxLogLines = 2_000
 
 @main
@@ -144,19 +145,36 @@ struct CobPopover: View {
                 Metric(label: "PID", value: controller.gatewayPID)
                 Metric(label: "Catalog", value: controller.catalogFreshness)
             }
-            HStack {
-                Button { controller.run("start") } label: { Label("Start", systemImage: "play.fill") }
-                    .disabled(controller.busy || controller.isRunning)
-                Button { controller.run("stop") } label: { Label("Stop", systemImage: "stop.fill") }
-                    .disabled(controller.busy || !controller.isRunning)
-                Spacer()
-                Button { controller.run("sync") } label: { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
-                    .disabled(controller.busy)
-                Button { controller.verifyState() } label: { Label("Verify", systemImage: "checkmark.shield") }
-                    .disabled(controller.busy)
+            HStack(spacing: 8) {
+                GatewayActionButton(
+                    title: "Start",
+                    icon: "play.fill",
+                    help: "Start the cob Codex gateway.",
+                    tint: .green,
+                    disabled: controller.busy || controller.isRunning
+                ) { controller.run("start") }
+                GatewayActionButton(
+                    title: "Stop",
+                    icon: "stop.fill",
+                    help: "Stop the running cob Codex gateway.",
+                    tint: .red,
+                    disabled: controller.busy || !controller.isRunning
+                ) { controller.run("stop") }
+                GatewayActionButton(
+                    title: "Sync",
+                    icon: "arrow.triangle.2.circlepath",
+                    help: "Refresh the model catalog from Codex and Ollama.",
+                    tint: .blue,
+                    disabled: controller.busy
+                ) { controller.run("sync") }
+                GatewayActionButton(
+                    title: "Verify",
+                    icon: "checkmark.shield.fill",
+                    help: "Check stored cob state integrity without changing it.",
+                    tint: .purple,
+                    disabled: controller.busy
+                ) { controller.verifyState() }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
         .padding(16)
     }
@@ -239,6 +257,47 @@ private struct Metric: View {
             Text(value).font(.system(size: 12, weight: .medium, design: .rounded)).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct GatewayActionButton: View {
+    let title: String
+    let icon: String
+    let help: String
+    let tint: Color
+    let disabled: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 25, height: 25)
+                    .background(tint.opacity(0.13), in: Circle())
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .background(
+                Color.primary.opacity(isHovering && !disabled ? 0.075 : 0.035),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.primary.opacity(isHovering && !disabled ? 0.14 : 0.08), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.42 : 1)
+        .help(help)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -456,14 +515,15 @@ final class CobController: ObservableObject {
     private var draftNativeInclude: [String] = []
     private var draftNativeExclude: [String] = []
     private var cobPath = CobPathSelectionState()
+    private var validatedCobIdentity: CobExecutableIdentity?
     private var logWindowController: NSWindowController?
 
     deinit { timer?.invalidate() }
 
     var statusKind: String {
         guard let status else { return "attention" }
-        if status.gateway.healthy && status.catalog.freshness == "fresh" { return "healthy" }
-        if !status.gateway.running { return "stopped" }
+        if status.kind == "ok" { return "healthy" }
+        if status.kind == "ready", !status.gateway.running { return "stopped" }
         return "attention"
     }
     var statusSummary: String { status?.kind.capitalized ?? "Checking…" }
@@ -652,10 +712,17 @@ final class CobController: ObservableObject {
         busy = true
         resolveCobPath { [weak self] path in
             guard let self else { return }
+            let identity = CobExecutableIdentity(path: path)
+            let versionAlreadyValidated = identity != nil && identity == self.validatedCobIdentity
             DispatchQueue.global(qos: .utility).async {
-                let version = CobProcess.run(path: path, arguments: ["version"], stdin: nil)
-                let versionText = String(decoding: version.stdout, as: UTF8.self)
-                let validVersion = version.status == 0 && versionText.hasPrefix("cob ")
+                let validVersion: Bool
+                if versionAlreadyValidated {
+                    validVersion = true
+                } else {
+                    let version = CobProcess.run(path: path, arguments: ["version"], stdin: nil)
+                    let versionText = String(decoding: version.stdout, as: UTF8.self)
+                    validVersion = version.status == 0 && versionText.hasPrefix("cob ")
+                }
                 let result = validVersion
                     ? CobProcess.run(path: path, arguments: arguments, stdin: stdin)
                     : CobProcess.Result(status: 1, stdout: Data(), stderr: Data())
@@ -665,11 +732,14 @@ final class CobController: ObservableObject {
                         self.invalidateCachedCobPath(path)
                         self.canChooseCob = true
                         self.errorMessage = "Selected cob executable failed version validation."
-                    } else if result.status != 0 {
+                    } else {
+                        self.validatedCobIdentity = identity
+                    }
+                    if validVersion && result.status != 0 {
                         let detail = String(decoding: result.stderr.prefix(300), as: UTF8.self)
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         self.errorMessage = detail.isEmpty ? "cob command failed (status \(result.status))." : detail
-                    } else if updateStatus {
+                    } else if validVersion && updateStatus {
                         do {
                             self.status = try JSONDecoder().decode(StatusDocument.self, from: result.stdout)
                             self.errorMessage = nil
@@ -751,7 +821,12 @@ final class CobController: ObservableObject {
     func loadRecentLogSummary() {
         let path = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/cob-gateway.log")
-        recentLogSummary = BoundedLog.summary(current: path.path, archive: "\(path.path).1")
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let summary = BoundedLog.summary(current: path.path, archive: "\(path.path).1")
+            DispatchQueue.main.async {
+                self?.recentLogSummary = summary
+            }
+        }
     }
 
     func startLogWatching() {
@@ -903,6 +978,7 @@ final class CobController: ObservableObject {
 
     private func invalidateCachedCobPath(_ path: String) {
         cobPath.clearIf(path)
+        validatedCobIdentity = nil
         let defaults = UserDefaults.standard
         if defaults.string(forKey: "cob.cliPath") == path {
             defaults.removeObject(forKey: "cob.cliPath")
@@ -971,10 +1047,21 @@ enum BoundedLog {
     }
 
     static func read(current: String, archive: String) -> String {
+        read(current: current, archive: archive, byteLimit: maxLogBytes)
+    }
+
+    static func summary(current: String, archive: String) -> String {
+        read(current: current, archive: archive, byteLimit: maxLogSummaryBytes)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(3)
+            .joined(separator: "\n")
+    }
+
+    private static func read(current: String, archive: String, byteLimit: Int) -> String {
         // Read only tails from newest to oldest. The viewer never loads an
         // unbounded file, and the archive cannot displace a newer active tail.
         var chunks: [Data] = []
-        var remaining = maxLogBytes
+        var remaining = byteLimit
         for file in [current, archive] {
             guard remaining > 0, let tail = boundedTail(path: file, limit: remaining), !tail.isEmpty else { continue }
             chunks.append(tail)
@@ -985,13 +1072,6 @@ enum BoundedLog {
         let lines = String(decoding: data, as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false)
         return lines.suffix(maxLogLines).joined(separator: "\n")
-    }
-
-    static func summary(current: String, archive: String) -> String {
-        read(current: current, archive: archive)
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .suffix(3)
-            .joined(separator: "\n")
     }
 
     private static func boundedTail(path: String, limit: Int) -> Data? {
@@ -1190,5 +1270,24 @@ struct CobPathSelectionState {
 
     mutating func clearIf(_ invalidPath: String) {
         if cachedPath == invalidPath { cachedPath = nil }
+    }
+}
+
+struct CobExecutableIdentity: Equatable {
+    let path: String
+    let inode: UInt64
+    let size: UInt64
+    let modified: Date
+
+    init?(path: String) {
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolved),
+              let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let size = (attributes[.size] as? NSNumber)?.uint64Value,
+              let modified = attributes[.modificationDate] as? Date else { return nil }
+        self.path = resolved
+        self.inode = inode
+        self.size = size
+        self.modified = modified
     }
 }
