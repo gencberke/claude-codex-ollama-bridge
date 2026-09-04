@@ -8,6 +8,32 @@ Current live version, health, overlay, workspace, and catalog authority are
 recorded only in [STATUS.md](../STATUS.md). This file records release/install
 events and the rollback procedure.
 
+Completed 0.3.3 installation event (2026-09-04): the working tree was versioned
+as 0.3.3 and passed `npx tsc --noEmit`, 804 Node tests (800 pass, 4 intentional
+skips), and `git diff --check`. Exactly one npm artifact was packed:
+`codex-ollama-bridge-0.3.3.tgz`, 92 entries, 200,584 bytes, SHA-256
+`e3a111a3cc53b1217a771d619bdfdfa536fc4d8193fa0a22080331bd9f33d480`. Tests,
+harnesses, `gate6h`, `eval-*`, sources, IDE files, and the separately built
+menu app are absent. The user installed it globally and started it with
+`COB_DEV_MODE=1`; `cob status` reported release 0.3.3 (global), health `ok`,
+dev mode on, and the plaintext wire armed. Its source checkpoint is **not
+committed**: `RELEASE.md`'s basic cut does not require a commit and none was
+authorized. No tag or GitHub release. Do not repack 0.3.3 with different bytes.
+
+Completed 0.3.2 installation event (2026-09-04): same gates at 803 Node tests
+(799 pass, 4 skips). Artifact `codex-ollama-bridge-0.3.2.tgz`, 92 entries,
+199,522 bytes, SHA-256
+`a0893e950731054c405f5da5d1cd20229d95104e86a50ed9f9701c953532f802`. Installed
+globally and started with the plaintext wire initially disarmed, then armed
+with a pinned digest after a clean post-install status. Superseded by 0.3.3 the
+same day; history/rollback only. Do not repack 0.3.2 with different bytes.
+
+Rollback from either 0.3.2 or 0.3.3 is `npm install -g
+./codex-ollama-bridge-0.3.1.tgz` followed by `cob start`; that artifact still
+hashes to its recorded SHA-256
+`0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2` and its
+source checkpoint is on `master`.
+
 Completed 0.3.1 installation-candidate event (2026-09-03, 16:57 local): the
 working tree was versioned as 0.3.1 and passed `npx tsc --noEmit`, 802 Node
 tests (798 pass, 4 intentional skips), and six Swift menu-app tests. Exactly

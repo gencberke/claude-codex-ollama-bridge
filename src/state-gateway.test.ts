@@ -11,6 +11,7 @@ import { acquireLock, releaseLock } from "./core/lock.js";
 import { ollamaCompactHandoffSkeleton, ollamaSummarizerInstructionCopyCount } from "./codex/compaction/summary.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
+import type { GatewayDiagnosticEventV1 } from "./codex/diagnostic-event.js";
 
 const CATALOG: CatalogFile = {
   models: [{ slug: "codex-mini" }, { slug: "ollama/test" }],
@@ -817,7 +818,7 @@ describe("gateway durable Ollama state", () => {
         body: JSON.stringify({ model: "ollama/test", stream: true, input: [{ type: "compaction_trigger" }] }),
       });
       const body = await response.text();
-      const errorIndex = body.indexOf('"code":"upstream_stream_error"');
+      const errorIndex = body.indexOf('"code":"native_compaction_checkpoint_failed"');
       const doneIndices = [...body.matchAll(/data: \[DONE\]/g)].map((match) => match.index ?? -1);
       assert.equal(response.status, 502);
       assert.equal(body.includes("gAAAAA-compact-secret"), false);
@@ -1182,12 +1183,16 @@ describe("gateway Ollama response terminal transaction", () => {
   }
 
   it("relays a typed Ollama SSE error terminal once and never completes", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const events: GatewayDiagnosticEventV1[] = [];
     const stateDir = mkdtempSync(join(tmpdir(), "cob-sse-typed-error-"));
     const port = await freePort();
     const server = await listenGateway({
       port,
       catalog: CATALOG,
       stateDir,
+      diagnosticSink: { write: (event) => events.push(event) },
       ollamaFetch: async () =>
         new Response(
           `${deltaFrame}${typedErrorFrame}${doneFrame}`,
@@ -1202,14 +1207,23 @@ describe("gateway Ollama response terminal transaction", () => {
       });
       const body = await response.text();
       assert.equal(response.status, 200);
-      // The ordinary prefix is relayed live; the typed error is the single
-      // terminal and a success [DONE] never follows it.
-      assert.equal(body.split("upstream exploded").length - 1, 1);
+      // The ordinary prefix is relayed live; the typed error is the single,
+      // cob-owned terminal and a success [DONE] never follows it.
+      assert.equal(body.includes("upstream exploded"), false);
+      assert.equal(body.includes("ollama_response_error"), true);
       assert.equal([...body.matchAll(/data: \[DONE\]/g)].length, 0);
       assert.equal(body.includes("one"), true);
       assert.equal(existsSync(join(stateDir, "checkpoints")), false);
+      const end = events.find((event) => event.kind === "request_end") as
+        | Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>
+        | undefined;
+      assert.equal(end?.terminal, "non_success");
+      assert.equal(end?.non_success_kind, "error");
+      assert.equal(end?.error_code, "ollama_response_error");
     } finally {
       await close(server);
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
     }
   });
 

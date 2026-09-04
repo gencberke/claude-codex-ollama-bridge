@@ -19,7 +19,10 @@ import {
   recordGatewayRequestEnd,
   type GatewayDiagnosticEventV1,
 } from "./codex/diagnostic-event.js";
-import { DiagnosticLog, DIAGNOSTIC_LOG_MAX_BYTES } from "./codex/runtime/diagnostic-log.js";
+import {
+  DiagnosticLog,
+  DIAGNOSTIC_LOG_MAX_BYTES,
+} from "./codex/runtime/diagnostic-log.js";
 import { summarizeRequest } from "./codex/request-metrics.js";
 
 const SENSITIVE = [
@@ -109,8 +112,13 @@ describe("gateway diagnostic events", () => {
         provider_attempts: 1,
         gateway_retry_count: 0,
       });
+      const snapshot = log.snapshot();
       log.close();
       assert.equal(readFileSync(target, "utf8"), "untouched\n");
+      assert.equal(snapshot.state, "failed");
+      assert.equal(snapshot.dropped_event_count, 1);
+      assert.equal(snapshot.write_failure_count, 1);
+      assert.equal(snapshot.last_failure_code, "open_failed");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -149,6 +157,7 @@ describe("gateway diagnostic events", () => {
       symlinkSync(external, `${path}.1`);
       const log = new DiagnosticLog(path);
       log.write(event);
+      const snapshot = log.snapshot();
       log.close();
       const persisted = readFileSync(path, "utf8");
       assert.equal(persisted.includes(hostile), false);
@@ -156,6 +165,39 @@ describe("gateway diagnostic events", () => {
       assert.equal(statSync(path).size <= DIAGNOSTIC_LOG_MAX_BYTES, true);
       assert.equal(statSync(`${path}.1`).size <= DIAGNOSTIC_LOG_MAX_BYTES, true);
       assert.equal(readFileSync(external, "utf8"), "must-survive\n");
+      assert.equal(snapshot.rotation_count, 1);
+      assert.equal(snapshot.discarded_backup_count, 1);
+      assert.equal(snapshot.state, "degraded");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an oversized diagnostic event instead of dropping it silently", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-diagnostic-oversize-"));
+    const path = join(dir, "cob-diagnostics.jsonl");
+    try {
+      const log = new DiagnosticLog(path);
+      log.write({
+        schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+        kind: "compact_success",
+        transcript_format_version: 2,
+        latency_ms: 1,
+        summary_bytes: 1,
+        effort: "high",
+        sections: Object.fromEntries(
+          Array.from({ length: 2_000 }, (_value, index) => [`section_${index}`, index]),
+        ),
+        group_sha8: "abcd1234",
+        attempt: 1,
+      });
+      const snapshot = log.snapshot();
+      log.close();
+      assert.equal(readFileSync(path, "utf8"), "");
+      assert.equal(snapshot.state, "degraded");
+      assert.equal(snapshot.dropped_event_count, 1);
+      assert.equal(snapshot.oversize_drop_count, 1);
+      assert.equal(snapshot.write_failure_count, 0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -195,6 +237,14 @@ describe("gateway diagnostic events", () => {
       compactUsageEventFromEnvelope({ usage: { input_tokens: 4, output_tokens: 2 } }),
       { input_tokens: 4, output_tokens: 2 },
     );
+  });
+
+  it("uses one content-free run digest across request events", () => {
+    const first = createGatewayRequestContext("/v1/responses");
+    const second = createGatewayRequestContext("/v1/responses");
+    assert.match(first.run_sha8, /^[a-f0-9]{8}$/);
+    assert.equal(first.run_sha8, second.run_sha8);
+    assert.equal(recordGatewayRequestEnd(first, 200).run_sha8, first.run_sha8);
   });
 
   it("classifies invalid Ollama bodies without retaining content", () => {

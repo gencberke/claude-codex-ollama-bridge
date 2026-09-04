@@ -111,6 +111,19 @@ describe("G26 sidecar evaluator", () => {
     ]);
   });
 
+  it("does not pair requests across process runs that reuse pid and sequence", () => {
+    const receipt = evaluateG26Sidecar(
+      [
+        { ...start(1, "fp-a"), run_sha8: "run-a" },
+        { ...end(1, { request_fp8: "fp-b" }), run_sha8: "run-b" },
+      ],
+      { lane: "A", from: FROM, to: TO, model: MODEL, expectedHostedDrop: 1 },
+    );
+    assert.equal(receipt.requests.starts_without_end, 1);
+    assert.equal(receipt.requests.ends_without_start, 1);
+    assert.equal(receipt.reason_codes.includes("unmatched_request_pair"), true);
+  });
+
   it("requires explicit lane boundaries, model, hosted-drop expectation, and output", () => {
     const args = parseG26Args([
       "--input", "diagnostic.jsonl",

@@ -22,6 +22,7 @@ import {
   type OllamaTraversalBudget,
 } from "./bounded-json.js";
 import type { JsonObject } from "../core/json.js";
+import type { GatewayNonSuccessKind } from "./diagnostic-event.js";
 import { isRecord } from "../core/json.js";
 
 const REVIEWED_CALL = new Set<string>(OLLAMA_CLIENT_EXECUTED_CALL_KINDS);
@@ -214,6 +215,7 @@ export type OllamaTerminalTrack = {
   phase: OllamaSsePhase;
   heldTerminal?: JsonObject;
   completedCandidate?: JsonObject;
+  nonSuccessKind?: GatewayNonSuccessKind;
   contradictoryFrames: number;
   doneTrailers: number;
   malformed: boolean;
@@ -275,9 +277,49 @@ export function observeOllamaSseFrame(
   if (isOllamaSseNonSuccessFrame(value)) {
     track.phase = "held-non-success";
     track.heldTerminal = value;
+    track.nonSuccessKind = classifyOllamaNonSuccessKind(value);
     return "withhold";
   }
   return "relay";
+}
+
+function classifyOllamaNonSuccessKind(value: JsonObject): GatewayNonSuccessKind {
+  if (value.type === "response.failed") return "failed";
+  if (value.type === "response.incomplete") return "incomplete";
+  return "error";
+}
+
+export function ollamaNonSuccessCode(kind: GatewayNonSuccessKind): string {
+  return kind === "failed"
+    ? "ollama_response_failed"
+    : kind === "incomplete"
+      ? "ollama_response_incomplete"
+      : "ollama_response_error";
+}
+
+/**
+ * Preserve the provider terminal kind and structural fields while replacing
+ * untrusted provider error text/code with one bounded cob-owned error.
+ */
+export function sanitizeOllamaNonSuccessTerminal(
+  value: JsonObject,
+  kind: GatewayNonSuccessKind,
+): JsonObject {
+  const error = {
+    type: "server_error",
+    code: ollamaNonSuccessCode(kind),
+    message: kind === "incomplete"
+      ? "Ollama response was incomplete; retry or resend the full context."
+      : "Ollama response failed; retry or resend the full context.",
+  };
+  if (kind === "error") return { ...value, error };
+  return {
+    ...value,
+    response: {
+      ...(isRecord(value.response) ? value.response : {}),
+      error,
+    },
+  };
 }
 
 function isOllamaSseNonSuccessFrame(value: unknown): value is JsonObject {

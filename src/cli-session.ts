@@ -46,6 +46,7 @@ const SESSION_COMMANDS = new Set([
   "sync",
   "smoke",
   "agents",
+  "diagnostics",
   "state verify",
   "config show",
   "config apply",
@@ -77,7 +78,7 @@ function flagApplies(flag: string, surface: CobSurface, command: string): boolea
       return surface === "codex" && (command === "start" || command === "serve");
     case "--json":
       return surface === "codex" &&
-        (command === "status" || command === "state verify" || command === "config show" || command === "config apply");
+        (command === "status" || command === "diagnostics" || command === "state verify" || command === "config show" || command === "config apply");
     default:
       return false;
   }

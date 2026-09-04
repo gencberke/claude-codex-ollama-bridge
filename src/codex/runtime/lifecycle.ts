@@ -363,7 +363,7 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
       ollamaModel: opts.compaction?.ollamaModel,
       ollamaEffort: opts.compaction?.ollamaEffort,
     });
-  const cob = restrictExperimentalToIsolatedHome(resolvedCob, isLiveCodexHome(paths.codexHome));
+  const cob = restrictExperimentalOnLiveHome(resolvedCob, isLiveCodexHome(paths.codexHome));
   const spawnable = resolveSpawnableOllamaSlugs(cob);
   const before = readRootConfig(paths);
   const synced = await syncCatalogControlPlane({
@@ -398,14 +398,19 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
   };
 }
 
-/** Isolated-only experiments are never persisted or armed in the live Desktop home. */
-export function restrictExperimentalToIsolatedHome(cob: CobFileConfig, liveHome: boolean): CobFileConfig {
+/**
+ * Gate 5 `apply_patch` stays isolated-only and is never armed in the live
+ * Desktop home. Native plaintext spawn is opt-in on the live home, but only
+ * with a pinned schema digest: an armed-but-unpinned policy rejects every
+ * fingerprinted-model turn, which would take the Desktop gateway down instead
+ * of leaving the request unrewritten.
+ */
+export function restrictExperimentalOnLiveHome(cob: CobFileConfig, liveHome: boolean): CobFileConfig {
   if (!liveHome) return cob;
   const applyPatchOn = cob.catalog?.applyPatch === true;
   const spawn = cob.experimental?.nativePlaintextSpawn;
-  const spawnOn = spawn?.enabled === true;
-  const spawnDigest = typeof spawn?.schemaSha256 === "string" && spawn.schemaSha256.length > 0;
-  if (!applyPatchOn && !spawnOn && !spawnDigest) return cob;
+  const spawnUnpinned =
+    spawn?.enabled === true && !(typeof spawn.schemaSha256 === "string" && spawn.schemaSha256.length > 0);
   return {
     ...cob,
     catalog: applyPatchOn
@@ -414,11 +419,10 @@ export function restrictExperimentalToIsolatedHome(cob: CobFileConfig, liveHome:
           applyPatch: false,
         }
       : cob.catalog,
-    experimental:
-      spawnOn || spawnDigest
-        ? {
-            nativePlaintextSpawn: { enabled: false },
-          }
+    experimental: spawnUnpinned
+      ? { nativePlaintextSpawn: { enabled: false } }
+      : spawn
+        ? { nativePlaintextSpawn: { ...spawn, degradeOnDrift: true } }
         : cob.experimental,
   };
 }

@@ -1,4 +1,4 @@
-# Status — 2026-09-03 (as of 21:49 +03)
+# Status — 2026-09-04 (as of 14:20 +03)
 
 This file is the current maintainer checkpoint: what is live, what exists only
 in the workspace, what is blocked, and what may happen next. It is not a
@@ -20,43 +20,48 @@ authority for the current live/workspace snapshot.
 ## Current snapshot
 
 This is the sole current live/workspace snapshot authority. The facts below
-are from the latest **real-environment** probe at 2026-09-03 21:49 +03 after
-the user-installed 0.3.1 candidate. A sandboxed
+are from the latest **real-environment** probe at 2026-09-04 14:20 +03 after
+the user-installed 0.3.3 artifact. A sandboxed
 loopback probe can falsely report the gateway as unreachable; live health
 claims require a real-environment `cob status` probe.
 
-| Surface | Current state as of 2026-09-03 21:49 +03 |
+| Surface | Current state as of 2026-09-04 14:20 +03 |
 | --- | --- |
-| Product scope | **cob Codex only.** Direct Ollama main and native GPT parent → Ollama V1 child are the validated product paths. |
-| Live Codex gateway | Global cob **0.3.1**, pid **212**, `127.0.0.1:18790`; real-environment `cob status --json`: health `ok`, overlay `ok`, catalog provenance `fresh` from Desktop `codex-cli 0.153.0-alpha.5`, validators 2, Ollama discovery success. |
-| Live artifact | Exact 0.3.1 installation candidate, 92 entries, 195,596 bytes, SHA-256 `0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`. Installed `dist/cli.js` matches the tar member at `3b5bfec38cdf82f6b80434aee29a9bf5302f73eb6b21a99f93d1179ebf3dd2ed`. The source checkpoint is pushed on `master`; no tag, GitHub release, or completed Desktop UI smoke is claimed. Never repack these bytes. |
-| Prior live artifact | Published 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`; source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. History/rollback only. |
+| Product scope | **cob Codex only.** Direct Ollama main, and a native GPT parent → Ollama child over the plaintext collaboration wire, are the validated product paths. The pre-0.3.2 "native GPT parent → Ollama V1 child" claim held only for a `gpt-5.6-luna` parent; a `gpt-5.6-sol` parent failed 19 of 19 times. |
+| Live Codex gateway | Global cob **0.3.3**, `127.0.0.1:18790`, **dev mode on**, plaintext wire **armed** with the Desktop digest `5e042d4fbf2390b3011d7ec123661cf5c7aa42fb9793e592c3555972f04b56e3`. Health `ok`, overlay `ok`. Catalog provenance is **stale** after Desktop updated itself to `codex-cli 0.153.1`; the fix is `cob sync`, then fully quit and reopen Desktop if catalog bytes change. |
+| Live artifact | Exact 0.3.3 artifact, 92 entries, 200,584 bytes, SHA-256 `e3a111a3cc53b1217a771d619bdfdfa536fc4d8193fa0a22080331bd9f33d480`. Its source is **uncommitted** in the workspace; `RELEASE.md`'s basic cut does not require a commit and none was authorized. No tag or GitHub release. Never repack these bytes. |
+| Prior live artifact | 0.3.2 artifact, 92 entries, 199,522 bytes, SHA-256 `a0893e950731054c405f5da5d1cd20229d95104e86a50ed9f9701c953532f802`. History/rollback only. |
+| Rollback target | 0.3.1 tarball, 92 entries, 195,596 bytes, SHA-256 `0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`; its source checkpoint is pushed on `master`. Rollback is `npm install -g ./codex-ollama-bridge-0.3.1.tgz` then `cob start`. |
+| Published release | 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`; source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. Still the last tagged/GitHub release. |
 | Earlier preview | Burned 0.2.4-preview.0 tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. Its failed G26-B evidence remains historical. |
 | Rollback artifact | Burned 0.2.3 tarball, SHA-256 `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`; history/rollback only. |
-| Source checkout | The 0.3.1 product source is committed and pushed on `master`; its npm runtime was packed and installed. The workspace now has an uncommitted repo-only menu follow-up; its ad-hoc-signed bundle is rebuilt under `apps/cob-menu/.build/app` and running as pid **45901**, but the follow-up is not included in the installed npm tarball. The last tagged/GitHub release remains `v0.3.0` at `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`. |
-| Codex | PATH Codex **0.149.0**; current Desktop catalog producer **0.153.0-alpha.5**. |
-| Ollama | Client/daemon **0.33.2**. The installed 0.3.1 runtime discovers configured Ollama rows without cob's former five-row picker cap; exact availability still follows fresh `/api/tags` evidence. |
-| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned. Current post-install SHA-256: `d8aab0eac10e18a1573db6748b8d05ee07baf121a3ea915c626efcb889caa575`; no before/after 0.3.1 install equality claim is recorded. |
-| Live catalog | Current SHA-256 `7e9a2720055022ee928473fa1f32707f477300db3064ca71edbff31c4277636b`; meta SHA-256 `cd463c5804cd5c83d5d061e0b2ff37c7f3bc58a5a0f5f54302d72753d5cd958c`. Provenance is fresh from Desktop `codex-cli 0.153.0-alpha.5`, validators 2, Ollama discovery success. |
-| Diagnostic sidecar | The mode-0600 canary sidecar remains historical evidence at `~/.codex/cob-diagnostics.jsonl`. The ordinary 0.3.0 restart did not claim a new instrumented canary; structured persistence remains opt-in and default-off. |
-| Live experiments | `apply_patch = false`; `native_plaintext_spawn = false`. Ollama rows remain Multi-Agent V1. |
-| Isolated dev port | No `:18791` listener after the authorized 2026-09-02 P1 cleanup. The temporary workspace gateway was stopped and its diagnostic JSONL removed. |
+| Source checkout | The 0.3.2 and 0.3.3 product source is **uncommitted** on `master`, together with the earlier repo-only menu follow-up and the workspace-only error/dev-mode hardening below. Both artifacts were packed and installed before that hardening. `npx tsc --noEmit` clean; latest `npm test`: 814 pass, 4 documented skips. The last tagged/GitHub release remains `v0.3.0` at `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`. |
+| Workspace error/dev hardening | **Implemented and mock-verified; not packed, installed, restarted, or live-canary tested.** Adds safe JSON/SSE error boundaries, closed request terminals/codes and Ollama non-success subtype, process-run and compaction correlation, observable sidecar loss/rotation health, catalog reload fallback visibility, and `cob diagnostics [--json]`. Contract: [ERROR-HANDLING.md](./docs/ERROR-HANDLING.md). |
+| Codex | PATH Codex **0.149.0**; Desktop **0.153.1**, self-updated mid-session from `0.153.0-alpha.5`. The plaintext wire's digest still matches across that update. |
+| Ollama | Client/daemon **0.33.3**. Configured Ollama rows are discovered without cob's former five-row picker cap; exact availability still follows fresh `/api/tags` evidence. |
+| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned and cob never writes it. Current SHA-256: `226314c5323d6cf3820a4b891abcfc017676d48c3eb1141f8f9f17605ad0a803`. |
+| Live catalog | Current SHA-256 `9f826cabc1e8a61812d5c8c5627d794bff7c231190b71655ee5257981f19729f`; meta SHA-256 `6cb6a25eaa84bb73daffa005bc0f6fef344d9c0dfaac7d552bab737c5a8507df`. Provenance is **stale**: the producer binary identity changed with the Desktop 0.153.1 update. Regenerate with `cob sync`. |
+| Diagnostic sidecar | **Active** at `~/.codex/cob-diagnostics.jsonl` because the live gateway runs with `COB_DEV_MODE=1`. It carries the Gate A and Gate B performance records. Structured persistence remains opt-in and default-off; restarting without the switch returns the gateway to the human log alone. |
+| Live experiments | `apply_patch = false`. `native_plaintext_spawn = true`, pinned to the Desktop digest, user-authorized. Ollama catalog rows remain `multi_agent_version = v1`; a child's actual protocol follows its parent. |
+| Isolated dev port | A workspace gateway may still be listening on `:18791` from the 2026-09-04 canaries (`~/.codex-cob-dev`, dev mode and plaintext wire armed). It is isolated from the live home; stop it with `cob stop --dev` when finished. |
 | cob Claude | No `:18792` listener at the 2026-09-01 23:36 read-only check. Claude feature work and live restart remain frozen pending explicit authorization. |
 
 ## Active scope and invariants
 
 - `cob start` remains the Codex gateway. Do not steal that default for Claude.
-- The shipped orchestration path is V1. Do not advertise Ollama V2, add a cob
-  message queue, or implement `agentControl/*` inside cob.
+- The shipped orchestration path is a native V2 parent driving an Ollama child
+  over the plaintext collaboration wire. Do not advertise Ollama V2 on catalog
+  rows, add a cob message queue, or implement `agentControl/*` inside cob.
 - Do not use `nativeAlias` to impersonate native GPT model ids.
 - cob does not write the user-owned root `~/.codex/config.toml`.
 - Keep 0.2.3 only as the exact rollback/history artifact; do not repack it or
   any historical 0.1.11–0.2.2 artifact.
-- The installed 0.3.1 candidate is Codex-scoped, not a new whole-product or cob
+- The installed 0.3.3 artifact is Codex-scoped, not a new whole-product or cob
   Claude readiness claim. Any next version cut, live replacement, or touch to
   Claude requires separate authorization.
-- Gate 5 `apply_patch` and native-plaintext collaboration remain isolated,
-  default-off experiments; neither is enabled on live 0.3.1.
+- Gate 5 `apply_patch` remains an isolated, default-off experiment. The
+  plaintext collaboration wire is default-off but user-authorized and armed on
+  live 0.3.3, pinned to the Desktop digest.
 - Source tests and workspace fixtures are evidence, not live gold.
 
 ## G26 canary history
@@ -77,11 +82,20 @@ content-free receipts and interpretation boundaries are in the G26 section of
 ## Release checkpoint
 
 The last published source/tag remains the Codex-scoped `v0.3.0` release. The
-exact 0.3.1 installation candidate recorded above is now global and healthy,
-and its source checkpoint is on `master`. Desktop picker/chat and
-menu-driven configuration smoke are still pending; no tag, GitHub
-release, or new Gold claim follows from the status probe alone. Any runtime
-change after this immutable artifact requires a new version.
+exact 0.3.3 artifact recorded above is now global and healthy. Unlike 0.3.1,
+its source checkpoint is **not** committed: `RELEASE.md`'s basic cut does not
+require one and none was authorized. No tag, GitHub release, or new Gold claim
+follows from the status probe alone. Any runtime change after this immutable
+artifact requires a new version.
+
+### 0.3.2 and 0.3.3: plaintext collaboration wire and dev mode
+
+0.3.2 makes a native GPT parent able to hand an Ollama subagent a readable
+task. 0.3.3 adds the development instrumentation that a performance
+investigation of that path needs. Root cause, design decisions, live evidence,
+and the open performance problem are in
+[IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md); that document is the
+handoff for this work and should be read before changing either area.
 
 ### 0.3.1 workspace/install candidate: catalog and menu panel
 
@@ -381,15 +395,15 @@ preview-canary record and is not a production promotion.
 
 | Gate | Disposition | Meaning |
 | --- | --- | --- |
-| Gate 1–3 | Isolated PASS | Exact fingerprinted native-plaintext spawn/send/followup schemas worked in isolation. Not an Ollama V2 product claim. |
+| Gate 1–3 | **LIVE** | The plaintext spawn/send/followup wire is armed on live `:18790` and a Desktop `gpt-5.6-sol` parent drove an Ollama child with a plaintext task, zero Fernet and zero errors. Still not an Ollama V2 catalog claim. |
 | Gate 4 | Isolated PASS | Canonical interrupt leaf worked; no restart/replay claim. |
 | Gate 5 | **NOT GOLD (fresh isolated)** | The latest clean opt-in run created a real Ollama V1 child, but that child emitted no custom call/output and made no filesystem edit. The 2026-08-24 PASS is historical evidence only. Live catalog remains disabled. |
-| Gate 6 | **BLOCKED** | `controller_sequencing_observed`, `transport_unmeasured`. Next work is external Upstream U1, not a cob queue. |
+| Gate 6 | **TRANSPORT PASS** | The gold order spawn → send × 2 in flight → wait → followup ran twice over the plaintext wire with intact nonces and Unicode. `transport_unmeasured` is retired. The parent's own choice to wait between sends was steerable by instruction. Deterministic scheduling without a model turn remains cob-external. |
 | Gate 7 | **FAIL** | `worktree_not_distinct`. |
 | Gate 8-M | Isolated PASS | Same-child continuation survived a mid-flight dev gateway restart. |
 | Gate 8-R | Fixture only | Completed-checkpoint replay scorer exists; no live replay gold. |
 | Gate 9 / G24 | **NOT GOLD / INCONCLUSIVE** | The latest transcript-V2 run produced valid seven-section handoffs, then repeated the same tool-heavy post-compact turn and re-entered compaction until bounded termination. The terminal `codex_exec_failed` was not root cause; no two-continuation gold. |
-| Gate 10 | **FAIL** | The Ollama child had no nested collaboration spawn leaf. |
+| Gate 10 | **FAIL (recheck warranted)** | Recorded reason was that the child had no nested collaboration spawn leaf, but a 2026-09-03 V2 child received developer instructions stating it may spawn sub-agents. Not re-measured. |
 | G26 | **TRANSPORT PASS / FILTER CONFIRMED / AUDIT INCOMPLETE / NOT GOLD** | 0.2.4-preview.1 direct-main and native-parent→V1-child lanes completed 64/64 proper SSE requests with zero invalid JSON, duplicate fingerprints, or cob retries. Required controller/no-progress/agent-local counters remain unavailable. See [LIVE-TESTING.md](./docs/LIVE-TESTING.md). |
 | G11 | PASS | Catalog provenance gate passed on its recorded artifact. |
 | G12 | PASS | Search default and rollback passed on the recorded 0.1.13 artifact. |
@@ -447,16 +461,26 @@ preview-canary record and is not a production promotion.
 
 ## Next decisions
 
-1. **0.3.0 complete:** source commit, workspace gates, single immutable
-   artifact, clean global install, health/models smoke, annotated tag, atomic
-   push, GitHub release, and downloaded-asset equality check all passed.
-2. **Gate 5/G24 rerun:** each real isolated 0731 canary requires separate
+1. **Ollama subagent performance is the open work.** Roughly one Ollama request
+   in five ends `non_success` after streaming about 4 MB for three to four
+   minutes, and those failures consume 65–76% of a subagent run's wall time
+   while being invisible in Codex's own transcript. The proposed next step is a
+   configurable ceiling on the Ollama response stream so a runaway generation
+   fails in seconds. Prefill, prompt caching, reasoning effort, and the tool
+   list are all measured and ruled out as the cause. Full evidence and the
+   reproduction recipe are in
+   [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md) §4.
+2. **`cob sync`** to clear the stale catalog provenance left by the Desktop
+   0.153.1 self-update, then fully quit and reopen Desktop if catalog bytes
+   change.
+3. **Source commit** for 0.3.2/0.3.3 is outstanding and unauthorized. A tag,
+   push, or GitHub release needs separate authorization again.
+4. **Gate 5/G24 rerun:** each real isolated 0731 canary requires separate
    explicit authorization. Results remain isolated evidence unless separately
    promoted by the live-gate standard.
-3. **Gate 6:** wait for or contribute a Codex-side deterministic driver, then
-   remeasure on isolated `:18791` only.
-4. **Next Desktop update:** revalidate picker visibility, the 0731 route, and
-   native-parent → Ollama-V1-child spawn.
+5. **Next Desktop update:** revalidate picker visibility, the 0731 route, and
+   the plaintext wire's digest. `cob status` reports a stale digest with the
+   exact key to update; the wire degrades to passthrough rather than failing.
 
 ## Ownership and recovery
 

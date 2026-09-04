@@ -9,6 +9,7 @@ import { assessDesktopOverlay, loadRootTomlKeys, openaiPortFromToml, summarizeCo
 import { resolvePaths } from "../paths.js";
 import { assessCatalogProvenance, type CatalogFreshness } from "../catalog/provenance.js";
 import type { CobPaths } from "../paths.js";
+import type { DiagnosticLogSnapshot } from "./diagnostic-log.js";
 
 /**
  * Read-only codex status report: runtime health, overlay, and provenance.
@@ -27,6 +28,7 @@ export type StatusReportJson = {
     health?: string;
     port?: number;
     pid?: number;
+    diagnostics?: DiagnosticLogSnapshot;
   };
   overlay: DesktopOverlayState;
   catalog: {
@@ -83,6 +85,9 @@ export async function statusReport(
   }
   let health = "unknown";
   let liveCompaction: string | undefined;
+  let livePlaintextSpawn: string | undefined;
+  let liveDevMode = false;
+  let liveDiagnostics: DiagnosticLogSnapshot | undefined;
   const fetched = await fetchHealthz(runtime.port, runtime.nonce);
   if (!fetched) {
     health = "unreachable";
@@ -101,6 +106,9 @@ export async function statusReport(
         }`;
       }
     }
+    livePlaintextSpawn = describePlaintextSpawn(fetched.body);
+    liveDevMode = isRecord(fetched.body) && fetched.body.dev_mode === true;
+    liveDiagnostics = readDiagnosticLogSnapshot(fetched.body);
   }
   const gatewayHealthy = health === "ok";
   // A runtime record alone is not evidence that the gateway runs: a stale
@@ -119,6 +127,15 @@ export async function statusReport(
   if (runtime.version) {
     details.push(`gateway release: ${runtime.version} (${runtime.installKind ?? "unknown"})`);
   }
+  if (liveDevMode) {
+    details.push(`dev mode: on (per-request diagnostics at ${paths.diagnostics})`);
+  }
+  if (liveDiagnostics) {
+    details.push(describeDiagnosticLog(liveDiagnostics));
+  }
+  if (livePlaintextSpawn) {
+    details.push(livePlaintextSpawn);
+  }
   if (liveCompaction) {
     details.push(`compaction: ${liveCompaction}`);
   } else if (runtime.compaction) {
@@ -134,9 +151,84 @@ export async function statusReport(
     gatewayRunning,
     gatewayPid: runtime.pid,
     gatewayHealth: health,
+    gatewayDiagnostics: liveDiagnostics,
     install,
     liveHome,
   });
+}
+
+/**
+ * Only reported while the wire is armed, so the default line-up is unchanged
+ * for anyone not using it. A stale digest is the one fact an operator has to
+ * act on, so it names the config key and the digest to paste.
+ */
+export function describePlaintextSpawn(body: unknown): string | undefined {
+  if (!isRecord(body) || !isRecord(body.native_plaintext_spawn)) return undefined;
+  const wire = body.native_plaintext_spawn;
+  if (wire.enabled !== true) return undefined;
+  const drift = isRecord(wire.drift) ? wire.drift : undefined;
+  if (!drift) {
+    return `native plaintext spawn: armed${wire.pinned === true ? "" : " (no pinned digest)"}`;
+  }
+  const count = typeof drift.count === "number" ? drift.count : 0;
+  const observed = typeof drift.observed_schema_sha256 === "string" && /^[a-f0-9]{64}$/.test(drift.observed_schema_sha256)
+    ? drift.observed_schema_sha256
+    : undefined;
+  const prefix = `native plaintext spawn: schema drift after ${count} request${count === 1 ? "" : "s"}`;
+  return observed
+    ? `${prefix}; set experimental.native_plaintext_spawn_schema_sha256 = "${observed}" in cob.toml`
+    : `${prefix}; no replacement digest was observed`;
+}
+
+export function describeDiagnosticLog(snapshot: DiagnosticLogSnapshot): string {
+  return (
+    `diagnostics: ${snapshot.state}` +
+    ` dropped=${snapshot.dropped_event_count}` +
+    ` oversize=${snapshot.oversize_drop_count}` +
+    ` failures=${snapshot.write_failure_count}` +
+    ` rotations=${snapshot.rotation_count}` +
+    ` discarded_backups=${snapshot.discarded_backup_count}` +
+    (snapshot.last_failure_code ? ` last_failure=${snapshot.last_failure_code}` : "")
+  );
+}
+
+function readDiagnosticLogSnapshot(body: unknown): DiagnosticLogSnapshot | undefined {
+  if (!isRecord(body) || !isRecord(body.diagnostics)) return undefined;
+  const value = body.diagnostics;
+  if (
+    (value.state !== "active" && value.state !== "degraded" && value.state !== "failed") ||
+    typeof value.fd_open !== "boolean" ||
+    !isNonNegativeInteger(value.dropped_event_count) ||
+    !isNonNegativeInteger(value.oversize_drop_count) ||
+    !isNonNegativeInteger(value.write_failure_count) ||
+    !isNonNegativeInteger(value.rotation_count) ||
+    !isNonNegativeInteger(value.discarded_backup_count)
+  ) {
+    return undefined;
+  }
+  const lastFailure = value.last_failure_code;
+  if (
+    lastFailure !== undefined &&
+    lastFailure !== "open_failed" &&
+    lastFailure !== "rotation_failed" &&
+    lastFailure !== "write_failed"
+  ) {
+    return undefined;
+  }
+  return {
+    state: value.state,
+    fd_open: value.fd_open,
+    dropped_event_count: value.dropped_event_count,
+    oversize_drop_count: value.oversize_drop_count,
+    write_failure_count: value.write_failure_count,
+    rotation_count: value.rotation_count,
+    discarded_backup_count: value.discarded_backup_count,
+    ...(lastFailure === undefined ? {} : { last_failure_code: lastFailure }),
+  };
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 function finishStatusReport(
@@ -152,6 +244,7 @@ function finishStatusReport(
     gatewayRunning: boolean;
     gatewayPid?: number;
     gatewayHealth?: string;
+    gatewayDiagnostics?: DiagnosticLogSnapshot;
     install: ReturnType<typeof detectInstall>;
     liveHome: boolean;
   },
@@ -195,6 +288,7 @@ function finishStatusReport(
       ...(opts.gatewayHealth !== undefined ? { health: opts.gatewayHealth } : {}),
       ...(opts.runtimePort !== undefined ? { port: opts.runtimePort } : {}),
       ...(opts.gatewayPid !== undefined ? { pid: opts.gatewayPid } : {}),
+      ...(opts.gatewayDiagnostics !== undefined ? { diagnostics: opts.gatewayDiagnostics } : {}),
     },
     overlay: overlay.state,
     catalog: {

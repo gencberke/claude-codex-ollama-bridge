@@ -14,7 +14,6 @@ import { isRecord } from "../../core/json.js";
 export const NATIVE_PLAINTEXT_SPAWN_ALIAS = "cob_plaintext_spawn_agent" as const;
 export const NATIVE_PLAINTEXT_SEND_ALIAS = "cob_plaintext_send_message" as const;
 export const NATIVE_PLAINTEXT_FOLLOWUP_ALIAS = "cob_plaintext_followup_task" as const;
-export const NATIVE_PLAINTEXT_SPAWN_MODEL = "gpt-5.6-sol" as const;
 
 export type NativePlaintextCanonicalName = "spawn_agent" | "send_message" | "followup_task";
 export type NativePlaintextAlias =
@@ -37,11 +36,24 @@ export type NativePlaintextSpawnContext = {
   /** Fixed alias→canonical bindings prevent one alias being cross-mapped. */
   bindings: readonly NativePlaintextAliasBinding[];
   schemaSha256: string;
+  /**
+   * Argument names declared by the fingerprinted schema, per canonical leaf.
+   * Alias arguments stay a closed set; the set follows the pinned schema so a
+   * Codex build that declares another argument is covered by the digest
+   * instead of a hand-listed subset that silently rejects real calls.
+   */
+  argumentNames: Readonly<Record<NativePlaintextCanonicalName, readonly string[]>>;
 };
 
 export type NativePlaintextSpawnResult = {
   payload: JsonObject;
   context?: NativePlaintextSpawnContext;
+  /**
+   * Set when a live home carried an unrecognized collaboration schema through
+   * unrewritten. The request is byte-identical to the client's; the gateway
+   * records the disposition so an operator can rotate the pinned digest.
+   */
+  drift?: NativePlaintextSpawnReject["body"]["error"];
 };
 
 export type NativePlaintextSpawnReject = {
@@ -158,32 +170,44 @@ type Gate1SchemaLocation = {
 type Gate1SchemaLocationResult = Gate1SchemaLocation | { reject: NativePlaintextSpawnReject };
 
 /**
- * Prepare one native Sol request for the opt-in Gate 1-3 experiment. All
- * non-Sol requests, and the default-disabled path, return the original object
- * so the gateway can retain byte-for-byte native passthrough.
+ * Prepare one native request for the opt-in plaintext collaboration wire.
+ *
+ * The model slug is not a gate. Whichever native model Codex hands the V2
+ * `collaboration` namespace is in scope, so a newly listed GPT row works with
+ * no configuration, and a row that never carries the namespace (a V1 model, a
+ * thread with no subagents) returns the original object for byte-for-byte
+ * native passthrough. The pinned schema digest is the only gate.
  */
 export function prepareNativePlaintextSpawn(
   payload: JsonObject,
   policy: NativePlaintextSpawnPolicy | undefined,
 ): NativePlaintextSpawnResult | NativePlaintextSpawnReject {
-  if (payload.model !== NATIVE_PLAINTEXT_SPAWN_MODEL || policy?.enabled !== true) {
+  if (policy?.enabled !== true || !carriesCollaborationNamespace(payload)) {
     return { payload };
   }
 
   const location = locateObservedGate1Schema(payload);
-  if ("reject" in location) return location.reject;
+  if ("reject" in location) return onSchemaDrift(payload, policy, location.reject);
 
+  const observed = nativePlaintextSpawnSchemaSha256(location.namespace);
   if (!policy.schemaSha256) {
-    return reject(
-      "native_plaintext_spawn_schema_fingerprint_required",
-      "native plaintext spawn schema fingerprint is required",
-      nativePlaintextSpawnSchemaSha256(location.namespace),
+    return onSchemaDrift(
+      payload,
+      policy,
+      reject(
+        "native_plaintext_spawn_schema_fingerprint_required",
+        "native plaintext spawn schema fingerprint is required",
+        observed,
+      ),
     );
   }
 
-  const observed = nativePlaintextSpawnSchemaSha256(location.namespace);
   if (policy.schemaSha256.toLowerCase() !== observed) {
-    return reject("native_plaintext_spawn_schema_mismatch", "native plaintext spawn schema fingerprint mismatch", observed);
+    return onSchemaDrift(
+      payload,
+      policy,
+      reject("native_plaintext_spawn_schema_mismatch", "native plaintext spawn schema fingerprint mismatch", observed),
+    );
   }
 
   const next = structuredClone(payload) as JsonObject;
@@ -216,8 +240,27 @@ export function prepareNativePlaintextSpawn(
   );
   return {
     payload: next,
-    context: { bindings: NATIVE_PLAINTEXT_ALIAS_BINDINGS, schemaSha256: observed },
+    context: {
+      bindings: NATIVE_PLAINTEXT_ALIAS_BINDINGS,
+      schemaSha256: observed,
+      argumentNames: {
+        spawn_agent: declaredArgumentNames(location.spawn),
+        send_message: declaredArgumentNames(location.send),
+        followup_task: declaredArgumentNames(location.followup),
+      },
+    },
   };
+}
+
+/**
+ * Property names the fingerprinted leaf declares. The caller has already
+ * matched the leaf against the known schema, so `parameters.properties` is an
+ * object here.
+ */
+function declaredArgumentNames(tool: JsonObject): readonly string[] {
+  const parameters = tool.parameters;
+  if (!isRecord(parameters) || !isRecord(parameters.properties)) return [];
+  return Object.keys(parameters.properties);
 }
 
 /**
@@ -271,6 +314,24 @@ export function formatNativePlaintextSpawnResponseDiagnostic(
     `top_level_keys=${diagnostic.top_level_keys === undefined ? "-" : JSON.stringify(diagnostic.top_level_keys)}`,
     `mapper_error_class=${diagnostic.mapper_error_class === undefined ? "-" : quoteDiagnostic(diagnostic.mapper_error_class)}`,
     `mapper_error_code=${diagnostic.mapper_error_code === undefined ? "-" : quoteDiagnostic(diagnostic.mapper_error_code)}`,
+  ].join(" ");
+}
+
+/**
+ * One-line, content-free record for a rejected Gate 1-3 request. Only the
+ * cob-owned reject code and the observed schema digest are emitted so an
+ * operator can rotate `native_plaintext_spawn_schema_sha256` after a Codex
+ * update. The observed schema itself is never logged.
+ */
+export function formatNativePlaintextSpawnRequestDrift(
+  error: NativePlaintextSpawnReject["body"]["error"],
+  disposition: "rejected" | "passed_through",
+): string {
+  return [
+    "[cob] native plaintext spawn request",
+    disposition,
+    `code=${quoteDiagnostic(error.code)}`,
+    `observed_schema_sha256=${error.observed_schema_sha256 ?? "-"}`,
   ].join(" ");
 }
 
@@ -447,6 +508,34 @@ function locateObservedGate1Schema(payload: JsonObject): Gate1SchemaLocationResu
   return { additionalIndex, namespaceIndex, spawnIndex, sendIndex, followupIndex, additional, namespace, spawn, send, followup };
 }
 
+/**
+ * Cheap applicability probe. The namespace only ever arrives inside an
+ * `additional_tools` input item, so a request without one exits before the
+ * strict locator walks the rest of the input.
+ */
+function carriesCollaborationNamespace(payload: JsonObject): boolean {
+  if (!Array.isArray(payload.input)) return false;
+  for (const item of payload.input) {
+    if (!isRecord(item) || item.type !== "additional_tools" || !Array.isArray(item.tools)) continue;
+    if (item.tools.some((tool) => isCollaborationNamespace(tool))) return true;
+  }
+  return false;
+}
+
+/**
+ * An unrecognized collaboration schema is a reject in an isolated home, where
+ * a canary wants the loud failure, and an unrewritten passthrough on a live
+ * home, where one Codex update must not take the gateway down. Neither path
+ * relaxes the Ollama boundary: ciphertext still never reaches a provider.
+ */
+function onSchemaDrift(
+  payload: JsonObject,
+  policy: NativePlaintextSpawnPolicy,
+  rejected: NativePlaintextSpawnReject,
+): NativePlaintextSpawnResult | NativePlaintextSpawnReject {
+  return policy.degradeOnDrift === true ? { payload, drift: rejected.body.error } : rejected;
+}
+
 function isCollaborationNamespace(value: unknown): value is JsonObject {
   return isRecord(value) && value.type === "namespace" && value.name === "collaboration" && !Object.hasOwn(value, "namespace");
 }
@@ -617,7 +706,7 @@ function mapFunctionCall(
       "native plaintext spawn response arguments are invalid",
     );
   }
-  assertClosedAliasArguments(parsed, binding);
+  assertClosedAliasArguments(parsed, binding, context);
   return {
     ...item,
     name: binding.canonicalName,
@@ -626,13 +715,19 @@ function mapFunctionCall(
   };
 }
 
-function assertClosedAliasArguments(parsed: unknown, binding: NativePlaintextAliasBinding): void {
-  if (!isRecord(parsed)) {
-    throw new NativePlaintextSpawnError(
-      "native_plaintext_spawn_arguments_invalid",
-      "native plaintext spawn response arguments are invalid",
-    );
-  }
+function invalidAliasArguments(): NativePlaintextSpawnError {
+  return new NativePlaintextSpawnError(
+    "native_plaintext_spawn_arguments_invalid",
+    "native plaintext spawn response arguments are invalid",
+  );
+}
+
+function assertClosedAliasArguments(
+  parsed: unknown,
+  binding: NativePlaintextAliasBinding,
+  context: NativePlaintextSpawnContext,
+): void {
+  if (!isRecord(parsed)) throw invalidAliasArguments();
   const keys = Object.keys(parsed);
   if (keys.some((key) => isEncryptedFieldName(key))) {
     throw new NativePlaintextSpawnError(
@@ -640,31 +735,17 @@ function assertClosedAliasArguments(parsed: unknown, binding: NativePlaintextAli
       "native plaintext spawn response contains encrypted function arguments",
     );
   }
+  const declared = context.argumentNames[binding.canonicalName];
+  if (!keys.every((key) => declared.includes(key))) throw invalidAliasArguments();
+  if (typeof parsed.message !== "string") throw invalidAliasArguments();
   if (binding.canonicalName === "spawn_agent") {
-    if (!keys.every((key) => key === "message" || key === "model") || typeof parsed.message !== "string") {
-      throw new NativePlaintextSpawnError(
-        "native_plaintext_spawn_arguments_invalid",
-        "native plaintext spawn response arguments are invalid",
-      );
-    }
-    if (parsed.model !== undefined && (typeof parsed.model !== "string" || !parsed.model.startsWith("ollama/"))) {
-      throw new NativePlaintextSpawnError(
-        "native_plaintext_spawn_arguments_invalid",
-        "native plaintext spawn response arguments are invalid",
-      );
-    }
+    // The alias replaces the canonical leaf for every spawn on this thread, so
+    // restricting the child model here would break native-to-native spawn.
+    // Codex still validates the slug against the catalog.
+    if (parsed.model !== undefined && typeof parsed.model !== "string") throw invalidAliasArguments();
     return;
   }
-  if (
-    keys.length !== 2 ||
-    typeof parsed.message !== "string" ||
-    typeof parsed.target !== "string"
-  ) {
-    throw new NativePlaintextSpawnError(
-      "native_plaintext_spawn_arguments_invalid",
-      "native plaintext spawn response arguments are invalid",
-    );
-  }
+  if (typeof parsed.target !== "string") throw invalidAliasArguments();
 }
 
 function mapOrdinaryFunctionCall(item: JsonObject, context: NativePlaintextSpawnContext): JsonObject {

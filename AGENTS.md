@@ -71,10 +71,11 @@ claim.
   child gold.
 - Install launchd, a Login Item, or any OS supervisor for cob. After reboot
   or a dead gateway, recovery is `cob start`.
-- Enable Multi-Agent V2 for Ollama children, advertise `multi_agent_version`
-  other than `v1` on Ollama rows, or call `followup_task` / encrypted
-  collaboration payloads outside the isolated Gate 1-3 exception below.
-  Ollama stays V1. Fernet never goes to Ollama.
+- Advertise `multi_agent_version` other than `v1` on Ollama rows, or forward
+  an encrypted collaboration payload to Ollama. Fernet never goes to Ollama.
+  Note that a child inherits the *parent's* protocol version and ignores its
+  own row, so a V2 parent produces a V2 child whatever the row says; the
+  plaintext wire below removes the encryption rather than the version.
 - Write `~/.claude/settings.json` or run `ollama launch claude` /
   `ollama launch claude-desktop` from cob. cob claude live owns `~/.claude-cob`
   (port 18792). Isolated trials use `cob claude start --dev`
@@ -96,19 +97,30 @@ claim.
 Parent spawn policy for Desktop/CLI is user-owned `~/.codex/AGENTS.md`. Do
 not treat this file as that policy.
 
-Ollama children stay V1. Spawn slot is `cob.toml` `[subagents].models`
+Ollama catalog rows stay `v1`; a child's actual protocol follows its parent.
+Spawn slot is `cob.toml` `[subagents].models`
 (default `ollama/deepseek-v4-flash:0731-cloud`). Do not add
 `~/.codex/agents/*.toml` for discovery. Do not steal native GPT ids.
 Thinking Ollama default is `high`; leftover Codex `medium` / `xhigh` map to
 `high` on the Ollama wire.
 
-User-authorized Gate 1-3 research is the narrow exception under test: isolated
-`[experimental] native_plaintext_spawn = true` may rewrite only an exact,
-fingerprinted `gpt-5.6-sol` `collaboration.spawn_agent`,
+`[experimental] native_plaintext_spawn` is the opt-in plaintext collaboration
+wire. It rewrites only the exact, fingerprinted `collaboration.spawn_agent`,
 `collaboration.send_message`, and `collaboration.followup_task` schema and
-restore each native V2 identity. It does not advertise Ollama V2, enable
-interrupt/restart/replay, or turn on live `~/.codex` experiments; missing
-or changed schema fails closed. This exception is not product proof.
+restores each native V2 identity on the response. The model slug is not a
+gate: whichever native model Codex hands that namespace is in scope, and a
+request that never carries the namespace is passed through untouched. It does
+not advertise Ollama V2, does not change what Ollama rows advertise, and
+enables no interrupt/restart/replay.
+
+A live home may arm it, but only with a pinned digest; an armed-but-unpinned
+policy is disarmed rather than allowed to reject every turn. On drift the two
+homes differ on purpose: an isolated home fails closed so a canary sees the
+loud failure, and a live home passes the request through unrewritten so one
+Codex update cannot take the Desktop gateway down. Neither path relaxes the
+Ollama boundary — ciphertext still never reaches a provider. The digest is
+per client context, so Desktop and the CLI hold different values; rotate the
+one `cob status` reports.
 
 Gate 4 may exercise the preserved canonical `collaboration.interrupt_agent`
 leaf in the same isolated home. It adds no plaintext alias or Ollama catalog
@@ -123,10 +135,12 @@ Gate-specific dispositions and evidence are not recorded here. Current
 machine, workspace, and canary state belongs in [STATUS.md](./STATUS.md);
 repeatable procedures and receipts belong in [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
 Do not treat a fixture, isolated canary, picker success, or model chat as
-product gold without the required trace or receipt. Gate 6's controller
-capability remains cob-external; follow [UPSTREAM-U1.md](./docs/UPSTREAM-U1.md), do
-not implement `agentControl/*` or a cob-owned collaboration queue, and do not
-re-measure it outside the authorized isolated path.
+product gold without the required trace or receipt. Gate 6's transport is now
+measured — the two-sends-then-wait sequence completed over the plaintext wire
+with intact nonces — so [UPSTREAM-U1.md](./docs/UPSTREAM-U1.md) is history, not a
+plan. Its remaining subject is deterministic scheduling without a model turn,
+which stays cob-external: do not implement `agentControl/*` or a cob-owned
+collaboration queue.
 
 ## Activation split
 
@@ -153,7 +167,10 @@ hot-reloaded the catalog; say fully quit and reopen ChatGPT Desktop.
 ## Logging and evidence boundaries
 
 - Structured persistence is opt-in only. The default hot path and human-readable
-  log remain unchanged.
+  log remain unchanged. `COB_DEV_MODE=1` is the development switch: it implies
+  the structured sidecar and adds a hashed thread digest plus per-request CPU
+  and memory. It must stay content-free, start no worker, and read its figures
+  at points a request already passes through.
 - Logs and persisted diagnostics are structural and content-free: never record
   prompts, outputs, tool names or IDs, auth material, or raw errors.
 - Logging is diagnostic-only and must not make a model/provider call, automatic
@@ -182,8 +199,9 @@ installation, and rollback procedure are maintained only in
 volatile snapshots into this file. Never repack a burned or historical
 artifact; cut a new version as required by [RELEASE.md](./docs/RELEASE.md).
 
-Fail-closed JSON/encrypted-wire is required; `apply_patch` and
-`native_plaintext_spawn` stay default-off and isolated from the live root.
+Fail-closed JSON/encrypted-wire is required. `apply_patch` stays default-off
+and isolated from the live root; `native_plaintext_spawn` stays default-off
+and, on a live root, pinned-only with the drift behaviour described above.
 Pack excludes `gate6h` and `eval-*`. Do not restart or replace the live Codex
 gateway to pick up source changes unless the user authorizes that gateway
 replacement. Future app updates can still drop the overlay or hide

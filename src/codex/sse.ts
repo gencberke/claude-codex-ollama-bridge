@@ -3,9 +3,9 @@ import { Transform } from "node:stream";
 import { MAX_SSE_LINE_BYTES } from "./limits.js";
 
 /** Codex/OpenAI Responses SSE error terminal. Never sent on Claude or raw relays. */
-export function sseErrorTerminal(message: string): string {
+export function sseErrorTerminal(message: string, code = "upstream_stream_error"): string {
   const payload = JSON.stringify({
-    error: { type: "server_error", code: "upstream_stream_error", message },
+    error: { type: "server_error", code, message },
   });
   return `data: ${payload}\n\ndata: [DONE]\n\n`;
 }

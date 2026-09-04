@@ -36,7 +36,10 @@ describe("decodeRequestBody", () => {
   it("fail-closes unreadable compressed bodies instead of returning the raw bytes", () => {
     assert.throws(
       () => decodeRequestBody(Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0xff]), "zstd"),
-      (error: unknown) => error instanceof RequestDecodeError && error.code === "invalid_encoding",
+      (error: unknown) =>
+        error instanceof RequestDecodeError &&
+        error.code === "invalid_encoding" &&
+        error.message === "Failed to decompress request body.",
     );
     assert.throws(
       () => decodeRequestBody(Buffer.from("not-gzip"), "gzip"),

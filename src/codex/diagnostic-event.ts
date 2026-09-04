@@ -18,7 +18,38 @@ export interface GatewayDiagnosticSink {
   write(event: GatewayDiagnosticEventV1): void;
 }
 
-export type GatewayRequestRoute = "native" | "ollama" | "native-search" | "unknown";
+export const GATEWAY_REQUEST_ROUTES = ["native", "ollama", "native-search", "unknown"] as const;
+export type GatewayRequestRoute = (typeof GATEWAY_REQUEST_ROUTES)[number];
+
+/** Closed request outcome vocabulary shared by writers, readers, and docs. */
+export const GATEWAY_REQUEST_TERMINALS = [
+  "completed",
+  "client_abort",
+  "checkpoint_error",
+  "checkpoint_failed",
+  "empty",
+  "eof",
+  "error",
+  "guard_rejection",
+  "http_error",
+  "idle",
+  "invalid_json",
+  "invalid_response",
+  "non_success",
+  "overflow",
+  "stream_error",
+] as const;
+export type GatewayRequestTerminal = (typeof GATEWAY_REQUEST_TERMINALS)[number];
+
+export const GATEWAY_NON_SUCCESS_KINDS = ["failed", "incomplete", "error"] as const;
+export type GatewayNonSuccessKind = (typeof GATEWAY_NON_SUCCESS_KINDS)[number];
+
+const DIAGNOSTIC_ERROR_CODE = /^[a-z0-9_]{1,128}$/;
+
+/** Error codes are bounded identifiers, never provider text or raw errors. */
+export function isDiagnosticErrorCode(value: unknown): value is string {
+  return typeof value === "string" && DIAGNOSTIC_ERROR_CODE.test(value);
+}
 
 export type GatewayRequestMetrics = {
   raw_bytes: number;
@@ -38,6 +69,8 @@ export type GatewayRequestMetrics = {
 };
 
 export type GatewayRequestContext = {
+  /** Random, content-free process-run correlation token. */
+  run_sha8: string;
   request_seq: number;
   request_fp8: string;
   started_at: string;
@@ -47,9 +80,19 @@ export type GatewayRequestContext = {
   metrics?: GatewayRequestMetrics;
   headers_latency_ms?: number;
   first_event_latency_ms?: number;
+  /** Dev mode only. Correlates one request with the thread that issued it. */
+  thread_sha8?: string;
+  parent_thread_sha8?: string;
+  /** Dev mode only. Process CPU observed while this request was in flight. */
+  cpu_started_us?: number;
+  cpu_ms?: number;
+  rss_mb?: number;
   response_bytes?: number;
   upstream_status?: number;
-  terminal?: string;
+  terminal?: GatewayRequestTerminal;
+  error_code?: string;
+  non_success_kind?: GatewayNonSuccessKind;
+  catalog_reload_fallback?: boolean;
   usage?: CompactUsageEvent;
   provider_attempts?: number;
   gateway_retry_count?: number;
@@ -64,6 +107,7 @@ export type GatewayRequestContext = {
 
 let nextRequestSequence = 0;
 const requestFingerprintKey = randomBytes(32);
+const gatewayRunSha8 = createHash("sha256").update(randomBytes(32)).digest("hex").slice(0, 8);
 
 export function createGatewayRequestContext(path: string, raw?: Buffer): GatewayRequestContext {
   const startedMs = performance.now();
@@ -75,6 +119,7 @@ export function createGatewayRequestContext(path: string, raw?: Buffer): Gateway
     .digest("hex")
     .slice(0, 8);
   return {
+    run_sha8: gatewayRunSha8,
     request_seq: requestSeq,
     request_fp8: fingerprint,
     started_at: new Date().toISOString(),
@@ -98,8 +143,18 @@ export function setGatewayRequestFingerprint(
     .slice(0, 8);
 }
 
+/**
+ * Plain, unsalted digest. An analyst can reproduce it from a value they
+ * already hold — a rollout's own thread id, a model slug — so a content-free
+ * record still correlates with an external trace. Never used where the input
+ * is a secret.
+ */
+export function diagnosticSha8(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 8);
+}
+
 export function modelSha8(model: string): string {
-  return createHash("sha256").update(model, "utf8").digest("hex").slice(0, 8);
+  return diagnosticSha8(model);
 }
 
 const DIAGNOSTIC_EFFORTS = new Set(["-", "none", "low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -162,6 +217,7 @@ export type GatewayDiagnosticEventV1 =
       kind: "request_start";
       timestamp: string;
       pid: number;
+      run_sha8?: string;
       request_seq: number;
       request_fp8: string;
       route: GatewayRequestRoute;
@@ -173,6 +229,7 @@ export type GatewayDiagnosticEventV1 =
       kind: "request_end";
       timestamp: string;
       pid: number;
+      run_sha8?: string;
       request_seq: number;
       request_fp8: string;
       route: GatewayRequestRoute;
@@ -181,9 +238,16 @@ export type GatewayDiagnosticEventV1 =
       total_latency_ms: number;
       headers_latency_ms?: number;
       first_event_latency_ms?: number;
+      thread_sha8?: string;
+      parent_thread_sha8?: string;
+      cpu_ms?: number;
+      rss_mb?: number;
       response_bytes?: number;
       upstream_status?: number;
-      terminal?: string;
+      terminal?: GatewayRequestTerminal;
+      error_code?: string;
+      non_success_kind?: GatewayNonSuccessKind;
+      catalog_reload_fallback?: boolean;
       provider_attempts: number;
       gateway_retry_count: number;
       retry_after_present?: boolean;
@@ -196,6 +260,8 @@ export type GatewayDiagnosticEventV1 =
   | {
       schema_version: typeof GATEWAY_DIAGNOSTIC_SCHEMA_VERSION;
       kind: "compact_start";
+      run_sha8?: string;
+      request_seq?: number;
       provider: "native" | "ollama";
       thread_model: string;
       compact_model: string;
@@ -205,6 +271,8 @@ export type GatewayDiagnosticEventV1 =
   | {
       schema_version: typeof GATEWAY_DIAGNOSTIC_SCHEMA_VERSION;
       kind: "compact_success";
+      run_sha8?: string;
+      request_seq?: number;
       transcript_format_version: number;
       latency_ms: number;
       summary_bytes: number;
@@ -217,6 +285,8 @@ export type GatewayDiagnosticEventV1 =
   | {
       schema_version: typeof GATEWAY_DIAGNOSTIC_SCHEMA_VERSION;
       kind: "compact_failure";
+      run_sha8?: string;
+      request_seq?: number;
       code: string;
       group_sha8: string;
       attempt: number;
@@ -277,6 +347,7 @@ export function recordGatewayRequestEnd(
     kind: "request_end",
     timestamp: new Date().toISOString(),
     pid: process.pid,
+    run_sha8: context.run_sha8,
     request_seq: context.request_seq,
     request_fp8: context.request_fp8,
     route: context.route,
@@ -285,9 +356,16 @@ export function recordGatewayRequestEnd(
     total_latency_ms: elapsedMs(context.started_ms),
     ...(context.headers_latency_ms === undefined ? {} : { headers_latency_ms: context.headers_latency_ms }),
     ...(context.first_event_latency_ms === undefined ? {} : { first_event_latency_ms: context.first_event_latency_ms }),
+    ...(context.thread_sha8 === undefined ? {} : { thread_sha8: context.thread_sha8 }),
+    ...(context.parent_thread_sha8 === undefined ? {} : { parent_thread_sha8: context.parent_thread_sha8 }),
+    ...(context.cpu_ms === undefined ? {} : { cpu_ms: context.cpu_ms }),
+    ...(context.rss_mb === undefined ? {} : { rss_mb: context.rss_mb }),
     ...(responseBytes === undefined ? {} : { response_bytes: responseBytes }),
     ...(context.upstream_status === undefined ? {} : { upstream_status: context.upstream_status }),
     ...(context.terminal === undefined ? {} : { terminal: context.terminal }),
+    ...(context.error_code === undefined ? {} : { error_code: context.error_code }),
+    ...(context.non_success_kind === undefined ? {} : { non_success_kind: context.non_success_kind }),
+    ...(context.catalog_reload_fallback === undefined ? {} : { catalog_reload_fallback: context.catalog_reload_fallback }),
     provider_attempts: context.provider_attempts ?? 0,
     gateway_retry_count: context.gateway_retry_count ?? 0,
     ...(context.retry_after_present === undefined ? {} : { retry_after_present: context.retry_after_present }),
@@ -299,9 +377,19 @@ export function recordGatewayRequestEnd(
   };
 }
 
+/**
+ * Development instrumentation. Implies the JSONL sidecar and adds the
+ * per-request thread digest and process cost that a performance investigation
+ * needs. Still content-free, still opt-in, and it starts no worker: the CPU
+ * and memory figures are read at points the request already passes through.
+ */
+export function gatewayDevModeEnabled(): boolean {
+  return process.env.COB_DEV_MODE === "1";
+}
+
 /** Dev/eval-only JSONL mode; default live behavior remains human text. */
 export function gatewayDiagnosticJsonlEnabled(): boolean {
-  return process.env.COB_DIAGNOSTIC_JSONL === "1";
+  return process.env.COB_DIAGNOSTIC_JSONL === "1" || gatewayDevModeEnabled();
 }
 
 /**

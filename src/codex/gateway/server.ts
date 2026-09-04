@@ -18,10 +18,12 @@ import {
   isAbortLike,
   json,
   jsonError,
+  markGatewayResponseOutcome,
+  publicConversationStateMessage,
   resolveCatalog,
   type GatewayOptions,
 } from "./responses.js";
-import { gatewayDiagnosticJsonlEnabled } from "../diagnostic-event.js";
+import { gatewayDevModeEnabled, gatewayDiagnosticJsonlEnabled } from "../diagnostic-event.js";
 import { DiagnosticLog } from "../runtime/diagnostic-log.js";
 
 /**
@@ -55,12 +57,13 @@ export function createGateway(options: GatewayOptions): Server {
     ...(diagnosticLog ? { diagnosticSink: diagnosticLog } : {}),
   };
   const server = createServer((req, res) => {
-    void handleRequest(req, res, effectiveOptions).catch((error: unknown) => {
+    void handleRequest(req, res, effectiveOptions, diagnosticLog).catch((error: unknown) => {
       if (isAbortLike(error) || error instanceof BodyAbortedError) {
         if (!res.writableEnded) res.end();
         return;
       }
       if (res.headersSent) {
+        markGatewayResponseOutcome(res, "stream_error", "server_error");
         res.destroy();
         return;
       }
@@ -73,10 +76,10 @@ export function createGateway(options: GatewayOptions): Server {
         return;
       }
       if (error instanceof ConversationStateError) {
-        jsonError(res, error.status, error.code, error.message, { requires_full_context: true });
+        jsonError(res, error.status, error.code, publicConversationStateMessage(error), { requires_full_context: true });
         return;
       }
-      jsonError(res, 500, "server_error", error instanceof Error ? error.message : String(error));
+      jsonError(res, 500, "server_error", "Internal server error.");
     });
   });
   if (diagnosticLog) {
@@ -103,6 +106,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   options: GatewayOptions,
+  diagnosticLog?: DiagnosticLog,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -121,6 +125,19 @@ async function handleRequest(
         ollama_threads: compaction.ollamaThreads ?? "summarize",
         ollama_model: compaction.ollamaModel ?? null,
         ollama_effort: compaction.ollamaEffort ?? null,
+      },
+      dev_mode: gatewayDevModeEnabled(),
+      ...(diagnosticLog ? { diagnostics: diagnosticLog.snapshot() } : {}),
+      native_plaintext_spawn: {
+        enabled: options.nativePlaintextSpawn?.enabled === true,
+        pinned: (options.nativePlaintextSpawn?.schemaSha256 ?? "").length > 0,
+        drift: options.nativePlaintextSpawnDrift
+          ? {
+              code: options.nativePlaintextSpawnDrift.code,
+              observed_schema_sha256: options.nativePlaintextSpawnDrift.observedSchemaSha256 ?? null,
+              count: options.nativePlaintextSpawnDrift.count,
+            }
+          : null,
       },
     });
     return;
@@ -177,7 +194,7 @@ async function handleRequest(
     return;
   }
 
-  jsonError(res, 404, "not_found", `Unsupported path ${path}`);
+  jsonError(res, 404, "not_found", "Unsupported path.");
 }
 
 async function handleShutdown(

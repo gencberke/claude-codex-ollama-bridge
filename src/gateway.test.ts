@@ -7,6 +7,7 @@ import { request as httpRequest } from "node:http";
 import { connect, createServer, type AddressInfo } from "node:net";
 import { gzipSync, zstdCompressSync } from "node:zlib";
 import {listenGateway, createGateway } from "./codex/gateway.js";
+import { publicConversationStateMessage, resolveCatalog } from "./codex/gateway/responses.js";
 import { resetCompactAttemptLog } from "./codex/compact-attempt-log.js";
 import { pickForwardHeaders } from "./codex/native.js";
 import { NATIVE_RESPONSES_URL, NATIVE_SEARCH_URL } from "./codex/constants.js";
@@ -24,7 +25,8 @@ import {
 } from "./codex/experimental/native-plaintext-spawn.js";
 import type { CatalogFile } from "./codex/types.js";
 import type { JsonObject } from "./core/json.js";
-import type { GatewayDiagnosticEventV1 } from "./codex/diagnostic-event.js";
+import { createGatewayRequestContext, diagnosticSha8, type GatewayDiagnosticEventV1 } from "./codex/diagnostic-event.js";
+import { ConversationStateError } from "./codex/state/schema.js";
 const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "cob-gw-state-"));
 
 const TEST_CATALOG: CatalogFile = {
@@ -162,6 +164,41 @@ function processHasOpenFdFor(path: string): boolean {
 }
 
 describe("gateway", () => {
+  it("maps conversation-state failures without exposing internal ids or paths", () => {
+    const detail = "checkpoint resp_SECRET at /Users/private/state.json is corrupt";
+    const error = new ConversationStateError("state_checkpoint_corrupt", detail);
+    const message = publicConversationStateMessage(error);
+    assert.equal(message.includes("resp_SECRET"), false);
+    assert.equal(message.includes("/Users/private"), false);
+    assert.match(message, /resend the full context/i);
+  });
+
+  it("reports a catalog reload fallback once per failure streak", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cob-catalog-reload-fallback-"));
+    const path = join(dir, "missing.json");
+    const options: GatewayOptions = { port: 1, stateDir: TEST_STATE_DIR, catalogPath: path, catalog: TEST_CATALOG };
+    const request = createGatewayRequestContext("/v1/responses");
+    const lines: string[] = [];
+    const original = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      assert.equal(resolveCatalog(options, request), TEST_CATALOG);
+      assert.equal(resolveCatalog(options, request), TEST_CATALOG);
+      assert.equal(request.catalog_reload_fallback, true);
+      assert.equal(lines.filter((line) => line.includes("catalog reload failed")).length, 1);
+      writeFileSync(path, serializeCatalog(TEST_CATALOG), { mode: 0o600 });
+      assert.deepEqual(resolveCatalog(options), TEST_CATALOG);
+      rmSync(path);
+      assert.equal(resolveCatalog(options), TEST_CATALOG);
+      assert.equal(lines.filter((line) => line.includes("catalog reload failed")).length, 2);
+    } finally {
+      process.stderr.write = original;
+    }
+  });
+
   it("refuses to start without an explicit stateDir or stateStore", () => {
     const unowned = { port: 0, catalog: TEST_CATALOG } as unknown as GatewayOptions;
     assert.throws(() => createGateway(unowned), /refusing to guess the codex home/);
@@ -187,6 +224,35 @@ describe("gateway", () => {
     } finally {
       await new Promise<void>((resolve, reject) => {
         blocker.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(dir, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("publishes content-free diagnostic sink health", async () => {
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const dir = mkdtempSync(join(tmpdir(), "cob-diagnostic-health-"));
+    const port = await freePort();
+    const server = await listenGateway({
+      port,
+      stateDir: dir,
+      catalog: TEST_CATALOG,
+      diagnosticPath: join(dir, "cob-diagnostics.jsonl"),
+    });
+    try {
+      const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+      const body = await health.json() as {
+        diagnostics?: { state?: string; fd_open?: boolean; dropped_event_count?: number };
+      };
+      assert.equal(body.diagnostics?.state, "active");
+      assert.equal(body.diagnostics?.fd_open, true);
+      assert.equal(body.diagnostics?.dropped_event_count, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
       });
       rmSync(dir, { recursive: true, force: true });
       if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
@@ -227,9 +293,12 @@ describe("gateway", () => {
       const start = starts[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_start" }>;
       const end = ends[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
       assert.equal(start.request_seq, end.request_seq);
+      assert.equal(start.run_sha8, end.run_sha8);
+      assert.match(start.run_sha8 ?? "", /^[a-f0-9]{8}$/);
       assert.equal(start.metrics?.raw_bytes, compressed.length);
       assert.equal(start.metrics?.decoded_bytes, payload.length);
       assert.equal(end.provider_attempts, 1);
+      assert.equal(end.terminal, "completed");
       assert.equal("outbound_stream" in end, false);
       assert.equal("hosted_tools_dropped_n" in end, false);
       assert.equal("response_content_type_class" in end, false);
@@ -243,6 +312,52 @@ describe("gateway", () => {
       rmSync(stateDir, { recursive: true, force: true });
       if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
       else process.env.COB_DIAGNOSTIC_JSONL = previous;
+    }
+  });
+
+  it("adds content-free thread and process-window measurements only in dev mode", async () => {
+    const previousDev = process.env.COB_DEV_MODE;
+    const previousJsonl = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DEV_MODE = "1";
+    delete process.env.COB_DIAGNOSTIC_JSONL;
+    const events: GatewayDiagnosticEventV1[] = [];
+    const port = await freePort();
+    const stateDir = mkdtempSync(join(tmpdir(), "cob-gw-dev-diagnostics-"));
+    const server = await listenGateway({
+      port,
+      catalog: TEST_CATALOG,
+      stateDir,
+      diagnosticSink: { write: (event) => events.push(event) },
+      nativeFetch: async () => new Response("{}", { status: 200 }),
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "thread-id": "thread-secret-id",
+          "x-codex-parent-thread-id": "parent-secret-id",
+        },
+        body: JSON.stringify({ model: "gpt-5.6-luna", input: "private input" }),
+      });
+      await response.arrayBuffer();
+      const end = events.find((event) => event.kind === "request_end") as
+        | Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>
+        | undefined;
+      assert.equal(end?.thread_sha8, diagnosticSha8("thread-secret-id"));
+      assert.equal(end?.parent_thread_sha8, diagnosticSha8("parent-secret-id"));
+      assert.equal(typeof end?.cpu_ms, "number");
+      assert.equal(typeof end?.rss_mb, "number");
+      assert.equal(JSON.stringify(events).includes("secret-id"), false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previousDev === undefined) delete process.env.COB_DEV_MODE;
+      else process.env.COB_DEV_MODE = previousDev;
+      if (previousJsonl === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previousJsonl;
     }
   });
 
@@ -517,7 +632,9 @@ describe("gateway", () => {
         }),
       });
       assert.equal(response.status, 500);
-      await response.arrayBuffer();
+      const failureBody = await response.text();
+      assert.equal(failureBody.includes("provider unavailable"), false);
+      assert.equal((JSON.parse(failureBody) as { error?: { code?: string } }).error?.code, "server_error");
       assert.equal(upstreamCalls, 1);
       const starts = events.filter((event) => event.kind === "request_start");
       const ends = events.filter((event) => event.kind === "request_end");
@@ -529,6 +646,8 @@ describe("gateway", () => {
       assert.equal(start.request_fp8, end.request_fp8);
       assert.equal(end.route, "ollama");
       assert.equal(end.provider_attempts, 1);
+      assert.equal(end.terminal, "http_error");
+      assert.equal(end.error_code, "server_error");
       assert.equal(end.outbound_stream, true);
       assert.equal(end.hosted_tools_dropped_n, 1);
       assert.equal("response_content_type_class" in end, false);
@@ -759,7 +878,7 @@ describe("gateway", () => {
       // is an SSE terminal while retaining the upstream 2xx status.
       assert.equal(response.status, 200);
       assert.match(text, /upstream_stream_error/);
-      assert.match(text, /SSE data payload is invalid/);
+      assert.match(text, /Upstream response stream failed/);
       assert.equal(text.includes(secret), false);
     } finally {
       await new Promise<void>((resolve, reject) => {
@@ -1398,7 +1517,9 @@ describe("gateway", () => {
         body: JSON.stringify({ model: "not-in-any-catalog", input: "hi" }),
       });
       assert.equal(unknown.status, 400);
-      assert.equal(await errorCode(unknown), "unknown_model");
+      const unknownBody = await unknown.json() as { error: { code: string; message: string } };
+      assert.equal(unknownBody.error.code, "unknown_model");
+      assert.equal(unknownBody.error.message.includes("not-in-any-catalog"), false);
 
       assert.equal(nativeHits, 0);
       assert.equal(ollamaHits, 0);
@@ -1566,7 +1687,13 @@ describe("gateway", () => {
         (compactEnds[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>).provider_attempts,
         1,
       );
-      assert.equal(events.some((event) => event.kind === "compact_start"), true);
+      const compactStart = events.find((event) => event.kind === "compact_start") as
+        | Extract<GatewayDiagnosticEventV1, { kind: "compact_start" }>
+        | undefined;
+      assert.ok(compactStart);
+      const compactEnd = compactEnds[0] as Extract<GatewayDiagnosticEventV1, { kind: "request_end" }>;
+      assert.equal(compactStart.run_sha8, compactEnd.run_sha8);
+      assert.equal(compactStart.request_seq, compactEnd.request_seq);
       assert.equal(events.some((event) => event.kind === "compact_failure"), false);
 
       const follow = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
@@ -2763,7 +2890,7 @@ describe("gateway", () => {
     }
   });
 
-  it("fails Gate 1 before the native upstream on a missing or mismatched Sol fingerprint", async () => {
+  it("rejects a mismatched fingerprint before native and passes a namespace-free request through", async () => {
     let nativeHits = 0;
     const catalog: CatalogFile = {
       models: [...TEST_CATALOG.models, { slug: "gpt-5.6-sol", visibility: "list", priority: 0 }],
@@ -2789,14 +2916,15 @@ describe("gateway", () => {
       assert.equal(await errorCode(response), "native_plaintext_spawn_schema_mismatch");
       assert.equal(nativeHits, 0);
 
-      const missing = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      // A request that never carries the collaboration namespace is outside
+      // this wire: it must reach native untouched rather than fail closed.
+      const noNamespace = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ model: "gpt-5.6-sol", input: [] }),
       });
-      assert.equal(missing.status, 409);
-      assert.equal(await errorCode(missing), "native_plaintext_spawn_schema_missing");
-      assert.equal(nativeHits, 0);
+      assert.notEqual(noNamespace.status, 409);
+      assert.equal(nativeHits, 1);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -3200,7 +3328,7 @@ describe("gateway", () => {
       }),
     });
     try {
-      for (const expectedMessage of [/unsupported field/, /SSE data payload is invalid/]) {
+      for (let index = 0; index < 2; index += 1) {
         const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3209,7 +3337,7 @@ describe("gateway", () => {
         const text = await response.text();
         assert.equal(response.status, 200);
         assert.match(text, /upstream_stream_error/);
-        assert.match(text, expectedMessage);
+        assert.match(text, /Upstream response stream failed/);
         assert.equal(text.includes(alias), false);
         assert.equal(text.includes("SECRET_ARGUMENT"), false);
       }
@@ -3556,6 +3684,39 @@ describe("gateway", () => {
       assert.ok(Date.now() - started < 2000);
       assert.notEqual(await errorCode(response), "upstream_headers_timeout");
       assert.notEqual(response.status, 504);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not expose a native upstream stream exception in the SSE terminal", async () => {
+    const port = await freePort();
+    const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
+      port,
+      catalog: TEST_CATALOG,
+      nativeFetch: async () => {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"type":"response.created"}\n\n'));
+            setImmediate(() => controller.error(new Error("SECRET_NATIVE_STREAM_FAILURE")));
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-5.6-luna", input: "hi", stream: true }),
+      });
+      const body = await response.text();
+      assert.equal(body.includes("SECRET_NATIVE_STREAM_FAILURE"), false);
+      assert.match(body, /upstream_stream_error/);
+      assert.match(body, /Upstream response stream failed/);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

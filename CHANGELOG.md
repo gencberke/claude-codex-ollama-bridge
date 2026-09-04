@@ -8,8 +8,70 @@ untagged preview is valid. How to cut a release: [RELEASE.md](./docs/RELEASE.md)
 Ship decisions still follow live traces in [LIVE-TESTING.md](./docs/LIVE-TESTING.md),
 not this file.
 
-## Unreleased
+## 0.3.4 — 2026-09-04
 
+- Harden the opt-in Codex diagnostics path with per-process run identity,
+  closed request terminals, stable error codes, Ollama non-success subtypes,
+  compaction/request correlation, and observable sink loss/rotation state.
+- Add `cob diagnostics [--json]` for a safe read-only structural summary of
+  the bounded sidecar and document the error-output contract.
+- Stop relaying raw cob/provider exception detail through cob-owned JSON/SSE
+  failures; preserve a stable safe code across transports instead.
+- Make per-request catalog reload fallback visible once per failure streak
+  while retaining the startup snapshot for continuity.
+
+## 0.3.3 — 2026-09-04
+
+Development instrumentation. A performance investigation of the Ollama
+subagent path could not separate prefill from generation, attribute a request
+to the thread that issued it, or observe process cost while it was in flight. One
+opt-in switch now answers all three. Default behavior is unchanged: with the
+switch off the hot path and the human log are byte-identical.
+
+- Add `COB_DEV_MODE=1`. It implies the existing structured sidecar and adds
+  four per-request fields to `request_end`: `thread_sha8` /
+  `parent_thread_sha8`, and `cpu_ms` / `rss_mb`.
+- Record the thread digest with a plain unsalted `sha256` prefix so an analyst
+  can reproduce it from a rollout's own thread id and correlate the two
+  without either record carrying content.
+- Read CPU and memory at points the request already passes through. Dev mode
+  starts no worker, makes no provider call, and never fails a request. These
+  process-window observations are not exclusive per-request attribution when
+  requests overlap.
+- Report `dev mode: on` through `cob status` so an instrumented gateway is not
+  mistaken for a default one.
+
+## 0.3.2 — 2026-09-04
+
+Plaintext collaboration wire cut. A native GPT parent can now hand an Ollama
+subagent a readable task instead of a Fernet body the gateway must refuse. The
+wire stays default-off; nothing changes for an installation that does not opt
+in. Measured in the isolated home against Codex 0.153.0-alpha.5: spawn, two
+in-flight `send_message` calls, `followup_task`, and the canonical
+`list_agents` / `wait_agent` leaves all completed with plaintext child tasks.
+
+- Gate the plaintext collaboration wire on the fingerprinted `collaboration`
+  namespace instead of one hardcoded model slug. Whichever native model Codex
+  hands that namespace is in scope, so a newly listed GPT row needs no
+  configuration, and a request that never carries the namespace is returned
+  untouched for byte-for-byte native passthrough.
+- Derive the closed alias argument set from the pinned schema rather than a
+  hand-listed subset. The previous list rejected every real spawn on Codex
+  0.153, which sends `task_name`, `fork_turns`, and `reasoning_effort`.
+- Stop restricting the spawned child model to `ollama/`. The alias replaces the
+  canonical leaf for every spawn on the thread, so the restriction broke
+  native-to-native spawn; Codex still validates the slug against the catalog.
+- Let a live home opt into the wire with a pinned schema digest. Gate 5
+  `apply_patch` stays isolated-only, and an armed-but-unpinned policy is
+  disarmed rather than allowed to reject every turn.
+- Leave an unrecognized schema unrewritten on a live home instead of failing
+  the turn, so one Codex update cannot take the Desktop gateway down. An
+  isolated home keeps the fail-closed reject. The Ollama boundary is unchanged:
+  ciphertext still never reaches a provider.
+- Record the observed schema digest on a content-free gateway log line, publish
+  it on `/healthz`, and report a stale digest through `cob status` with the
+  exact `cob.toml` key to update. The record is process-local and never
+  persisted.
 - Make the repo-developer menu panel derive its icon from the authoritative
   overall status, cache validation of an unchanged `cob` executable, and load
   the three-line recent log summary off the main thread from a smaller tail.

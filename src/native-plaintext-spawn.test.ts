@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 import {
+  formatNativePlaintextSpawnRequestDrift,
   formatNativePlaintextSpawnResponseDiagnostic,
   mapNativePlaintextSpawnJson,
   NativePlaintextSpawnError,
@@ -269,6 +270,33 @@ describe("native Sol plaintext spawn/send/followup Gate 1-3", () => {
     if ("status" in fingerprintDrift) {
       assert.equal(fingerprintDrift.body.error.code, "native_plaintext_spawn_schema_mismatch");
       assert.equal(typeof fingerprintDrift.body.error.observed_schema_sha256, "string");
+      // The operator needs the rotated digest from the log; the schema that
+      // produced it must never appear there.
+      const log = formatNativePlaintextSpawnRequestDrift(fingerprintDrift.body.error, "rejected");
+      assert.match(log, /request rejected /);
+      assert.match(log, /code="native_plaintext_spawn_schema_mismatch"/);
+      assert.equal(
+        log.includes(`observed_schema_sha256=${fingerprintDrift.body.error.observed_schema_sha256}`),
+        true,
+      );
+      assert.equal(log.includes("changed"), false);
+
+      // A live home keeps the turn alive on drift: the request is handed back
+      // unrewritten and the disposition is recorded instead of rejected.
+      const degraded = prepareNativePlaintextSpawn(gate1Payload(changedSibling), {
+        ...schemaPolicy(),
+        degradeOnDrift: true,
+      });
+      assert.equal("status" in degraded, false);
+      if (!("status" in degraded)) {
+        assert.equal(degraded.context, undefined);
+        assert.deepEqual(degraded.payload, gate1Payload(changedSibling));
+        assert.equal(degraded.drift?.code, "native_plaintext_spawn_schema_mismatch");
+        assert.match(
+          formatNativePlaintextSpawnRequestDrift(degraded.drift!, "passed_through"),
+          /request passed_through /,
+        );
+      }
     }
 
     for (const [candidate, code] of [
@@ -495,8 +523,16 @@ describe("native Sol plaintext spawn/send/followup Gate 1-3", () => {
       () => mapNativePlaintextSpawnJson({ type: "function_call", name: NATIVE_PLAINTEXT_SPAWN_ALIAS, arguments: JSON.stringify({ message: "plain", cwd: "/tmp" }) }, context),
       /arguments are invalid/,
     );
+    // A native child slug stays legal: the alias replaces the canonical leaf
+    // for every spawn, and Codex validates the slug against the catalog.
+    const spawnWithNative = mapNativePlaintextSpawnJson(
+      { type: "function_call", name: NATIVE_PLAINTEXT_SPAWN_ALIAS, arguments: JSON.stringify({ message: "plain", model: "gpt-5.6-sol" }) },
+      context,
+    ) as JsonObject;
+    assert.equal(spawnWithNative.name, "spawn_agent");
+    assert.equal(spawnWithNative.namespace, "collaboration");
     assert.throws(
-      () => mapNativePlaintextSpawnJson({ type: "function_call", name: NATIVE_PLAINTEXT_SPAWN_ALIAS, arguments: JSON.stringify({ message: "plain", model: "gpt-5.6-sol" }) }, context),
+      () => mapNativePlaintextSpawnJson({ type: "function_call", name: NATIVE_PLAINTEXT_SPAWN_ALIAS, arguments: JSON.stringify({ message: "plain", model: 7 }) }, context),
       /arguments are invalid/,
     );
     assert.throws(

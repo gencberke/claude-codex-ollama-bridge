@@ -213,6 +213,7 @@ How live global install vs `--dev` works: [RELEASE.md](./docs/RELEASE.md).
 | `cob restore` | Stop, then delete profile + catalog + catalog metadata + cob state, including both diagnostic JSONL files. Root config is untouched |
 | `cob sync` | Refresh `cob-catalog.json` from the selected Codex producer (`COB_CODEX_BIN`, live Desktop bundle, or PATH) + Ollama `/api/tags`. Writes `cob-catalog.meta.json`. A running gateway reloads the catalog on the next request |
 | `cob status` | First line `cob: ok\|ready\|broken\|absent\|unreadable\|stale\|unknown`; exit 1 if cob, the Desktop overlay, or catalog provenance needs action. Read-only overlay + sidecar check. Does not spawn Codex or probe Ollama. After reboot or a dead gateway: `cob start`. `cob status --json` prints one stable `schema_version: 1` JSON object (same assessment, same exit code; no nonce, auth, or content) |
+| `cob diagnostics` | Read-only structural summary of `cob-diagnostics.jsonl.1` plus the active sidecar (`--json` for `schema_version: 1`). Reports file safety, run/request pairing, terminal, bounded error-code, and non-success-kind counts without event bodies |
 | `cob state verify` | Read-only integrity audit of `cob-state/` (`--json` for the same report as `schema_version: 1` JSON). Reports aggregate counts/bytes only: valid, corrupt, unsafe, permission-failing, invalid-filename, missing-archive, orphan-archive, temporary, lineage depth/cycles, and scan-limit state. Exit 0 only for a clean state; cob never repairs, prunes, or rewrites state |
 | `cob smoke` | Catalog, roster, encrypted-content, restore, and native passthrough checks. `cob smoke --live` also pings Ollama through the gateway |
 | `cob pack` | Workspace only: production `tsc` + `npm pack` (no `*.test.js` in the tarball) |
@@ -234,6 +235,20 @@ for example:
 COB_DIAGNOSTIC_JSONL=1 node dist/cli.js start --dev
 ```
 
+`COB_DEV_MODE=1` is the development switch. It implies the sidecar above and
+adds four per-request fields to `request_end`: `thread_sha8`,
+`parent_thread_sha8`, `cpu_ms`, and `rss_mb`. The thread digest is a plain
+unsalted `sha256` prefix, so a run is correlated by hashing a rollout's own
+thread id and filtering on it — neither record carries content. `cpu_ms` is
+the process CPU delta while the request was in flight and `rss_mb` is the
+process RSS observed at completion; concurrent work may contribute, so these
+are process-window observations rather than per-request attribution. Together
+with the existing `first_event_latency_ms`, they separate prefill from
+generation and correlate a request with the thread that issued it. Dev mode
+starts no worker, makes no provider call, and never
+fails a request; `cob status` reports `dev mode: on` so an instrumented
+gateway is not mistaken for a default one.
+
 With the environment value exactly `1`, cob writes private mode-0600
 `$CODEX_HOME/cob-diagnostics.jsonl` plus at most one rotated
 `cob-diagnostics.jsonl.1`; each file is bounded to 4 MiB and each event to
@@ -243,23 +258,34 @@ diagnostic sidecar writes.
 
 For model-bearing `POST /v1/responses`, compact, and standalone-search calls,
 `request_start` and `request_end` events carry a UTC timestamp, pid,
-process-local sequence, ephemeral keyed fp8 for within-process duplicate
-grouping, model SHA-8, and bounded structural metrics. Health, catalog,
+content-free process `run_sha8`, process-local sequence, ephemeral keyed fp8
+for within-process duplicate grouping, model SHA-8, and bounded structural
+metrics. Pair on `run_sha8 + pid + request_seq + request_fp8`; this prevents
+sequence reuse after a restart from merging different runs. Compaction events
+carry the parent request's run and sequence. Health, catalog,
 shutdown, unsupported-protocol, and 404 traffic is deliberately excluded so
 probes cannot inflate provider-request counts. End events also carry
 status/timing, provider-attempt counts, `gateway_retry_count = 0`, retry-after
-presence, and only provider-supplied usage when available. For Ollama-bound
+presence, a closed `terminal`, a bounded cob `error_code` for classified
+failures, and only provider-supplied usage when available. Ollama non-success
+terminals additionally preserve `failed`, `incomplete`, or `error` in
+`non_success_kind`. For Ollama-bound
 requests, `request_end` optionally records outbound stream mode (`outbound_stream`),
 response content-type class (`response_content_type_class`), selected decoder mode
 (`decoder_mode`), and dropped hosted tools count (`hosted_tools_dropped_n`). Events never
 contain prompts, outputs, tool names or IDs, auth, or raw errors. Writes are
-best effort: sink
-failures never fail a request, and diagnostics make no model/provider calls,
-retries, queue, or background worker. Controller retry/no-progress handling
-remains external and unavailable.
+best effort: sink failures never fail a request, and diagnostics make no
+model/provider calls, retries, queue, or background worker. Sink loss is not
+silent: `cob status [--json]` reports dropped/oversized events, write failures,
+rotations, discarded backups, and the last bounded failure code. `cob
+diagnostics [--json]` reads the backup plus active sidecar without following
+symlinks and reports content-free event, run, request, terminal, error-code,
+and non-success-kind counts. Controller retry/no-progress handling remains
+external and unavailable. The normative boundary and change checklist are in
+[ERROR-HANDLING.md](./docs/ERROR-HANDLING.md).
 
-This behavior is present in the current global build. Structured persistence
-remains opt-in; its historical presence is not evidence of a new canary.
+Structured persistence remains opt-in; its historical presence is not
+evidence of a new canary or of the current workspace hardening.
 [STATUS.md](./STATUS.md) remains the authority for live state and evidence.
 
 Live Codex/Ollama traces are the ship gate, not the mock suite. Isolation,
@@ -314,7 +340,7 @@ picker.
 
 Encrypted V2 child tasks return HTTP 400 and are never sent to Ollama. v1 is Responses-only: Chat Completions are not translated. For an Ollama `POST /v1/responses`, a top-level `previous_response_id` is resolved from cob's local checkpoint archive, provider-safe history is merged with the new input, and the field is removed before the Ollama request. Missing, corrupt, incompatible, or unsafe state fails closed with a structured 4xx response asking for full context. Native compaction is triggered only by one terminal `compaction_trigger` item; the trigger is transient and never enters Ollama history. Ollama threads summarize that history locally and return a cob-owned compaction envelope to Codex.
 
-Gate 1-3 research exception (default off): an isolated `cob.toml` `[experimental]` policy may rewrite only an exact, explicitly fingerprinted `gpt-5.6-sol` `collaboration.spawn_agent`, `collaboration.send_message`, and `collaboration.followup_task` schema to non-reserved plaintext aliases and restore each V2 identity on the native response. This is a dev canary, not Ollama V2 support: Ollama rows remain `multi_agent_version = "v1"`, live `:18790` is unchanged, and schema absence, drift, ambiguity, or encrypted child content fails closed. Isolated Gate 4 additionally proves the preserved canonical `interrupt_agent` leaf can stop an active child; it adds no alias or catalog capability. Restart/replay behavior remains unenabled. Enable only in an isolated home after recording `native_plaintext_spawn_schema_sha256`.
+Plaintext collaboration wire (default off): a `cob.toml` `[experimental]` policy may rewrite only the exact, explicitly fingerprinted `collaboration.spawn_agent`, `collaboration.send_message`, and `collaboration.followup_task` schema to non-reserved plaintext aliases and restore each V2 identity on the native response. This exists because a child inherits its parent's protocol version and ignores its own catalog row, so a ChatGPT-backed V2 parent hands its child a Fernet task body that no local party can read; removing the encryption flag from three tool declarations makes the model emit a readable task instead. No key is used and nothing is forged. This is not Ollama V2 support: Ollama rows remain `multi_agent_version = "v1"`. The model slug is not a gate — whichever native model Codex hands that namespace is covered, and a request without the namespace passes through untouched. A live home may arm it only with a pinned digest; on schema drift an isolated home fails closed and a live home passes the request through unrewritten, so a Codex update degrades the feature instead of breaking the gateway. `cob status` reports `native plaintext spawn: armed` or a stale digest with the exact key to update. Isolated Gate 4 additionally proves the preserved canonical `interrupt_agent` leaf can stop an active child. Restart/replay behavior remains unenabled.
 
 Gate 5 is a separate, default-off catalog opt-in for an isolated `--dev` home:
 `[catalog] apply_patch = true` adds cob-owned
@@ -397,9 +423,10 @@ apply_patch = false
 # auto_compact_token_limit = 230400
 
 [experimental]
-# Gate 1-3 only; default is false and the schema digest is mandatory when true.
+# Plaintext collaboration wire. Default false. A digest is mandatory when true
+# on a live home; `cob status` reports the observed one after any Codex update.
 native_plaintext_spawn = false
-# native_plaintext_spawn_schema_sha256 = "<64 hex chars from the isolated schema canary>"
+# native_plaintext_spawn_schema_sha256 = "<64 hex chars reported by cob status>"
 ```
 
 Model-specific effort defaults are not inferred from historical experiments.

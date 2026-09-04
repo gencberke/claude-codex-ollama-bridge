@@ -3,6 +3,25 @@
 Workspace proposal for [openai/codex](https://github.com/openai/codex). Not packed.
 Not a cob product change. Do not implement this inside cob.
 
+> **Superseded in part, 2026-09-04.** This document's original premise — that
+> Gate 6 could not be reached without upstream `agentControl/*` — is disproven.
+> The gold sequence `spawn → send_message × 2 (same child, in flight) → wait →
+> followup_task → wait` ran end to end over cob's existing transport on Codex
+> 0.153, in plaintext, with fixture nonces and Unicode intact, and again on a
+> second run. See `docs/IMPLEMENTATION-PLAN.md` §2.2.
+>
+> What actually blocked Gate 6 was the parent model's own choice to wait
+> between the two sends, recorded then as `controller_sequencing_observed`.
+> An explicit instruction changed that choice, so the blocker was policy, not
+> transport, and not a missing client method.
+>
+> What remains genuinely out of cob's reach is the narrower goal below:
+> driving a child **deterministically, without a model turn in between**. That
+> is still a reason to want these methods, and it is still cob-external. The
+> sections that follow are kept for that argument and as the historical record
+> of the 0.149 measurement; read the "Why cob cannot close Gate 6" heading as
+> "why cob cannot schedule children deterministically".
+
 Future source checks use `/Users/gencberke/Documents/github/opencodex`.
 Read-only verification on **2026-09-02** found package version **2.39.0** at
 commit **`af6113a0381d6fff2e4dce587652825c7eeb6423`**. The controller findings below

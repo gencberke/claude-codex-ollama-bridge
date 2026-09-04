@@ -317,6 +317,7 @@ describe("cli session", () => {
 
 describe("strict cli grammar", () => {
   it("parses config show/apply as exact nested Codex commands", () => {
+    assert.equal(parseCliArgs(["node", "cob", "diagnostics", "--json"]).command, "diagnostics");
     assert.equal(parseCliArgs(["node", "cob", "config", "show", "--json"]).command, "config show");
     assert.equal(parseCliArgs(["node", "cob", "config", "apply", "--json"]).command, "config apply");
     assert.equal(parseCliArgs(["node", "cob", "codex", "config", "show", "--json"]).command, "config show");

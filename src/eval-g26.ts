@@ -27,6 +27,7 @@ type Count<T extends string | number | boolean> = { value: T; count: number };
 type RequestBase = {
   timestamp: string;
   pid: number;
+  run_sha8?: string;
   request_seq: number;
   request_fp8: string;
   route: string;
@@ -148,7 +149,7 @@ export function evaluateG26Sidecar(
   const endKeys = new Set(ends.map(requestKey));
   const startsWithoutEnd = [...startKeys].filter((key) => !endKeys.has(key)).length;
   const endsWithoutStart = [...endKeys].filter((key) => !startKeys.has(key)).length;
-  const fingerprintCounts = countStrings(starts.map((event) => `${event.pid}:${event.request_fp8}`));
+  const fingerprintCounts = countStrings(starts.map((event) => `${event.run_sha8 ?? event.pid}:${event.request_fp8}`));
   const repeated = [...fingerprintCounts.values()].filter((count) => count > 1);
   const providerAttempts = ends.map((event) => event.provider_attempts);
   const gatewayRetries = ends.map((event) => event.gateway_retry_count);
@@ -249,6 +250,7 @@ function requestBaseValid(value: Record<string, unknown>): value is Record<strin
   return (
     typeof value.timestamp === "string" &&
     Number.isSafeInteger(value.pid) &&
+    (value.run_sha8 === undefined || typeof value.run_sha8 === "string") &&
     Number.isSafeInteger(value.request_seq) &&
     typeof value.request_fp8 === "string" &&
     typeof value.route === "string" &&
@@ -268,7 +270,7 @@ function inWindow(timestamp: string, fromMs: number, toMs: number): boolean {
 }
 
 function requestKey(event: RequestBase): string {
-  return `${event.pid}:${event.request_seq}`;
+  return `${event.run_sha8 ?? event.pid}:${event.pid}:${event.request_seq}:${event.request_fp8}`;
 }
 
 function validDecoderTuple(event: RequestEnd): boolean {

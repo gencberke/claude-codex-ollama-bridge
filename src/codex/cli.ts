@@ -10,6 +10,7 @@ import { DEFAULT_SPAWNABLE_OLLAMA_SLUGS } from "./config/schema.js";
 import { resolveCliSession, type CliSession } from "./session.js";
 import { restoreCob, serveForeground, startGatewayDetached, stopGateway, syncCatalog } from "./runtime/lifecycle.js";
 import { statusReport } from "./runtime/status.js";
+import { formatDiagnosticReport, readDiagnosticReport } from "./runtime/diagnostics.js";
 import { formatStateVerifyReport, verifyStateIntegrity } from "./state/verify.js";
 import { runSmoke } from "./smoke.js";
 import { configApply, configShow } from "./config/control.js";
@@ -157,6 +158,16 @@ export async function runCodexCli(flags: CliFlags): Promise<void> {
       if (!status.ok) process.exitCode = 1;
       return;
     }
+    case "diagnostics": {
+      const report = readDiagnosticReport(paths.diagnostics);
+      if (flags.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(formatDiagnosticReport(report));
+      }
+      if (!report.clean) process.exitCode = 1;
+      return;
+    }
     case "state verify": {
       const report = verifyStateIntegrity(paths.stateDir);
       if (flags.json) {
@@ -254,6 +265,7 @@ Usage (Codex):
   cob restore
   cob sync
   cob status [--json]
+  cob diagnostics [--json]    read-only structural summary of the diagnostic sidecar
   cob state verify [--json]   read-only state integrity audit
   cob config show --json       read-only panel configuration and picker state
   cob config apply --json      apply a versioned panel patch from stdin

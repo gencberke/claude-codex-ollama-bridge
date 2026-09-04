@@ -9,6 +9,7 @@ import {
 } from "./codex/ollama.js";
 import {
   collectOllamaWireToolNames,
+  createOllamaTerminalTrack,
   declareOllamaWireTools,
   emptyOllamaToolDeclaration,
   formatOllamaGuardLog,
@@ -18,6 +19,9 @@ import {
   ollamaGuardHttpBody,
   ollamaGuardMessage,
   ollamaGuardSseTerminal,
+  ollamaNonSuccessCode,
+  observeOllamaSseFrame,
+  sanitizeOllamaNonSuccessTerminal,
   type OllamaResponseGuardState,
   type OllamaToolDeclaration,
 } from "./codex/ollama-response-boundary.js";
@@ -226,6 +230,38 @@ describe("Ollama final tool declaration", () => {
       guardOllamaJsonResponse(jsonResponse([functionCall("spawn_agent")]), declaration)?.code,
       "ollama_undeclared_tool_call",
     );
+  });
+});
+
+describe("Ollama non-success terminals", () => {
+  it("classifies failed, incomplete, and typed error terminals", () => {
+    const cases = [
+      [{ type: "response.failed", response: { status: "failed" } }, "failed"],
+      [{ type: "response.incomplete", response: { status: "incomplete" } }, "incomplete"],
+      [{ type: "error", error: { message: "SECRET_PROVIDER_ERROR" } }, "error"],
+    ] as const;
+    for (const [frame, expected] of cases) {
+      const track = createOllamaTerminalTrack();
+      assert.equal(observeOllamaSseFrame(track, frame), "withhold");
+      assert.equal(track.phase, "held-non-success");
+      assert.equal(track.nonSuccessKind, expected);
+    }
+  });
+
+  it("replaces provider error detail with a cob-owned terminal error", () => {
+    const terminal = sanitizeOllamaNonSuccessTerminal(
+      { type: "error", error: { code: "SECRET_CODE", message: "SECRET_PROVIDER_ERROR" } },
+      "error",
+    );
+    assert.deepEqual(terminal, {
+      type: "error",
+      error: {
+        type: "server_error",
+        code: ollamaNonSuccessCode("error"),
+        message: "Ollama response failed; retry or resend the full context.",
+      },
+    });
+    assert.equal(JSON.stringify(terminal).includes("SECRET"), false);
   });
 });
 

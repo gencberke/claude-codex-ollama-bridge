@@ -51,9 +51,8 @@ export function decodeRequestBody(raw: Buffer, contentEncoding?: string): Decode
       inflated = brotliDecompressSync(raw, limits);
     }
     return { body: stripBom(inflated), decoded: true };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new RequestDecodeError(`Failed to decompress request body (${detail})`);
+  } catch {
+    throw new RequestDecodeError("Failed to decompress request body.");
   }
 }
 

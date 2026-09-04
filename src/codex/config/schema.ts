@@ -59,14 +59,21 @@ export type CatalogPolicy = {
 };
 
 /**
- * Isolated Gate 1 experiment. This is deliberately not a catalog capability:
- * it changes the native Sol request/response wire and is therefore disabled
- * unless a caller supplies the exact schema fingerprint observed in its
- * isolated Codex home.
+ * This is deliberately not a catalog capability: it changes the native
+ * request/response wire for whichever model carries the collaboration
+ * namespace, and is therefore disabled unless a caller supplies the exact
+ * schema fingerprint observed in its own Codex home.
  */
 export type NativePlaintextSpawnPolicy = {
   enabled: boolean;
   schemaSha256?: string;
+  /**
+   * Runtime-derived, never parsed from `cob.toml`. A live home leaves an
+   * unrecognized schema unrewritten so one Codex update cannot take the
+   * Desktop gateway down; an isolated home keeps the canary's fail-closed
+   * reject.
+   */
+  degradeOnDrift?: boolean;
 };
 
 export type ExperimentalPolicy = {

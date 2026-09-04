@@ -32,7 +32,7 @@ import {
   prepareProfileAndCatalog,
   readRootConfig,
   readStartLease,
-  restrictExperimentalToIsolatedHome,
+  restrictExperimentalOnLiveHome,
   RootConfigUnreadableError,
   cobOwnedFiles,
   overlayStateFiles,
@@ -49,7 +49,7 @@ import { isHealthyRuntime, readRuntime, waitForHealth, writeRuntime } from "./co
 import { closePrivateLogFd, openPrivateLogFd } from "./codex/runtime/log-fd.js";
 import { runCodexCli } from "./codex/cli.js";
 import type { CliFlags } from "./cli-session.js";
-import { statusReport } from "./codex/runtime/status.js";
+import { describeDiagnosticLog, describePlaintextSpawn, statusReport } from "./codex/runtime/status.js";
 import { resolvePaths } from "./codex/paths.js";
 import { cobProcessIdentity, isOurCobArgv, processStartKey } from "./core/process-info.js";
 
@@ -73,7 +73,7 @@ describe("lifecycle primitives", () => {
     assert.equal(existsSync(`${paths.diagnostics}.1`), false);
   });
 
-  it("forces Gate 5 and native plaintext off before a live home policy is persisted", () => {
+  it("forces Gate 5 off on a live home and keeps a pinned native plaintext policy", () => {
     const cob = {
       compaction: { provider: "native" as const },
       subagents: { models: ["ollama/deepseek-v4-flash:0731-cloud"] },
@@ -82,15 +82,78 @@ describe("lifecycle primitives", () => {
         nativePlaintextSpawn: { enabled: true, schemaSha256: "5".repeat(64) },
       },
     };
-    const isolated = restrictExperimentalToIsolatedHome(cob, false);
+    const isolated = restrictExperimentalOnLiveHome(cob, false);
     assert.equal(isolated.catalog?.applyPatch, true);
     assert.equal(isolated.experimental?.nativePlaintextSpawn.enabled, true);
     assert.equal(isolated.experimental?.nativePlaintextSpawn.schemaSha256, "5".repeat(64));
 
-    const live = restrictExperimentalToIsolatedHome(cob, true);
+    const live = restrictExperimentalOnLiveHome(cob, true);
     assert.equal(live.catalog?.applyPatch, false);
-    assert.equal(live.experimental?.nativePlaintextSpawn.enabled, false);
-    assert.equal(live.experimental?.nativePlaintextSpawn.schemaSha256, undefined);
+    assert.equal(live.experimental?.nativePlaintextSpawn.enabled, true);
+    assert.equal(live.experimental?.nativePlaintextSpawn.schemaSha256, "5".repeat(64));
+  });
+
+  it("reports a stale plaintext spawn digest only while the wire is armed", () => {
+    assert.equal(describePlaintextSpawn({}), undefined);
+    assert.equal(describePlaintextSpawn({ native_plaintext_spawn: { enabled: false, drift: null } }), undefined);
+    assert.equal(
+      describePlaintextSpawn({ native_plaintext_spawn: { enabled: true, pinned: true, drift: null } }),
+      "native plaintext spawn: armed",
+    );
+    const stale = describePlaintextSpawn({
+      native_plaintext_spawn: {
+        enabled: true,
+        pinned: true,
+        drift: { code: "native_plaintext_spawn_schema_mismatch", observed_schema_sha256: "a".repeat(64), count: 3 },
+      },
+    });
+    assert.match(stale ?? "", /schema drift after 3 requests/);
+    assert.match(stale ?? "", /native_plaintext_spawn_schema_sha256 = "a{64}"/);
+    const missing = describePlaintextSpawn({
+      native_plaintext_spawn: {
+        enabled: true,
+        pinned: true,
+        drift: { code: "native_plaintext_spawn_schema_shape", count: 1 },
+      },
+    });
+    assert.match(missing ?? "", /no replacement digest was observed/);
+    assert.equal(missing?.includes('= "-"'), false);
+  });
+
+  it("formats content-free diagnostic sink health", () => {
+    const line = describeDiagnosticLog({
+      state: "failed",
+      fd_open: false,
+      dropped_event_count: 7,
+      oversize_drop_count: 2,
+      write_failure_count: 1,
+      rotation_count: 3,
+      discarded_backup_count: 2,
+      last_failure_code: "write_failed",
+    });
+    assert.equal(
+      line,
+      "diagnostics: failed dropped=7 oversize=2 failures=1 rotations=3 discarded_backups=2 last_failure=write_failed",
+    );
+  });
+
+  it("disarms an unpinned native plaintext policy on a live home", () => {
+    // Without a digest every fingerprinted-model turn would be rejected, so the
+    // live gateway degrades to the unrewritten path instead of failing closed.
+    const unpinned = {
+      compaction: { provider: "native" as const },
+      subagents: { models: ["ollama/deepseek-v4-flash:0731-cloud"] },
+      catalog: { supportsSearchTool: true, applyPatch: false },
+      experimental: { nativePlaintextSpawn: { enabled: true } },
+    };
+    assert.equal(
+      restrictExperimentalOnLiveHome(unpinned, false).experimental?.nativePlaintextSpawn.enabled,
+      true,
+    );
+    assert.equal(
+      restrictExperimentalOnLiveHome(unpinned, true).experimental?.nativePlaintextSpawn.enabled,
+      false,
+    );
   });
 
   it("gives unique temp names for concurrent writes", () => {

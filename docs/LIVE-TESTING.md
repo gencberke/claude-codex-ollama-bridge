@@ -771,9 +771,12 @@ best-effort and non-failing: a diagnostic sink error must not fail a gateway
 request. Existing typed diagnostic events may still emit JSON to stderr.
 
 Persisted `request_start`/`request_end` pairs cover model-bearing Responses,
-compact, and standalone-search POST calls and correlate by `pid` plus a
-process-local `request_seq`; `request_fp8` is an ephemeral process-local
-fingerprint and `model_sha8` is a model hash. Health, catalog, shutdown,
+compact, and standalone-search POST calls. Current workspace source correlates
+them by `run_sha8 + pid + request_seq + request_fp8`; the content-free run
+digest prevents process/sequence reuse after restart from merging two runs.
+`request_fp8` is an ephemeral process-local fingerprint and `model_sha8` is a
+model hash. Compaction events copy the enclosing request's run and sequence.
+Health, catalog, shutdown,
 unsupported-protocol, and 404 traffic is excluded so it cannot inflate the
 provider-request count. The pairs retain only structural
 request metrics, status/timing, `provider_attempts`, `gateway_retry_count`,
@@ -804,6 +807,15 @@ content-free diagnostic/audit status. `agent-local retry_count` is the
 model/agent's own reported or locally measured retry field. It is separate
 from retries performed by the provider transport and from controller retries;
 never combine those counters or infer one from another.
+
+Before scoring a current workspace capture, run `cob status --json` and reject
+silent sink loss: dropped/oversized events, write failures, rotations that
+discarded the previous backup, and the last bounded failure code are reported
+by the gateway health snapshot. Then run `cob diagnostics --json` for the
+read-only backup-plus-active summary. Every failed request must have a closed
+`terminal` and bounded `error_code`; `non_success` must additionally have one
+of `failed`, `incomplete`, or `error`. These fields and the reader are
+post-0.3.3 workspace hardening and do not change any historical receipt below.
 
 Gold requires both lanes to show `invalid_json=0`, provider retries `=0`,
 controller retries `=0`, no-progress repeats `=0`, duplicate signatures `=0`,
