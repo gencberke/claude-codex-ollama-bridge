@@ -1,4 +1,4 @@
-# Status — 2026-09-04 (as of 14:20 +03)
+# Status — 2026-09-04 (workspace as of 20:41 +03; live as of 14:20 +03)
 
 This file is the current maintainer checkpoint: what is live, what exists only
 in the workspace, what is blocked, and what may happen next. It is not a
@@ -19,24 +19,26 @@ authority for the current live/workspace snapshot.
 
 ## Current snapshot
 
-This is the sole current live/workspace snapshot authority. The facts below
+This is the sole current live/workspace snapshot authority. Live facts below
 are from the latest **real-environment** probe at 2026-09-04 14:20 +03 after
-the user-installed 0.3.3 artifact. A sandboxed
-loopback probe can falsely report the gateway as unreachable; live health
-claims require a real-environment `cob status` probe.
+the user-installed 0.3.3 artifact. Workspace and candidate-artifact facts are
+current through 20:41 +03. A sandboxed loopback probe can falsely report the
+gateway as unreachable; live health claims require a real-environment
+`cob status` probe.
 
-| Surface | Current state as of 2026-09-04 14:20 +03 |
+| Surface | Current state (live 14:20 +03; workspace 20:41 +03) |
 | --- | --- |
 | Product scope | **cob Codex only.** Direct Ollama main, and a native GPT parent → Ollama child over the plaintext collaboration wire, are the validated product paths. The pre-0.3.2 "native GPT parent → Ollama V1 child" claim held only for a `gpt-5.6-luna` parent; a `gpt-5.6-sol` parent failed 19 of 19 times. |
 | Live Codex gateway | Global cob **0.3.3**, `127.0.0.1:18790`, **dev mode on**, plaintext wire **armed** with the Desktop digest `5e042d4fbf2390b3011d7ec123661cf5c7aa42fb9793e592c3555972f04b56e3`. Health `ok`, overlay `ok`. Catalog provenance is **stale** after Desktop updated itself to `codex-cli 0.153.1`; the fix is `cob sync`, then fully quit and reopen Desktop if catalog bytes change. |
-| Live artifact | Exact 0.3.3 artifact, 92 entries, 200,584 bytes, SHA-256 `e3a111a3cc53b1217a771d619bdfdfa536fc4d8193fa0a22080331bd9f33d480`. Its source is **uncommitted** in the workspace; `RELEASE.md`'s basic cut does not require a commit and none was authorized. No tag or GitHub release. Never repack these bytes. |
+| Live artifact | Exact 0.3.3 artifact, 92 entries, 200,584 bytes, SHA-256 `e3a111a3cc53b1217a771d619bdfdfa536fc4d8193fa0a22080331bd9f33d480`. Its exact pre-hardening source was never committed as an independent checkpoint; it was later incorporated into 0.3.4 together with subsequent changes. No tag or GitHub release. Never repack these bytes. |
+| Prepared install candidate | cob **0.3.4**, source commit `cdcdf6d629f985f25b0545268e1fb7ae024821fe` pushed to `origin/master`. Exact tarball: 93 entries, 207,181 bytes, SHA-256 `74614984714cc9ca91445a9bf728b560bf637b164ca328543f5e0bed0ef56237`. Ready for an authorized global replacement; **not installed, started, or live-canary tested**. |
 | Prior live artifact | 0.3.2 artifact, 92 entries, 199,522 bytes, SHA-256 `a0893e950731054c405f5da5d1cd20229d95104e86a50ed9f9701c953532f802`. History/rollback only. |
 | Rollback target | 0.3.1 tarball, 92 entries, 195,596 bytes, SHA-256 `0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`; its source checkpoint is pushed on `master`. Rollback is `npm install -g ./codex-ollama-bridge-0.3.1.tgz` then `cob start`. |
 | Published release | 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`; source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. Still the last tagged/GitHub release. |
 | Earlier preview | Burned 0.2.4-preview.0 tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. Its failed G26-B evidence remains historical. |
 | Rollback artifact | Burned 0.2.3 tarball, SHA-256 `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`; history/rollback only. |
-| Source checkout | The 0.3.2 and 0.3.3 product source is **uncommitted** on `master`, together with the earlier repo-only menu follow-up and the workspace-only error/dev-mode hardening below. Both artifacts were packed and installed before that hardening. `npx tsc --noEmit` clean; latest `npm test`: 814 pass, 4 documented skips. The last tagged/GitHub release remains `v0.3.0` at `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`. |
-| Workspace error/dev hardening | **Implemented and mock-verified; not packed, installed, restarted, or live-canary tested.** Adds safe JSON/SSE error boundaries, closed request terminals/codes and Ollama non-success subtype, process-run and compaction correlation, observable sidecar loss/rotation health, catalog reload fallback visibility, and `cob diagnostics [--json]`. Contract: [ERROR-HANDLING.md](./docs/ERROR-HANDLING.md). |
+| Source checkout | The accumulated 0.3.2/0.3.3 source, repo-only menu follow-up, and error/dev-mode hardening are checkpointed as cob **0.3.4** at `cdcdf6d629f985f25b0545268e1fb7ae024821fe` and pushed to `origin/master`. `npx tsc --noEmit` clean; latest `npm test`: 814 pass, 4 documented skips. The last tagged/GitHub release remains `v0.3.0` at `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`. |
+| Workspace error/dev hardening | **Implemented, mock-verified, committed, pushed, and packed in the 0.3.4 candidate; not installed, restarted, or live-canary tested.** Adds safe JSON/SSE error boundaries, closed request terminals/codes and Ollama non-success subtype, process-run and compaction correlation, observable sidecar loss/rotation health, catalog reload fallback visibility, and `cob diagnostics [--json]`. Contract: [ERROR-HANDLING.md](./docs/ERROR-HANDLING.md). |
 | Codex | PATH Codex **0.149.0**; Desktop **0.153.1**, self-updated mid-session from `0.153.0-alpha.5`. The plaintext wire's digest still matches across that update. |
 | Ollama | Client/daemon **0.33.3**. Configured Ollama rows are discovered without cob's former five-row picker cap; exact availability still follows fresh `/api/tags` evidence. |
 | Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned and cob never writes it. Current SHA-256: `226314c5323d6cf3820a4b891abcfc017676d48c3eb1141f8f9f17605ad0a803`. |
@@ -82,11 +84,10 @@ content-free receipts and interpretation boundaries are in the G26 section of
 ## Release checkpoint
 
 The last published source/tag remains the Codex-scoped `v0.3.0` release. The
-exact 0.3.3 artifact recorded above is now global and healthy. Unlike 0.3.1,
-its source checkpoint is **not** committed: `RELEASE.md`'s basic cut does not
-require one and none was authorized. No tag, GitHub release, or new Gold claim
-follows from the status probe alone. Any runtime change after this immutable
-artifact requires a new version.
+exact 0.3.3 artifact recorded above remains global and healthy at the latest
+live probe. The next source checkpoint is 0.3.4 at `cdcdf6d`; its exact
+install candidate is prepared but not installed or live-validated. No tag,
+GitHub release, or new Gold claim follows from preparing that artifact.
 
 ### 0.3.2 and 0.3.3: plaintext collaboration wire and dev mode
 

@@ -8,6 +8,18 @@ Current live version, health, overlay, workspace, and catalog authority are
 recorded only in [STATUS.md](../STATUS.md). This file records release/install
 events and the rollback procedure.
 
+Prepared 0.3.4 global-install candidate (2026-09-04): source checkpoint
+`cdcdf6d629f985f25b0545268e1fb7ae024821fe` was committed and pushed to
+`origin/master`. The exact source passed `npx tsc --noEmit`, 818 Node tests
+(814 pass, 4 intentional skips), and `git diff --check`. Exactly one npm
+artifact was produced: `codex-ollama-bridge-0.3.4.tgz`, 93 entries, 207,181
+bytes, SHA-256
+`74614984714cc9ca91445a9bf728b560bf637b164ca328543f5e0bed0ef56237`.
+The tarball identifies version 0.3.4 and excludes tests, harnesses, `gate6h`,
+`eval-*`, sources, IDE files, and the separately built menu app. It is ready
+for an explicitly authorized global replacement but has not been installed,
+started, or live-canary tested. Live remains the burned 0.3.3 artifact.
+
 Completed 0.3.3 installation event (2026-09-04): the working tree was versioned
 as 0.3.3 and passed `npx tsc --noEmit`, 804 Node tests (800 pass, 4 intentional
 skips), and `git diff --check`. Exactly one npm artifact was packed:
