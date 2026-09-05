@@ -8,6 +8,7 @@ import {
   compactUsageEventFromMetrics,
   compactUsageEventFromEnvelope,
   createGatewayRequestContext,
+  recordRequestOutcome,
   emitGatewayDiagnosticEvent,
   emitGatewayDiagnosticEventTo,
   formatGatewayDiagnosticEvent,
@@ -49,6 +50,37 @@ function captureStderr(fn: () => void): string {
   }
   return lines.join("\n");
 }
+
+describe("request outcome recording", () => {
+  it("keeps the first classification and never records a sourceless failure", () => {
+    const context = createGatewayRequestContext("/v1/responses");
+    // The precise terminal is recorded where the failure is detected...
+    recordRequestOutcome(context, {
+      terminal: "invalid_json",
+      source: "cob_limit",
+      code: "ollama_response_invalid_json",
+    });
+    // ...and the generic one a shared response writer produces further out
+    // must not replace it. This exact overwrite made every counter reading
+    // `terminal` undercount the invalid-JSON class.
+    recordRequestOutcome(context, { terminal: "http_error", source: "provider", code: "http_502" });
+    assert.equal(context.terminal, "invalid_json");
+    assert.equal(context.termination_source, "cob_limit");
+    assert.equal(context.error_code, "ollama_response_invalid_json");
+
+    // Every failure carries whose decision it was. The type makes a
+    // sourceless failure unrepresentable; this asserts the runtime agrees.
+    const fresh = createGatewayRequestContext("/v1/responses");
+    recordRequestOutcome(fresh, { terminal: "stream_error", source: "transport" });
+    assert.equal(fresh.termination_source, "transport");
+
+    // A completed request has no source: nobody "decided" to end it.
+    const ok = createGatewayRequestContext("/v1/responses");
+    recordRequestOutcome(ok, { terminal: "completed" });
+    assert.equal(ok.terminal, "completed");
+    assert.equal(ok.termination_source, undefined);
+  });
+});
 
 describe("gateway diagnostic events", () => {
   it("redacts persisted model names and ignores sink failures", () => {

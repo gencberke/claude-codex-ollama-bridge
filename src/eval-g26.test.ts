@@ -59,15 +59,28 @@ describe("G26 sidecar evaluator", () => {
     assert.equal(receipt.duplicates.repeat_excess, 0);
     assert.deepEqual(receipt.successful_usage, {
       records: 2,
-      input_tokens: 20,
-      output_tokens: 4,
-      total_tokens: 24,
+      input_tokens: { present: 2, sum: 20 },
+      output_tokens: { present: 2, sum: 4 },
+      total_tokens: { present: 2, sum: 24 },
     });
     assert.deepEqual(receipt.reason_codes, []);
     const serialized = JSON.stringify(receipt);
     assert.equal(serialized.includes(MODEL), false);
     assert.equal(serialized.includes("fp-1"), false);
     assert.equal(serialized.includes("prompt"), false);
+  });
+
+  it("does not report a partially measured usage field as a measured zero", () => {
+    const receipt = evaluateG26Sidecar(
+      [start(1), end(1, { usage: { input_tokens: 42 } })],
+      { lane: "A", from: FROM, to: TO, model: MODEL, expectedHostedDrop: 1 },
+    );
+    assert.deepEqual(receipt.successful_usage, {
+      records: 1,
+      input_tokens: { present: 1, sum: 42 },
+      output_tokens: { present: 0, sum: null },
+      total_tokens: { present: 0, sum: null },
+    });
   });
 
   it("fails observable transport on retries, duplicates, decoder drift, and malformed JSONL", () => {

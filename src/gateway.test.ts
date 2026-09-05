@@ -3759,6 +3759,199 @@ describe("gateway", () => {
     }
   });
 
+  it("reaches the same outcome however the SSE bytes are chunked", { timeout: 10_000 }, async () => {
+    // Chunk boundaries are an accident of the network. Any classification that
+    // depends on where a frame happens to be split is a latent bug that no
+    // single-shot fixture catches, so drive the identical stream through three
+    // very different splits and require one identical outcome.
+    const frames =
+      `data: {"type":"response.output_item.added","item":{"type":"message"}}\n\n` +
+      `data: {"type":"response.output_item.done","item":{"type":"message"}}\n\n` +
+      `data: {"type":"response.incomplete","response":{"status":"incomplete",` +
+      `"incomplete_details":{"reason":"max_output_tokens"}}}\n\n`;
+    const splits: Record<string, number> = { byteAtATime: 1, awkward: 7, wholeBody: frames.length };
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, size] of Object.entries(splits)) {
+      const events: GatewayDiagnosticEventV1[] = [];
+      const previous = process.env.COB_DIAGNOSTIC_JSONL;
+      process.env.COB_DIAGNOSTIC_JSONL = "1";
+      const port = await freePort();
+      const server = await listenGateway({
+        stateDir: TEST_STATE_DIR,
+        port,
+        catalog: TEST_CATALOG,
+        diagnosticSink: { write: (event) => events.push(event) },
+        ollamaFetch: async () => {
+          const bytes = new TextEncoder().encode(frames);
+          let offset = 0;
+          const stream = new ReadableStream({
+            pull(controller) {
+              if (offset >= bytes.length) {
+                controller.close();
+                return;
+              }
+              controller.enqueue(bytes.slice(offset, offset + size));
+              offset += size;
+            },
+          });
+          return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+        },
+      });
+      try {
+        await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+        }).then((r) => r.text());
+        const end = events.find((event) => event.kind === "request_end");
+        outcomes[label] = {
+          terminal: end?.terminal,
+          kind: end?.non_success_kind,
+          reason: end?.non_success_reason,
+          source: end?.termination_source,
+        };
+      } finally {
+        if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+        else process.env.COB_DIAGNOSTIC_JSONL = previous;
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    }
+    assert.deepEqual(outcomes.byteAtATime, {
+      terminal: "non_success",
+      kind: "incomplete",
+      reason: "max_output_tokens",
+      source: "provider",
+    });
+    assert.deepEqual(outcomes.awkward, outcomes.byteAtATime);
+    assert.deepEqual(outcomes.wholeBody, outcomes.byteAtATime);
+  });
+
+  it("fingerprints the final Ollama wire, not the inbound client payload", { timeout: 5_000 }, async () => {
+    const events: GatewayDiagnosticEventV1[] = [];
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const port = await freePort();
+    let sentTools: unknown;
+    const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
+      port,
+      catalog: TEST_CATALOG,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async (_url, init) => {
+        sentTools = (JSON.parse(String(init?.body)) as JsonObject).tools;
+        return new Response(JSON.stringify(ollamaCompletedBody()), {
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    try {
+      // A hosted web_search tool is dropped on the way to Ollama, so the
+      // outbound tool list differs from the one the client sent.
+      const clientTools = [
+        { type: "web_search" },
+        { type: "function", name: "shell", parameters: { type: "object", properties: {} } },
+      ];
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "ollama/deepseek-v4-flash:cloud",
+          input: "hi",
+          tools: clientTools,
+        }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal((sentTools as unknown[]).length, 1, "hosted web_search must be dropped on the wire");
+
+      const start = events.find((event) => event.kind === "request_start");
+      const end = events.find((event) => event.kind === "request_end");
+      assert.equal(start?.metrics?.tools_n, 2, "request_start describes the inbound client payload");
+      assert.equal(end?.wire?.tools_n, 1, "request_end.wire describes the bytes actually sent");
+      assert.notEqual(
+        end?.wire?.tools_sha8,
+        start?.metrics?.tools_sha8,
+        "the two fingerprints must be independently observable",
+      );
+      assert.equal(end?.wire?.promoted_n, 0);
+      assert.ok((end?.wire?.bytes ?? 0) > 0);
+      assert.equal(start?.metrics?.client_max_output_tokens, false);
+    } finally {
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("cuts a runaway Ollama SSE at the configured ceiling", { timeout: 5_000 }, async () => {
+    const events: GatewayDiagnosticEventV1[] = [];
+    const previous = process.env.COB_DIAGNOSTIC_JSONL;
+    process.env.COB_DIAGNOSTIC_JSONL = "1";
+    const port = await freePort();
+    let pushed = 0;
+    let cancelled = false;
+    const server = await listenGateway({
+      stateDir: TEST_STATE_DIR,
+      port,
+      catalog: TEST_CATALOG,
+      ollamaMaxResponseBytes: 4_096,
+      diagnosticSink: { write: (event) => events.push(event) },
+      ollamaFetch: async () => {
+        const frame = `data: {"delta":"${"x".repeat(512)}"}\n\n`;
+        const stream = new ReadableStream({
+          pull(controller) {
+            // A generation that would never stop on its own. The ceiling, not
+            // the idle timer, has to be what ends it.
+            pushed += 1;
+            controller.enqueue(new TextEncoder().encode(frame));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ollama/deepseek-v4-flash:cloud", input: "hi", stream: true }),
+      });
+      const text = await response.text();
+      // ERROR-HANDLING rule 5: a cob-owned failure after SSE headers owes the
+      // client exactly one response.failed carrying the stable code, plus one
+      // [DONE]. A bare EOF would make a cob policy look like an upstream fault.
+      assert.equal(text.split("response.failed").length - 1, 1, "exactly one failed terminal");
+      assert.equal(text.split("data: [DONE]").length - 1, 1, "exactly one [DONE]");
+      assert.match(text, /ollama_response_stream_too_large/);
+      assert.equal(text.includes("response.completed"), false, "a cut must never be followed by success");
+      assert.ok(text.length < 64 * 1024, `expected an early cut, relayed ${text.length} bytes`);
+      assert.ok(cancelled, "the upstream stream must be released, not left generating");
+      const end = events.find((event) => event.kind === "request_end");
+      assert.equal(end?.terminal, "overflow");
+      assert.equal(end?.error_code, "ollama_response_stream_too_large");
+      const terminal = events.find((event) => event.kind === "upstream_terminal");
+      assert.equal(terminal?.terminal, "overflow");
+      assert.equal(terminal?.limit_bytes, 4_096);
+      assert.ok((terminal?.raw_bytes ?? 0) > 4_096);
+      // A cut is a lost turn, so it must be visible without dev mode.
+      const health = await fetch(`http://127.0.0.1:${port}/healthz`).then((r) => r.json() as Promise<JsonObject>);
+      const ceiling = health.ollama_stream_ceiling as { cuts?: number; limit_bytes?: number } | undefined;
+      assert.equal(ceiling?.cuts, 1);
+      assert.equal(ceiling?.limit_bytes, 4_096);
+    } finally {
+      if (previous === undefined) delete process.env.COB_DIAGNOSTIC_JSONL;
+      else process.env.COB_DIAGNOSTIC_JSONL = previous;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("cancels the upstream headers wait when the client aborts", async () => {
     let aborted = false;
     let entered!: () => void;

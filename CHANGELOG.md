@@ -8,6 +8,139 @@ untagged preview is valid. How to cut a release: [RELEASE.md](./docs/RELEASE.md)
 Ship decisions still follow live traces in [LIVE-TESTING.md](./docs/LIVE-TESTING.md),
 not this file.
 
+## 0.4.0 — 2026-09-05
+
+An iteration-discipline release. The theme is that a request's outcome, an
+artifact's identity, and the boundary between "measured zero" and "not
+measured" each now live in exactly one place, so a change can be attributed,
+reviewed, and rolled back without re-deriving them from prose.
+
+Entries are grouped by change class (see `AGENTS.md`): a measurement
+correction changes what an observation means, a bug fix changes demonstrably
+wrong behaviour, and an experimental policy is a default whose value evidence
+has not yet justified.
+
+**Verified bug fixes** — each has a test that fails without the change
+
+
+- Preserve the provider error code the controller acts on. A `response.failed`
+  carrying a supported code (`context_length_exceeded`, `insufficient_quota`,
+  `rate_limit_exceeded`, `model_not_found`, `invalid_api_key`,
+  `billing_hard_limit_reached`) now keeps that code instead of being collapsed
+  into the generic `ollama_response_failed`. Codex classifies retryable versus
+  fatal from this code, so the old behaviour could turn a fatal context or
+  quota failure into a retryable one and make the controller repeat work that
+  cannot succeed. The set is closed and the message stays cob-owned; no
+  upstream text and no unlisted code is ever relayed.
+- Stop the shared JSON writer from overwriting a more precise request terminal.
+  A path that recorded `invalid_json`, `invalid_response`, `guard_rejection`
+  or `overflow` at the point of detection had it replaced by the generic
+  `http_error` on the way out, so any counter reading `terminal` undercounted
+  that class. First classification now wins.
+- Fail closed when a namespaced tool leaf and a flat function collide on the
+  same wire name (namespace `audit` plus leaf `read` against a function named
+  `audit.read`). The top-level name check applied only to the reserved
+  `functions` namespace, so the provider could accept both definitions and cob
+  could no longer tell which one an incoming call meant.
+- A response-ceiling cut now emits exactly one cob-owned `response.failed`
+  plus one `[DONE]`, matching ERROR-HANDLING rule 5 and the traversal-overflow
+  path, instead of ending the stream at EOF. A cob policy decision should not
+  reach the controller looking like an upstream fault.
+
+**Measurement corrections** — no behaviour change
+
+- Record `request_end.termination_source`: `provider`, `cob_limit`,
+  `transport`, or `client`. `terminal` says what happened; this says whose
+  decision it was. The two are different facts, and `HTTP 200` plus a cob byte
+  limit plus a failed checkpoint was never describable as one `http_error`.
+  `cob diagnostics` summarizes the counts.
+- Stop reporting unmeasured usage as measured zero in the G26 evaluator. Each
+  numeric field now carries `{ present, sum }`, with `sum: null` when no
+  record supplied it, so a receipt can no longer present partial data as a
+  definite total.
+
+**Measurement corrections — artifact identity, recorded instead of retyped**
+
+- `cob pack` now writes `dist/build-manifest.json` into the artifact between
+  build and pack: package version, source commit, whether the tree was dirty,
+  a digest over the production JavaScript that shipped, the file count, and
+  the diagnostic schema version. The tarball's own SHA-256 stays out by
+  construction — an artifact cannot contain its own digest — and belongs in
+  the receipt written after packing.
+- `cob status` prints that identity, and says plainly when an artifact
+  predates the manifest rather than inventing one. Version, commit and test
+  checkpoint had been carried by hand across STATUS, RELEASE and the plan, and
+  had repeatedly disagreed with reality.
+- A pack whose manifest cannot be written now fails. An artifact without its
+  own identity reintroduces exactly the drift the manifest exists to prevent.
+
+**Contracts, not line-by-line mirrors** — tests only
+
+- Lock chunk-boundary independence: the same SSE content split one byte at a
+  time, on an awkward seven-byte boundary, and as a single body must produce
+  one identical outcome. Chunk boundaries are an accident of the network, and
+  any classification that depends on them is a latent bug no single-shot
+  fixture catches.
+- Lock that a namespaced tool leaf colliding with a flat function on the same
+  wire name is rejected before dispatch, and that the response-ceiling cut is
+  visible on `/healthz`.
+- Record every request outcome through one function whose type makes a
+  failure without a termination source unrepresentable, and keep the first
+  classification when a shared response writer later reports a generic one.
+
+**Experimental policy carried forward, not justified**
+
+- The Ollama response ceiling (default 2.5 MiB, from 0.3.5) remains a damage
+  limiter under evaluation, not a fix for runaway generation. It would be
+  retired by any of: a cut whose response would have completed, an increase in
+  controller retries, or a worse total cost per completed task. `cob status`
+  now reports every cut so a false positive cannot pass unnoticed.
+
+## 0.3.5 — 2026-09-05
+
+Diagnostics, plus one default behaviour change that this entry previously
+mis-scoped as instrumentation-only: the Ollama response ceiling below is on by
+default at 2.5 MiB and cuts a stream that exceeds it.
+
+- Record why Ollama ended a turn. `request_end.non_success_reason` carries a
+  closed vocabulary (`max_output_tokens`, `content_filter`, `length`, `stop`,
+  `timeout`, `cancelled`, `server_error`, `rate_limit`, `max_tokens`) with
+  anything unrecognized collapsed to `other`, so an upstream string can never
+  reach a log, a diagnostic, or a client. `cob diagnostics` summarizes the
+  counts. Six live runaway generations were ended by Ollama's own terminal
+  with no recorded reason, which made it impossible to tell a model output cap
+  from a provider fault.
+- Fingerprint the **final** Ollama wire. `request_end.wire` carries
+  `instr_sha8` / `tools_sha8` / `tools_n` / `input_n` / `bytes` / `promoted_n`
+  taken from the exact payload cob sends, via the existing `onWirePrepared`
+  seam. `request_start.metrics` describes the inbound client payload and is
+  captured before reasoning normalization, deferred-tool promotion, the
+  apply_patch bridge, and the request allowlist run — so it cannot answer
+  whether the provider-facing prompt prefix was stable across a thread, and
+  earlier prefix-stability readings taken from it were measuring the wrong
+  object.
+- Record `request_start.metrics.client_max_output_tokens`, an exact
+  `Object.hasOwn` observation of whether the client sent the field at all.
+
+- Make a ceiling cut impossible to miss: `/healthz` publishes
+  `ollama_stream_ceiling.{limit_bytes,cuts}` and `cob status` prints a line
+  naming the `cob.toml` key to raise when a cut was a legitimate response. A
+  quiet gateway adds no line. The ceiling is a transport safety net, not a
+  solution to runaway generation.
+- Bound one Ollama SSE response with a cumulative byte ceiling, default 2.5 MiB
+  and overridable through `cob.toml` `[limits] ollama_max_response_bytes` or
+  `COB_OLLAMA_MAX_RESPONSE_BYTES`. Live 0.3.3 diagnostics recorded six runaway
+  generations that each streamed 3.83-4.24 MB over 181-254 s before Ollama's own
+  non-success terminal fired, costing 20.7 of 54.4 minutes of Ollama wall time
+  while completed responses peaked at 1.63 MB. The turn is already lost when the
+  ceiling fires; only the duration of the loss is recovered. cob still owns no
+  retry, and the cut ends the stream fail-closed without a `[DONE]`, exactly
+  like the existing idle and stream-error paths.
+- Record a ceiling cut as request terminal `overflow` with the stable code
+  `ollama_response_stream_too_large`, and add `limit_bytes` to the content-free
+  `upstream_terminal` diagnostic so a cut is distinguishable from an idle
+  timeout without reading any response body.
+
 ## 0.3.4 — 2026-09-04
 
 - Harden the opt-in Codex diagnostics path with per-process run identity,

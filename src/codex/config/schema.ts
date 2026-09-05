@@ -80,11 +80,21 @@ export type ExperimentalPolicy = {
   nativePlaintextSpawn: NativePlaintextSpawnPolicy;
 };
 
+export type LimitsPolicy = {
+  /**
+   * Cumulative ceiling on one Ollama SSE response. Omitted means the built-in
+   * default. This bounds how long a runaway generation can burn before cob
+   * ends the already-lost turn; it never adds a retry.
+   */
+  ollamaMaxResponseBytes?: number;
+};
+
 export type CobFileConfig = {
   compaction: CompactionPolicy;
   subagents: SubagentPolicy;
   catalog?: CatalogPolicy;
   experimental?: ExperimentalPolicy;
+  limits?: LimitsPolicy;
 };
 
 export const DEFAULT_CATALOG_POLICY: CatalogPolicy = { supportsSearchTool: true, applyPatch: false };
@@ -282,6 +292,14 @@ export function catalogPolicy(opts: {
     ...(opts.advertiseCloudMaxContext === true ? { advertiseCloudMaxContext: true } : {}),
     ...(typeof opts.activeContextWindow === "number" ? { activeContextWindow: opts.activeContextWindow } : {}),
     ...(typeof opts.autoCompactTokenLimit === "number" ? { autoCompactTokenLimit: opts.autoCompactTokenLimit } : {}),
+  };
+}
+
+export function limitsPolicy(opts: { ollamaMaxResponseBytes?: number }): LimitsPolicy {
+  return {
+    ...(typeof opts.ollamaMaxResponseBytes === "number"
+      ? { ollamaMaxResponseBytes: opts.ollamaMaxResponseBytes }
+      : {}),
   };
 }
 

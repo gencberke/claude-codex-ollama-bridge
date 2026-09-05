@@ -24,6 +24,8 @@ import {
   sanitizeOllamaNonSuccessTerminal,
   type OllamaResponseGuardState,
   type OllamaToolDeclaration,
+  readOllamaNonSuccessReason,
+  readOllamaPreservedErrorCode,
 } from "./codex/ollama-response-boundary.js";
 import { PROMOTED_LEAF_CAP } from "./codex/tool-search.js";
 import type { JsonObject } from "./core/json.js";
@@ -262,6 +264,50 @@ describe("Ollama non-success terminals", () => {
       },
     });
     assert.equal(JSON.stringify(terminal).includes("SECRET"), false);
+  });
+});
+
+describe("Ollama non-success reason", () => {
+  it("reads only a closed vocabulary and never carries provider text", () => {
+    assert.equal(
+      readOllamaNonSuccessReason({ response: { incomplete_details: { reason: "max_output_tokens" } } }),
+      "max_output_tokens",
+    );
+    // status_details is the alternate carrier; both resolve the same way.
+    assert.equal(
+      readOllamaNonSuccessReason({ response: { status_details: { reason: "content_filter" } } }),
+      "content_filter",
+    );
+    // Anything unrecognized collapses to `other`, so an upstream string can
+    // never reach a diagnostic, a log line, or a client.
+    assert.equal(
+      readOllamaNonSuccessReason({
+        response: { incomplete_details: { reason: "upstream said: user prompt was rejected" } },
+      }),
+      "other",
+    );
+    assert.equal(readOllamaNonSuccessReason({ response: { status: "failed" } }), undefined);
+    assert.equal(readOllamaNonSuccessReason({ response: { incomplete_details: { reason: 42 } } }), undefined);
+  });
+});
+
+describe("Ollama provider error semantics", () => {
+  it("preserves a supported provider code and drops everything else", () => {
+    // Codex decides retryable-vs-fatal from this code. Collapsing a context or
+    // quota failure into the generic code turns a fatal error into a retryable
+    // one and can make the controller repeat work that cannot succeed.
+    const context = { response: { error: { code: "context_length_exceeded", message: "raw upstream text" } } };
+    assert.equal(readOllamaPreservedErrorCode(context), "context_length_exceeded");
+    const sanitized = sanitizeOllamaNonSuccessTerminal(context, "failed");
+    const error = (sanitized.response as { error: { code: string; message: string } }).error;
+    assert.equal(error.code, "context_length_exceeded");
+    assert.equal(error.message.includes("raw upstream text"), false, "provider text must never be relayed");
+
+    // An unlisted code falls back to the generic cob-owned identifier.
+    const unlisted = { response: { error: { code: "some_new_upstream_code" } } };
+    assert.equal(readOllamaPreservedErrorCode(unlisted), undefined);
+    const generic = sanitizeOllamaNonSuccessTerminal(unlisted, "failed");
+    assert.equal((generic.response as { error: { code: string } }).error.code, "ollama_response_failed");
   });
 });
 

@@ -15,6 +15,7 @@ import {
   formatInstallLine,
   samePath,
 } from "./core/install-detection.js";
+import { digestDistTree } from "./core/build-manifest.js";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -392,6 +393,31 @@ describe("strict cli grammar", () => {
 });
 
 describe("npm pack manifest", () => {
+  it("hashes exactly the JavaScript files npm ships", () => {
+    const root = tempDir("cob-build-manifest-");
+    const dist = join(root, "dist");
+    try {
+      mkdirSync(join(dist, "nested"), { recursive: true });
+      writeFileSync(join(dist, "cli.js"), "cli");
+      writeFileSync(join(dist, "nested", "runtime.js"), "runtime");
+      writeFileSync(join(dist, "nested", "write-build-manifest.js"), "nested writer");
+      const expected = digestDistTree(dist);
+
+      // These files are produced by the build but npm excludes the root
+      // writer and test-only JavaScript from the published artifact.
+      writeFileSync(join(dist, "write-build-manifest.js"), "writer");
+      writeFileSync(join(dist, "build-manifest.json"), "{}\n");
+      for (const name of ["one.test.js", "one.harness.js", "gate6h.js", "eval-one.js"]) {
+        writeFileSync(join(dist, name), name);
+      }
+
+      assert.deepEqual(digestDistTree(dist), expected);
+      assert.equal(expected.fileCount, 3);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps tests and harnesses out of the published files list", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
       files: string[];
@@ -402,6 +428,20 @@ describe("npm pack manifest", () => {
     assert.equal(pkg.files.includes("!dist/**/gate6h.js"), true);
     assert.equal(pkg.files.includes("!dist/**/eval-*.js"), true);
     assert.equal(pkg.files.includes("src"), false);
+    // The artifact must carry its own build identity; without this entry the
+    // manifest is generated at pack time and then silently left behind.
+    assert.equal(pkg.files.includes("dist/build-manifest.json"), true);
+    assert.equal(pkg.files.includes("!dist/write-build-manifest.js"), true);
+  });
+
+  it("emits the build manifest from the build, so every pack path gets one", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    // Generating it only inside one packaging path is how the same rule ends
+    // up implemented twice and the two copies disagree.
+    assert.match(pkg.scripts.build ?? "", /write-build-manifest\.js/);
+    assert.match(pkg.scripts.pack ?? "", /npm run build/);
   });
 
   it("emits the executable entrypoint next to compiled tests", () => {

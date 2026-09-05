@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fetchHealthz, healthNonceOk, healthPid, isCobHealth, readRuntime, runtimeStillServing } from "./runtime.js";
 import { discoverCodexBins, type CatalogDiscovery, type InspectCodexIo } from "../catalog/source.js";
 import { detectInstall, formatInstallLine } from "../../core/install-detection.js";
+import { formatBuildManifestLine, readBuildManifest } from "../../core/build-manifest.js";
 import { isLiveCodexHome } from "../home.js";
 import { isRecord } from "../../core/json.js";
 import { resolveCobConfig, resolveSpawnableOllamaSlugs } from "../config/resolve.js";
@@ -86,6 +87,7 @@ export async function statusReport(
   let health = "unknown";
   let liveCompaction: string | undefined;
   let livePlaintextSpawn: string | undefined;
+  let liveStreamCeiling: string | undefined;
   let liveDevMode = false;
   let liveDiagnostics: DiagnosticLogSnapshot | undefined;
   const fetched = await fetchHealthz(runtime.port, runtime.nonce);
@@ -107,6 +109,7 @@ export async function statusReport(
       }
     }
     livePlaintextSpawn = describePlaintextSpawn(fetched.body);
+    liveStreamCeiling = describeOllamaStreamCeiling(fetched.body);
     liveDevMode = isRecord(fetched.body) && fetched.body.dev_mode === true;
     liveDiagnostics = readDiagnosticLogSnapshot(fetched.body);
   }
@@ -127,11 +130,17 @@ export async function statusReport(
   if (runtime.version) {
     details.push(`gateway release: ${runtime.version} (${runtime.installKind ?? "unknown"})`);
   }
+  // The exact bytes a run was served by, so a canary receipt and a release
+  // record can cite one identity instead of three prose copies of it.
+  details.push(formatBuildManifestLine(readBuildManifest(install.packageRoot)));
   if (liveDevMode) {
     details.push(`dev mode: on (per-request diagnostics at ${paths.diagnostics})`);
   }
   if (liveDiagnostics) {
     details.push(describeDiagnosticLog(liveDiagnostics));
+  }
+  if (liveStreamCeiling) {
+    details.push(liveStreamCeiling);
   }
   if (livePlaintextSpawn) {
     details.push(livePlaintextSpawn);
@@ -155,6 +164,23 @@ export async function statusReport(
     install,
     liveHome,
   });
+}
+
+/**
+ * A ceiling cut is a lost turn, so it is reported the moment it happens. A
+ * quiet gateway adds no line, keeping the default status output unchanged.
+ */
+export function describeOllamaStreamCeiling(body: unknown): string | undefined {
+  if (!isRecord(body) || !isRecord(body.ollama_stream_ceiling)) return undefined;
+  const ceiling = body.ollama_stream_ceiling;
+  const cuts = typeof ceiling.cuts === "number" ? ceiling.cuts : 0;
+  if (cuts <= 0) return undefined;
+  const limit = typeof ceiling.limit_bytes === "number" ? ceiling.limit_bytes : undefined;
+  const bound = limit === undefined ? "the configured ceiling" : `${limit} bytes`;
+  return (
+    `ollama stream ceiling: cut ${cuts} response${cuts === 1 ? "" : "s"} at ${bound}` +
+    "; each cut is a lost turn — raise limits.ollama_max_response_bytes in cob.toml if these were legitimate"
+  );
 }
 
 /**

@@ -411,6 +411,12 @@ function registerNamespacedWireTools(
     reservedByAlias.set(wireName, identity);
   }
   for (const { wireName, identity, reservedFunctions } of entries) {
+    // A namespaced leaf and a flat function can land on the same wire name
+    // (namespace `audit` + leaf `read` collides with a function literally
+    // named `audit.read`). The provider would accept both and cob could no
+    // longer tell which one a call meant, so every namespaced entry — not
+    // only the reserved `functions` ones — must clear the top-level names.
+    if (topLevelNames.has(wireName)) blocked.add(wireName);
     if (reservedFunctions !== true) {
       const reserved = reservedByAlias.get(wireName);
       if (reserved && identityKey(reserved) !== identityKey(identity)) blocked.add(wireName);

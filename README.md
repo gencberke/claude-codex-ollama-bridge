@@ -242,9 +242,10 @@ unsalted `sha256` prefix, so a run is correlated by hashing a rollout's own
 thread id and filtering on it — neither record carries content. `cpu_ms` is
 the process CPU delta while the request was in flight and `rss_mb` is the
 process RSS observed at completion; concurrent work may contribute, so these
-are process-window observations rather than per-request attribution. Together
-with the existing `first_event_latency_ms`, they separate prefill from
-generation and correlate a request with the thread that issued it. Dev mode
+are process-window observations rather than per-request attribution. They correlate a request with
+the thread that issued it. They do **not** separate prefill from generation:
+`first_event_latency_ms` is time to the first stream chunk, which Ollama emits
+with the response headers, so no prefill figure can be derived from it. Dev mode
 starts no worker, makes no provider call, and never
 fails a request; `cob status` reports `dev mode: on` so an instrumented
 gateway is not mistaken for a default one.
@@ -427,6 +428,12 @@ apply_patch = false
 # on a live home; `cob status` reports the observed one after any Codex update.
 native_plaintext_spawn = false
 # native_plaintext_spawn_schema_sha256 = "<64 hex chars reported by cob status>"
+
+# [limits]
+# Cumulative ceiling on one Ollama SSE response, in bytes. Default 2621440
+# (2.5 MiB). A runaway generation is already a lost turn; the ceiling decides
+# how many seconds that loss costs instead of minutes. cob adds no retry.
+# ollama_max_response_bytes = 2621440
 ```
 
 Model-specific effort defaults are not inferred from historical experiments.

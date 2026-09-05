@@ -131,9 +131,15 @@ alias. Its isolated canary has one real 0731 child-native custom `apply_patch`
 edit; it does not authorize live enablement, shell writes, nested V2,
 restart/replay, worktree, or Desktop claims.
 
-Gate-specific dispositions and evidence are not recorded here. Current
-machine, workspace, and canary state belongs in [STATUS.md](./STATUS.md);
-repeatable procedures and receipts belong in [LIVE-TESTING.md](./docs/LIVE-TESTING.md).
+Gate-specific dispositions and evidence are not recorded here. The five
+documents hold five different things and must not borrow each other's job:
+this file holds permanent constraints; [STATUS.md](./STATUS.md) holds only the
+current snapshot and the short list of open decisions;
+[LIVE-TESTING.md](./docs/LIVE-TESTING.md) holds procedures and version-bound
+receipts; [RELEASE.md](./docs/RELEASE.md) holds the immutable
+artifact/install history; and the implementation plan holds only the active
+hypothesis and the next decision. A finished experiment leaves the plan for
+LIVE-TESTING; a superseded artifact fact leaves STATUS for RELEASE.
 Do not treat a fixture, isolated canary, picker success, or model chat as
 product gold without the required trace or receipt. Gate 6's transport is now
 measured — the two-sends-then-wait sequence completed over the plaintext wire
@@ -163,6 +169,41 @@ Live catalog generation prefers Desktop's bundled Codex; `cob status` must
 explain producer/consumer skew via `cob-catalog.meta.json` without spawning
 Codex. First-line kinds include `stale` and `unknown`. Do not claim Desktop
 hot-reloaded the catalog; say fully quit and reopen ChatGPT Desktop.
+
+## Change classes and evidence labels
+
+Every work package declares three lines before any edit:
+
+> Behaviour changed: …
+> Evidence that justifies it: …
+> Result that would prove it wrong: …
+
+Keep the three classes of change apart, in separate packages and separate
+changelog entries:
+
+1. **Measurement correction** — fixes what an observation means. No behaviour
+   change.
+2. **Verified bug fix** — fixes behaviour that is demonstrably wrong, with a
+   test that fails without it.
+3. **Experimental policy** — a performance or safety default whose value is
+   not yet justified by evidence.
+
+Mixing them makes a performance result unattributable: 0.3.5 was described as
+instrumentation-only while shipping a default response ceiling, and the two
+could not afterwards be told apart in the same measurement. A class-3 change
+must name the result that would retire it.
+
+Claims in every document carry one of four labels, and the label is part of
+the claim:
+
+- **measured** — observed in a live trace or a receipt, with the population
+  named. A number without a population is not measured.
+- **inferred** — derived from measurements, and only as strong as the
+  weakest step. State the step that could break it.
+- **proposed** — a design intention. Never cite a proposal as evidence.
+- **superseded** — kept for history, with what replaced it. Do not delete a
+  wrong claim silently; retract it where it was made, so a later reader does
+  not find it accepted in one section and withdrawn in another.
 
 ## Logging and evidence boundaries
 

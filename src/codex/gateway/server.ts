@@ -24,6 +24,7 @@ import {
   type GatewayOptions,
 } from "./responses.js";
 import { gatewayDevModeEnabled, gatewayDiagnosticJsonlEnabled } from "../diagnostic-event.js";
+import { OLLAMA_MAX_RESPONSE_BYTES } from "../limits.js";
 import { DiagnosticLog } from "../runtime/diagnostic-log.js";
 
 /**
@@ -128,6 +129,10 @@ async function handleRequest(
       },
       dev_mode: gatewayDevModeEnabled(),
       ...(diagnosticLog ? { diagnostics: diagnosticLog.snapshot() } : {}),
+      ollama_stream_ceiling: {
+        limit_bytes: options.ollamaMaxResponseBytes ?? OLLAMA_MAX_RESPONSE_BYTES,
+        cuts: options.ollamaStreamCeilingCuts ?? 0,
+      },
       native_plaintext_spawn: {
         enabled: options.nativePlaintextSpawn?.enabled === true,
         pinned: (options.nativePlaintextSpawn?.schemaSha256 ?? "").length > 0,

@@ -226,6 +226,20 @@ native_exclude = [
     );
   });
 
+  it("round-trips an explicit Ollama response ceiling", () => {
+    const parsed = parseCobToml(`[compaction]\nprovider = "native"\n\n[limits]\nollama_max_response_bytes = 1500000\n`);
+    assert.equal(parsed.limits?.ollamaMaxResponseBytes, 1_500_000);
+    // A start rewrites cob.toml; an operator's ceiling must survive that.
+    assert.equal(parseCobToml(renderCobToml(parsed)).limits?.ollamaMaxResponseBytes, 1_500_000);
+    // Absent stays absent, so the built-in default is never frozen into the file.
+    const bare = parseCobToml(`[compaction]\nprovider = "native"\n`);
+    assert.equal(parseCobToml(renderCobToml(bare)).limits?.ollamaMaxResponseBytes, undefined);
+    assert.throws(
+      () => parseCobToml(`[limits]\nollama_max_response_bytes = "2500000"\n`),
+      (error: unknown) => error instanceof CobConfigError,
+    );
+  });
+
   it("treats an explicit empty spawn list as none spawnable", () => {
     const parsed = parseCobToml(`[subagents]\nmodels = []\n`);
     assert.deepEqual(parsed.subagents.models, []);

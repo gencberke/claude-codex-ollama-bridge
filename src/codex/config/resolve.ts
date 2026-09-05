@@ -7,6 +7,7 @@ import {
   catalogPolicy,
   compactionPolicy,
   experimentalPolicy,
+  limitsPolicy,
   parseCompactionProvider,
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
@@ -37,6 +38,7 @@ export function resolveCobConfig(opts: {
   applyPatch?: boolean;
   nativePlaintextSpawn?: boolean;
   nativePlaintextSpawnSchemaSha256?: string;
+  ollamaMaxResponseBytes?: number;
   env?: NodeJS.ProcessEnv;
 }): CobFileConfig {
   const env = opts.env ?? process.env;
@@ -105,6 +107,10 @@ export function resolveCobConfig(opts: {
     ),
     "experimental.native_plaintext_spawn_schema_sha256",
   );
+  const ollamaMaxResponseBytes =
+    opts.ollamaMaxResponseBytes ??
+    parsePositiveInt(env.COB_OLLAMA_MAX_RESPONSE_BYTES, "COB_OLLAMA_MAX_RESPONSE_BYTES") ??
+    file?.limits?.ollamaMaxResponseBytes;
   return {
     compaction: compactionPolicy({ provider, model, ollamaThreads, ollamaModel, ollamaEffort }),
     subagents: subagentModels ? { models: subagentModels } : {},
@@ -121,6 +127,7 @@ export function resolveCobConfig(opts: {
       nativePlaintextSpawn,
       schemaSha256: nativePlaintextSpawnSchemaSha256,
     }),
+    limits: limitsPolicy({ ollamaMaxResponseBytes }),
   };
 }
 

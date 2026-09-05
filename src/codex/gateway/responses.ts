@@ -74,6 +74,8 @@ import {
 import {
   NATIVE_HEADERS_TIMEOUT_MS,
   OLLAMA_HEADERS_TIMEOUT_MS,
+  OLLAMA_MAX_RESPONSE_BYTES,
+  OllamaStreamCeilingError,
 } from "../limits.js";
 import {
   BodyAbortedError,
@@ -101,6 +103,8 @@ import {
   compactUsageEventFromMetrics,
   compactUsageEventFromEnvelope,
   createGatewayRequestContext,
+  recordRequestOutcome,
+  type GatewayTerminationSource,
   elapsedMs,
   emitGatewayDiagnosticEventTo,
   diagnosticSha8,
@@ -189,6 +193,14 @@ export type GatewayOptionsBase = {
   headersMs?: number;
   nativeHeadersMs?: number;
   ollamaHeadersMs?: number;
+  /** Cumulative ceiling on one Ollama SSE response; default OLLAMA_MAX_RESPONSE_BYTES. */
+  ollamaMaxResponseBytes?: number;
+  /**
+   * Process-local count of streams the ceiling cut. A cut is a lost turn, so
+   * it must never be silent: `/healthz` publishes this and `cob status`
+   * renders it, the same way schema drift is reported. Content-free.
+   */
+  ollamaStreamCeilingCuts?: number;
   /** @deprecated one-release alias for headersMs */
   connectMs?: number;
   idleMs?: number;
@@ -346,6 +358,7 @@ function markRequestStart(
       tools_n: metrics.toolsCount,
       input_n: metrics.inputCount,
       previous_response_id: metrics.previousResponseId,
+      client_max_output_tokens: metrics.clientMaxOutputTokens,
       effort: normalizeDiagnosticEffort(metrics.reasoningEffort),
       tools_sha8: metrics.toolsSha,
       instructions_sha8: metrics.instructionsSha,
@@ -565,10 +578,11 @@ export async function handleResponsesPost(
       // stored alias history on the final Ollama wire.
       allowTrustedApplyPatchAliasHistory: continuation.parentResponseId !== undefined,
       supportsReasoning: catalogRowSupportsReasoning(catalogSnapshot, catalogModel),
-      onWirePrepared: ({ bridge, stream }) => {
+      onWirePrepared: ({ bridge, stream, fingerprint }) => {
         if (!request) return;
         request.outbound_stream = stream;
         request.hosted_tools_dropped_n = bridge.hostedToolsDroppedN;
+        request.wire = fingerprint;
       },
     });
     if (isOllamaReject(forwarded)) {
@@ -878,10 +892,11 @@ async function handleOllamaSummaryCompact(
       signal: abort.signal,
       headersMs: resolveOllamaHeadersMs(options),
       supportsReasoning,
-      onWirePrepared: ({ bridge, stream }) => {
+      onWirePrepared: ({ bridge, stream, fingerprint }) => {
         if (!request) return;
         request.outbound_stream = stream;
         request.hosted_tools_dropped_n = bridge.hostedToolsDroppedN;
+        request.wire = fingerprint;
       },
     });
   } catch (error) {
@@ -919,7 +934,7 @@ async function handleOllamaSummaryCompact(
   }
   if (abort.signal.aborted) {
     emitCompactFailure(options, compactNote, "ollama_compaction_aborted", request);
-    if (request) request.terminal = "client_abort";
+    recordRequestOutcome(request, { terminal: "client_abort", source: "client" });
     return;
   }
   if (upstream.status < 200 || upstream.status >= 300) {
@@ -1053,11 +1068,11 @@ async function handleOllamaSummaryCompact(
   });
   if (abort.signal.aborted) {
     emitCompactFailure(options, compactNote, "ollama_compaction_aborted", request);
-    if (request) request.terminal = "client_abort";
+    recordRequestOutcome(request, { terminal: "client_abort", source: "client" });
     return;
   }
   if (request) {
-    request.terminal = "completed";
+    recordRequestOutcome(request, { terminal: "completed" });
     request.response_bytes = rawBody.length;
   }
   if (stream) {
@@ -1330,11 +1345,14 @@ function logOllamaStreamIncomplete(
   sink?: GatewayDiagnosticSink,
 ): void {
   if (request) {
-    request.terminal = terminal;
-    request.response_bytes = capture.rawBytes;
-    if (terminal !== "client_abort") {
-      request.error_code = terminal === "idle" ? "idle_timeout" : "upstream_stream_error";
-    }
+    recordRequestOutcome(request, {
+      terminal,
+      source: terminal === "client_abort" ? "client" : "transport",
+      responseBytes: capture.rawBytes,
+      ...(terminal === "client_abort"
+        ? {}
+        : { code: terminal === "idle" ? "idle_timeout" : "upstream_stream_error" }),
+    });
   }
   emitGatewayDiagnosticEventTo({
     schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
@@ -1353,6 +1371,41 @@ function logOllamaStreamIncomplete(
           held_malformed: track.malformed,
         }
       : {}),
+  }, sink);
+}
+
+/**
+ * Record a ceiling cut. Structural only: the limit, the bytes relayed before
+ * the cut, and the terminal phase the held-terminal tracker had reached. No
+ * response content, tool name, or provider text is retained.
+ */
+function logOllamaStreamCeiling(
+  status: number,
+  error: OllamaStreamCeilingError,
+  capture: StreamCapture,
+  track?: OllamaTerminalTrack,
+  request?: GatewayRequestContext,
+  sink?: GatewayDiagnosticSink,
+): void {
+  if (request) {
+    recordRequestOutcome(request, {
+      terminal: "overflow",
+      source: "cob_limit",
+      code: error.code,
+      responseBytes: capture.rawBytes,
+    });
+  }
+  emitGatewayDiagnosticEventTo({
+    schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
+    kind: "upstream_terminal",
+    terminal: "overflow",
+    status,
+    raw_bytes: capture.rawBytes,
+    limit_bytes: error.limitBytes,
+    completed: capture.sawCompletedEvent,
+    done: capture.sawDone,
+    malformed: capture.malformed,
+    ...(track ? { phase: track.phase } : {}),
   }, sink);
 }
 
@@ -1389,6 +1442,7 @@ function captureObserver(
   capture: StreamCapture,
   suppressDone = false,
   request?: GatewayRequestContext,
+  maxResponseBytes?: number,
 ): SseObserver {
   return {
     suppressDone,
@@ -1397,6 +1451,9 @@ function captureObserver(
         request.first_event_latency_ms = elapsedMs(request.started_ms);
       }
       capture.rawBytes += chunk.length;
+      if (maxResponseBytes !== undefined && capture.rawBytes > maxResponseBytes) {
+        throw new OllamaStreamCeilingError(maxResponseBytes);
+      }
       if (capture.rawBytes > MAX_UPSTREAM_BODY_BYTES) {
         throw new UpstreamLimitError();
       }
@@ -1501,13 +1558,13 @@ async function relayNativeOllamaCompaction(
   if (request) request.response_bytes = raw.length;
   if (abort.signal.aborted) {
     emitCompactFailure(options, compactNote, "native_compaction_aborted", request);
-    if (request) request.terminal = "client_abort";
+    recordRequestOutcome(request, { terminal: "client_abort", source: "client" });
     return;
   }
   const isSse = contentType.includes("text/event-stream") || looksLikeSse(raw);
   if (upstream.status < 200 || upstream.status >= 300) {
     emitCompactFailure(options, compactNote, "native_compaction_http_failed", request);
-    if (request) request.terminal = "http_error";
+    recordRequestOutcome(request, { terminal: "http_error", source: "provider" });
     const headers = { ...copyUpstreamHeaders(upstream), ...extra };
     if (isSse && !headers["content-type"]?.includes("text/event-stream")) {
       headers["content-type"] = "text/event-stream";
@@ -1549,7 +1606,7 @@ async function relayNativeOllamaCompaction(
   }
   if (validationError || !candidate) {
     emitCompactFailure(options, compactNote, "native_compaction_invalid", request);
-    if (request) request.terminal = "invalid_response";
+    recordRequestOutcome(request, { terminal: "invalid_response", source: "cob_limit" });
     const message = "Native compaction response was invalid; resend the full context.";
     if (isSse) {
       markGatewayResponseOutcome(res, "invalid_response", "native_compaction_invalid");
@@ -1568,7 +1625,7 @@ async function relayNativeOllamaCompaction(
     });
   } catch {
     emitCompactFailure(options, compactNote, "native_compaction_checkpoint_failed", request);
-    if (request) request.terminal = "checkpoint_failed";
+    recordRequestOutcome(request, { terminal: "checkpoint_failed", source: "cob_limit" });
     // The native body is still buffered and headers are not sent. Keep the
     // failure provider-safe and deterministic; never echo opaque ciphertext
     // or an implementation error into the client-facing stream.
@@ -1593,7 +1650,7 @@ async function relayNativeOllamaCompaction(
   if (isSse && !headers["content-type"]?.includes("text/event-stream")) {
     headers["content-type"] = "text/event-stream";
   }
-  if (request) request.terminal = "completed";
+  recordRequestOutcome(request, { terminal: "completed" });
   res.writeHead(upstream.status, headers);
   res.end(raw);
 }
@@ -1719,15 +1776,24 @@ export function jsonError(
   });
 }
 
+/**
+ * First classification wins. The shared JSON writer calls this for every
+ * response at or above 400, so without this guard a precise terminal already
+ * recorded at the point of detection — `invalid_json`, `invalid_response`,
+ * `guard_rejection`, `overflow` — was overwritten by the generic
+ * `http_error`, and any counter reading `terminal` undercounted that class.
+ */
 export function markGatewayResponseOutcome(
   res: ServerResponse,
   terminal: GatewayRequestTerminal,
   code?: string,
+  source: GatewayTerminationSource = "cob_limit",
 ): void {
-  const request = responseDiagnostics.get(res);
-  if (!request) return;
-  request.terminal = terminal;
-  if (isDiagnosticErrorCode(code)) request.error_code = code;
+  if (terminal === "completed") {
+    recordRequestOutcome(responseDiagnostics.get(res), { terminal });
+    return;
+  }
+  recordRequestOutcome(responseDiagnostics.get(res), { terminal, source, code });
 }
 
 function structuredErrorCode(body: unknown): string | undefined {
@@ -1997,7 +2063,7 @@ async function relayOllama(
         endOllamaStream(res);
         return;
       }
-      if (request) request.terminal = "http_error";
+      recordRequestOutcome(request, { terminal: "http_error", source: "provider" });
       res.end();
       return;
     }
@@ -2017,7 +2083,13 @@ async function relayOllama(
     try {
       relayed = await relayTransformed(
         nodeStream,
-        ollamaSseTransform(catalogModel, captureObserver(capture, false, request), bridge, declaration, guard),
+        ollamaSseTransform(
+          catalogModel,
+          captureObserver(capture, false, request, resolveOllamaMaxResponseBytes(options)),
+          bridge,
+          declaration,
+          guard,
+        ),
         res,
         {
           idleMs: options.idleMs ?? IDLE_TIMEOUT_MS,
@@ -2028,11 +2100,28 @@ async function relayOllama(
         },
       );
     } catch (error) {
+      if (error instanceof OllamaStreamCeilingError) {
+        // This is a cob-owned decision, not an upstream failure, so it owes the
+        // client the terminal ERROR-HANDLING rule 5 requires: exactly one
+        // response.failed carrying the stable code, plus one [DONE] — the same
+        // shape the traversal-overflow limit already uses. A bare EOF would
+        // leave the controller to infer a cob policy from a truncated stream.
+        options.ollamaStreamCeilingCuts = (options.ollamaStreamCeilingCuts ?? 0) + 1;
+        logOllamaStreamCeiling(upstream.status, error, capture, guard.terminal, request, options.diagnosticSink);
+        if (!res.writableEnded && !res.destroyed) {
+          res.write(ollamaStreamCeilingSseTerminal(error));
+          res.end();
+        }
+        return;
+      }
       if (error instanceof OllamaJsonOverflowError) {
         if (request) {
-          request.terminal = "overflow";
-          request.error_code = error.overflow.code;
-          request.response_bytes = capture.rawBytes;
+          recordRequestOutcome(request, {
+            terminal: "overflow",
+            source: "cob_limit",
+            code: error.overflow.code,
+            responseBytes: capture.rawBytes,
+          });
         }
         console.error(formatOllamaJsonOverflowLog(error.overflow));
         if (!res.writableEnded && !res.destroyed) {
@@ -2075,9 +2164,12 @@ async function relayOllama(
     }
     if (guard.failure) {
       if (request) {
-        request.terminal = "guard_rejection";
-        request.error_code = guard.failure.code;
-        request.response_bytes = 0;
+        recordRequestOutcome(request, {
+          terminal: "guard_rejection",
+          source: "cob_limit",
+          code: guard.failure.code,
+          responseBytes: 0,
+        });
       }
       logApplyPatchObservation(declaration, true, options.diagnosticSink);
       emitGatewayDiagnosticEventTo({
@@ -2099,9 +2191,12 @@ async function relayOllama(
     // Always end with exactly one overflow response.failed plus one [DONE].
     if (guard.overflow) {
       if (request) {
-        request.terminal = "overflow";
-        request.error_code = guard.overflow.code;
-        request.response_bytes = capture.rawBytes;
+        recordRequestOutcome(request, {
+          terminal: "overflow",
+          source: "cob_limit",
+          code: guard.overflow.code,
+          responseBytes: capture.rawBytes,
+        });
       }
       console.error(formatOllamaJsonOverflowLog(guard.overflow));
       if (!res.writableEnded && !res.destroyed) {
@@ -2130,10 +2225,16 @@ async function relayOllama(
       // A single failed/incomplete/error terminal is relayed verbatim once;
       // cob never appends a success [DONE] to it.
       if (request) {
-        request.terminal = "non_success";
         request.non_success_kind = track.nonSuccessKind ?? "error";
-        request.error_code = ollamaNonSuccessCode(request.non_success_kind);
-        request.response_bytes = capture.rawBytes;
+        request.non_success_reason = track.nonSuccessReason;
+        recordRequestOutcome(request, {
+          terminal: "non_success",
+          source: "provider",
+          // Mirror exactly what the client is about to receive, so a
+          // diagnostic and a controller decision can never disagree.
+          code: track.nonSuccessCode ?? ollamaNonSuccessCode(request.non_success_kind),
+          responseBytes: capture.rawBytes,
+        });
       }
       writeOllamaHeldNonSuccessTerminal(res, track, catalogModel, bridge, declaration);
     } else if (okStream) {
@@ -2150,11 +2251,13 @@ async function relayOllama(
   });
   if (request) request.response_bytes = raw.length;
   if (upstream.status < 200 || upstream.status >= 300) {
-    if (request) request.terminal = "http_error";
     const retryAfter = upstream.headers.get("retry-after") ?? undefined;
     const body = normalizeOllamaErrorBody(upstream.status, raw, retryAfter);
-    const errorCode = structuredErrorCode(body);
-    if (request && errorCode) request.error_code = errorCode;
+    recordRequestOutcome(request, {
+      terminal: "http_error",
+      source: "provider",
+      code: structuredErrorCode(body),
+    });
     const headers = copyUpstreamHeaders(upstream);
     headers["content-type"] = "application/json";
     res.writeHead(upstream.status, headers);
@@ -2168,7 +2271,7 @@ async function relayOllama(
     // A successful Ollama response is still an API response that cob must
     // validate before relaying.  Never forward an opaque 2xx body: it could
     // be provider text, an HTML error page, or an untrusted tool dialect.
-    if (request) request.terminal = "invalid_json";
+    recordRequestOutcome(request, { terminal: "invalid_json", source: "cob_limit" });
     emitGatewayDiagnosticEventTo({
       schema_version: GATEWAY_DIAGNOSTIC_SCHEMA_VERSION,
       kind: "ollama_invalid_json",
@@ -2192,16 +2295,17 @@ async function relayOllama(
   // objects fail closed here instead of publishing state.
   const candidate = strictOllamaCompletedEnvelope(parsed);
   if (!candidate) {
-    if (request) request.terminal = "invalid_response";
+    recordRequestOutcome(request, { terminal: "invalid_response", source: "cob_limit" });
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
   const failure = guardOllamaJsonResponse(candidate, declaration);
   if (failure) {
-    if (request) {
-      request.terminal = "guard_rejection";
-      request.error_code = failure.code;
-    }
+    recordRequestOutcome(request, {
+      terminal: "guard_rejection",
+      source: "cob_limit",
+      code: failure.code,
+    });
     logApplyPatchObservation(declaration, true, options.diagnosticSink);
     rejectOllamaJsonGuard(res, failure, declaration, options.diagnosticSink);
     return;
@@ -2215,10 +2319,11 @@ async function relayOllama(
     if (error instanceof UpstreamLimitError) throw error;
     if (error instanceof ConversationStateError) throw error;
     if (error instanceof OllamaJsonOverflowError) {
-      if (request) {
-        request.terminal = "overflow";
-        request.error_code = error.overflow.code;
-      }
+      recordRequestOutcome(request, {
+        terminal: "overflow",
+        source: "cob_limit",
+        code: error.overflow.code,
+      });
       console.error(formatOllamaJsonOverflowLog(error.overflow));
       jsonError(
         res,
@@ -2228,12 +2333,12 @@ async function relayOllama(
       );
       return;
     }
-    if (request) request.terminal = "invalid_response";
+    recordRequestOutcome(request, { terminal: "invalid_response", source: "cob_limit" });
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
   if (declaration.applyPatch && publicBody.includes(COB_APPLY_PATCH_ALIAS)) {
-    if (request) request.terminal = "invalid_response";
+    recordRequestOutcome(request, { terminal: "invalid_response", source: "cob_limit" });
     logApplyPatchObservation(declaration, true, options.diagnosticSink);
     rejectOllamaJsonNormalize(res, declaration);
     return;
@@ -2249,11 +2354,11 @@ async function relayOllama(
   } catch (error) {
     if (error instanceof UpstreamLimitError) throw error;
     if (error instanceof ConversationStateError) throw error;
-    if (request) request.terminal = "checkpoint_error";
+    recordRequestOutcome(request, { terminal: "checkpoint_error", source: "cob_limit" });
     rejectOllamaJsonNormalize(res, declaration);
     return;
   }
-  if (request) request.terminal = "completed";
+  recordRequestOutcome(request, { terminal: "completed" });
   const headers = copyUpstreamHeaders(upstream);
   headers["content-type"] = "application/json";
   res.writeHead(upstream.status, headers);
@@ -2288,7 +2393,7 @@ async function writeOllamaCompletedTerminal(
       throw new Error("Ollama terminal was rejected by the apply-patch rewrite");
     }
     if (request) {
-      request.terminal = "completed";
+      recordRequestOutcome(request, { terminal: "completed" });
       request.response_bytes = responseBytes;
     }
     logApplyPatchObservation(declaration, false, sink);
@@ -2305,7 +2410,11 @@ async function writeOllamaCompletedTerminal(
   } catch (error) {
     logApplyPatchObservation(declaration, true, sink);
     if (error instanceof OllamaJsonOverflowError) {
-      if (request) request.terminal = "overflow";
+      recordRequestOutcome(request, {
+        terminal: "overflow",
+        source: "cob_limit",
+        code: error.overflow.code,
+      });
       console.error(formatOllamaJsonOverflowLog(error.overflow));
       if (!res.writableEnded && !res.destroyed) {
         res.write(ollamaJsonOverflowSseTerminal(error.overflow));
@@ -2313,10 +2422,11 @@ async function writeOllamaCompletedTerminal(
       return;
     }
     const failure = publicStreamFailure(error);
-    if (request) {
-      request.terminal = "stream_error";
-      request.error_code = failure.code;
-    }
+    recordRequestOutcome(request, {
+      terminal: "stream_error",
+      source: "transport",
+      code: failure.code,
+    });
     if (!res.writableEnded && !res.destroyed) {
       res.write(sseErrorTerminal(failure.message, failure.code));
     }
@@ -2424,6 +2534,27 @@ function logApplyPatchObservation(
  * upstream-response traversal overflow. Content-free: no path, key, or value
  * from the offending body.
  */
+/**
+ * The cob-owned terminal for a ceiling cut. The message names the limit as
+ * cob's, not the provider's, so an operator reading a client-side failure is
+ * not sent looking for an Ollama fault that did not happen.
+ */
+function ollamaStreamCeilingSseTerminal(error: OllamaStreamCeilingError): string {
+  const failed = {
+    type: "response.failed",
+    response: {
+      status: "failed",
+      error: {
+        type: "upstream_error",
+        code: error.code,
+        message:
+          "The Ollama response exceeded cob's configured response ceiling and was ended; raise limits.ollama_max_response_bytes or resend the full context.",
+      },
+    },
+  };
+  return `data: ${JSON.stringify(failed)}\n\n${sseDoneTerminal()}`;
+}
+
 function ollamaJsonOverflowSseTerminal(overflow: { code: string }): string {
   const failed = {
     type: "response.failed",
@@ -2438,6 +2569,10 @@ function ollamaJsonOverflowSseTerminal(overflow: { code: string }): string {
     },
   };
   return `data: ${JSON.stringify(failed)}\n\n${sseDoneTerminal()}`;
+}
+
+function resolveOllamaMaxResponseBytes(options: GatewayOptions): number {
+  return options.ollamaMaxResponseBytes ?? OLLAMA_MAX_RESPONSE_BYTES;
 }
 
 function resolveNativeHeadersMs(options: GatewayOptions): number {

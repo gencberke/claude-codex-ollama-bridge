@@ -1,4 +1,4 @@
-# Status — 2026-09-04 (workspace as of 20:41 +03; live as of 14:20 +03)
+# Status — 2026-09-05 (workspace and live as of 2026-09-05 00:1x +03)
 
 This file is the current maintainer checkpoint: what is live, what exists only
 in the workspace, what is blocked, and what may happen next. It is not a
@@ -20,29 +20,31 @@ authority for the current live/workspace snapshot.
 ## Current snapshot
 
 This is the sole current live/workspace snapshot authority. Live facts below
-are from the latest **real-environment** probe at 2026-09-04 14:20 +03 after
-the user-installed 0.3.3 artifact. Workspace and candidate-artifact facts are
-current through 20:41 +03. A sandboxed loopback probe can falsely report the
+are from the latest **real-environment** probe on 2026-09-05 after the
+user-authorized 0.3.5 install. Workspace and candidate-artifact facts are
+current through 2026-09-05. A sandboxed loopback probe can falsely report the
 gateway as unreachable; live health claims require a real-environment
 `cob status` probe.
 
-| Surface | Current state (live 14:20 +03; workspace 20:41 +03) |
+| Surface | Current state (live 2026-09-04 21:26 +03; workspace 2026-09-05) |
 | --- | --- |
 | Product scope | **cob Codex only.** Direct Ollama main, and a native GPT parent → Ollama child over the plaintext collaboration wire, are the validated product paths. The pre-0.3.2 "native GPT parent → Ollama V1 child" claim held only for a `gpt-5.6-luna` parent; a `gpt-5.6-sol` parent failed 19 of 19 times. |
-| Live Codex gateway | Global cob **0.3.3**, `127.0.0.1:18790`, **dev mode on**, plaintext wire **armed** with the Desktop digest `5e042d4fbf2390b3011d7ec123661cf5c7aa42fb9793e592c3555972f04b56e3`. Health `ok`, overlay `ok`. Catalog provenance is **stale** after Desktop updated itself to `codex-cli 0.153.1`; the fix is `cob sync`, then fully quit and reopen Desktop if catalog bytes change. |
-| Live artifact | Exact 0.3.3 artifact, 92 entries, 200,584 bytes, SHA-256 `e3a111a3cc53b1217a771d619bdfdfa536fc4d8193fa0a22080331bd9f33d480`. Its exact pre-hardening source was never committed as an independent checkpoint; it was later incorporated into 0.3.4 together with subsequent changes. No tag or GitHub release. Never repack these bytes. |
-| Prepared install candidate | cob **0.3.4**, source commit `cdcdf6d629f985f25b0545268e1fb7ae024821fe` pushed to `origin/master`. Exact tarball: 93 entries, 207,181 bytes, SHA-256 `74614984714cc9ca91445a9bf728b560bf637b164ca328543f5e0bed0ef56237`. Ready for an authorized global replacement; **not installed, started, or live-canary tested**. |
+| Live Codex gateway | Global cob **0.3.5**, pid 55031 on `127.0.0.1:18790`, **dev mode on**, plaintext wire **armed** with the Desktop digest `5e042d4fbf2390b3011d7ec123661cf5c7aa42fb9793e592c3555972f04b56e3`. Health `ok`, overlay `ok`. Catalog provenance is **fresh** from Desktop `codex-cli 0.153.1`; the earlier stale disposition is resolved. |
+| Live artifact | Exact 0.3.5 artifact, 93 entries, 210,542 bytes, SHA-256 `8f42fad753a10fc8470de16787e1b7ce2f9b05a1df367e02ded306539bb17005`. Instrumentation-only cut; its source is **uncommitted**. Installed under explicit authorization and started with `COB_DEV_MODE=1`. Root `config.toml` and `cob-catalog.json` were byte-identical across stop/install/start, so Desktop needed no restart. **No live canary has run against it.** No tag or GitHub release. Never repack these bytes. |
+| Prepared install candidate | cob **0.4.0**, 95 entries, 216,690 bytes, SHA-256 `a7f4968c177ae8aceaf881db47df59f9eb73edf41a67195454f6f6fd3b03889b`. First artifact carrying its own `dist/build-manifest.json`, which reports `source_dirty: true` — the source is **not committed**, so the commit it names does not reproduce these bytes. Ready for an authorized global replacement; **not installed, started, or live-canary tested**. |
+| Prior live artifact | Exact 0.3.4 artifact, 93 entries, 207,181 bytes, SHA-256 `74614984714cc9ca91445a9bf728b560bf637b164ca328543f5e0bed0ef56237`, source commit `cdcdf6d629f985f25b0545268e1fb7ae024821fe` on `origin/master`. Superseded by 0.3.5; history/rollback only. |
+| Prior live artifact | Exact 0.3.3 artifact, 92 entries, 200,584 bytes, SHA-256 `e3a111a3cc53b1217a771d619bdfdfa536fc4d8193fa0a22080331bd9f33d480`. Superseded by 0.3.4; history/rollback only. Its pre-hardening source was never committed independently. Never repack these bytes. |
 | Prior live artifact | 0.3.2 artifact, 92 entries, 199,522 bytes, SHA-256 `a0893e950731054c405f5da5d1cd20229d95104e86a50ed9f9701c953532f802`. History/rollback only. |
 | Rollback target | 0.3.1 tarball, 92 entries, 195,596 bytes, SHA-256 `0456a310dc839c00d1cd15909279fa5fccaa5d2dbb8afbf4e45beff30f87c4d2`; its source checkpoint is pushed on `master`. Rollback is `npm install -g ./codex-ollama-bridge-0.3.1.tgz` then `cob start`. |
 | Published release | 0.3.0 tarball, 91 entries, 186,931 bytes, SHA-256 `39e6eca95abdf9d7ca49621c7a6478bba26c2c54a6dbcf07f15b135d9da1aa51`; source commit `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`, tag `v0.3.0`. Still the last tagged/GitHub release. |
 | Earlier preview | Burned 0.2.4-preview.0 tarball, SHA-256 `5f62556dacb2652654b0e1d338a0740eccb9771e6c3d9a09c192b8e7c4c879fd`. Its failed G26-B evidence remains historical. |
 | Rollback artifact | Burned 0.2.3 tarball, SHA-256 `6152d1a59b18831a849851a58ac88b8160f1336bdac13edb1f806e6c191a238a`; history/rollback only. |
 | Source checkout | The accumulated 0.3.2/0.3.3 source, repo-only menu follow-up, and error/dev-mode hardening are checkpointed as cob **0.3.4** at `cdcdf6d629f985f25b0545268e1fb7ae024821fe` and pushed to `origin/master`. `npx tsc --noEmit` clean; latest `npm test`: 814 pass, 4 documented skips. The last tagged/GitHub release remains `v0.3.0` at `762adf36c473dcc3e1aefaeb7566b6e6b3d9502a`. |
-| Workspace error/dev hardening | **Implemented, mock-verified, committed, pushed, and packed in the 0.3.4 candidate; not installed, restarted, or live-canary tested.** Adds safe JSON/SSE error boundaries, closed request terminals/codes and Ollama non-success subtype, process-run and compaction correlation, observable sidecar loss/rotation health, catalog reload fallback visibility, and `cob diagnostics [--json]`. Contract: [ERROR-HANDLING.md](./docs/ERROR-HANDLING.md). |
+| Error/dev hardening | **Implemented, mock-verified, committed, pushed, packed in 0.3.4, and now installed and running; not live-canary tested.** Adds safe JSON/SSE error boundaries, closed request terminals/codes and Ollama non-success subtype, process-run and compaction correlation, observable sidecar loss/rotation health, catalog reload fallback visibility, and `cob diagnostics [--json]`. Contract: [ERROR-HANDLING.md](./docs/ERROR-HANDLING.md). |
 | Codex | PATH Codex **0.149.0**; Desktop **0.153.1**, self-updated mid-session from `0.153.0-alpha.5`. The plaintext wire's digest still matches across that update. |
 | Ollama | Client/daemon **0.33.3**. Configured Ollama rows are discovered without cob's former five-row picker cap; exact availability still follows fresh `/api/tags` evidence. |
-| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned and cob never writes it. Current SHA-256: `226314c5323d6cf3820a4b891abcfc017676d48c3eb1141f8f9f17605ad0a803`. |
-| Live catalog | Current SHA-256 `9f826cabc1e8a61812d5c8c5627d794bff7c231190b71655ee5257981f19729f`; meta SHA-256 `6cb6a25eaa84bb73daffa005bc0f6fef344d9c0dfaac7d552bab737c5a8507df`. Provenance is **stale**: the producer binary identity changed with the Desktop 0.153.1 update. Regenerate with `cob sync`. |
+| Desktop root overlay | `~/.codex/config.toml` remains user/Desktop-owned and cob never writes it. Current SHA-256: `4c815e0339a7228a20b3cd92a5d6d608e88dda4492c0a232015073e8e052c5d7`, byte-identical across the 0.3.5 stop/install/start. It changed from the earlier recorded `226314c5…` outside cob. |
+| Live catalog | Current SHA-256 `2b37f6e1740582406243a440c20d87562a6c16b62ce1a574d864d5fe28539654`; meta SHA-256 `96e5f79c3a81a9c780a25a0319a76a6a88307ebcd37693c29832a630a2632b54`. Provenance is **fresh** from Desktop `codex-cli 0.153.1` with two validators; the earlier stale disposition after that update is resolved. |
 | Diagnostic sidecar | **Active** at `~/.codex/cob-diagnostics.jsonl` because the live gateway runs with `COB_DEV_MODE=1`. It carries the Gate A and Gate B performance records. Structured persistence remains opt-in and default-off; restarting without the switch returns the gateway to the human log alone. |
 | Live experiments | `apply_patch = false`. `native_plaintext_spawn = true`, pinned to the Desktop digest, user-authorized. Ollama catalog rows remain `multi_agent_version = v1`; a child's actual protocol follows its parent. |
 | Isolated dev port | A workspace gateway may still be listening on `:18791` from the 2026-09-04 canaries (`~/.codex-cob-dev`, dev mode and plaintext wire armed). It is isolated from the live home; stop it with `cob stop --dev` when finished. |
@@ -58,12 +60,12 @@ gateway as unreachable; live health claims require a real-environment
 - cob does not write the user-owned root `~/.codex/config.toml`.
 - Keep 0.2.3 only as the exact rollback/history artifact; do not repack it or
   any historical 0.1.11–0.2.2 artifact.
-- The installed 0.3.3 artifact is Codex-scoped, not a new whole-product or cob
+- The installed 0.3.4 artifact is Codex-scoped, not a new whole-product or cob
   Claude readiness claim. Any next version cut, live replacement, or touch to
   Claude requires separate authorization.
 - Gate 5 `apply_patch` remains an isolated, default-off experiment. The
   plaintext collaboration wire is default-off but user-authorized and armed on
-  live 0.3.3, pinned to the Desktop digest.
+  live 0.3.4, pinned to the Desktop digest.
 - Source tests and workspace fixtures are evidence, not live gold.
 
 ## G26 canary history
@@ -84,10 +86,9 @@ content-free receipts and interpretation boundaries are in the G26 section of
 ## Release checkpoint
 
 The last published source/tag remains the Codex-scoped `v0.3.0` release. The
-exact 0.3.3 artifact recorded above remains global and healthy at the latest
-live probe. The next source checkpoint is 0.3.4 at `cdcdf6d`; its exact
-install candidate is prepared but not installed or live-validated. No tag,
-GitHub release, or new Gold claim follows from preparing that artifact.
+exact 0.3.4 artifact recorded above is global and healthy at the latest live
+probe. No tag, GitHub release, or new Gold claim follows from installing that
+artifact; it has not been live-canary tested.
 
 ### 0.3.2 and 0.3.3: plaintext collaboration wire and dev mode
 
@@ -466,16 +467,31 @@ preview-canary record and is not a production promotion.
    in five ends `non_success` after streaming about 4 MB for three to four
    minutes, and those failures consume 65–76% of a subagent run's wall time
    while being invisible in Codex's own transcript. The proposed next step is a
-   configurable ceiling on the Ollama response stream so a runaway generation
-   fails in seconds. Prefill, prompt caching, reasoning effort, and the tool
-   list are all measured and ruled out as the cause. Full evidence and the
-   reproduction recipe are in
-   [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md) §4.
-2. **`cob sync`** to clear the stale catalog provenance left by the Desktop
-   0.153.1 self-update, then fully quit and reopen Desktop if catalog bytes
-   change.
-3. **Source commit** for 0.3.2/0.3.3 is outstanding and unauthorized. A tag,
-   push, or GitHub release needs separate authorization again.
+   provider-side output bound so the runaway ends on Ollama's own terminal
+   instead of being truncated by cob. Reasoning effort and the tool list are
+   ruled out as the cause. **Prefill and prompt caching are NOT ruled out**:
+   the earlier "prefill is 4% of wall time" reading took
+   `first_event_latency_ms` for time to first token, and it is not — it trails
+   `headers_latency_ms` by a median of 10 ms because Ollama emits its first
+   SSE frame before prefill. That claim is retracted in
+   [IMPLEMENTATION-PLAN.md](./docs/IMPLEMENTATION-PLAN.md) §4.2, along with
+   the prefix-stability claim, which was measured on the inbound payload
+   rather than the final Ollama wire. Full evidence and the reproduction
+   recipe are in that document's §4.
+2. **Ollama prompt-cache effect is unmeasured.** Ollama Cloud reports no
+   cached tokens (upstream issue #15758 open; PR #17943, in the installed
+   0.33.3, wires the count from local runners only), so the hit rate can only
+   be established by a controlled benchmark that times the first real
+   output-delta frame. Not yet defined as a live gate.
+3. **Nothing has been committed this session.** HEAD is still `2932496` while
+   the live gateway runs 0.3.5 and a 0.4.0 candidate is packed; the 0.4.0
+   manifest records `source_dirty: true` for exactly this reason. Neither
+   installed artifact can be reproduced from a commit until that is resolved.
+   The uncommitted work is the response-stream ceiling, the 0.3.5
+   instrumentation batch (`non_success_reason`, final-wire
+   `request_end.wire`, `client_max_output_tokens`, ceiling cut counter) are
+   installed as 0.3.5 but **not committed**. `npm test` 822 (818 pass, 4 skips). A commit, tag, push, or GitHub release needs separate
+   authorization.
 4. **Gate 5/G24 rerun:** each real isolated 0731 canary requires separate
    explicit authorization. Results remain isolated evidence unless separately
    promoted by the live-gate standard.

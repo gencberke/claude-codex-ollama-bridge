@@ -62,6 +62,10 @@ export type DiagnosticReadReport = {
   terminals: Record<GatewayRequestTerminal, number>;
   error_codes: Record<string, number>;
   non_success_kinds: Record<GatewayNonSuccessKind, number>;
+  /** Closed-vocabulary provider reasons behind those non-success terminals. */
+  non_success_reasons: Record<string, number>;
+  /** Whose decision ended each request: provider, cob policy, transport, client. */
+  termination_sources: Record<string, number>;
 };
 
 /**
@@ -73,6 +77,8 @@ export function readDiagnosticReport(path: string): DiagnosticReadReport {
   const routes = zeroRecord(GATEWAY_REQUEST_ROUTES);
   const terminals = zeroRecord(GATEWAY_REQUEST_TERMINALS);
   const nonSuccessKinds = zeroRecord(GATEWAY_NON_SUCCESS_KINDS);
+  const nonSuccessReasons: Record<string, number> = {};
+  const terminationSources: Record<string, number> = {};
   const errorCodes: Record<string, number> = {};
   const startKeys = new Set<string>();
   const endKeys = new Set<string>();
@@ -136,6 +142,12 @@ export function readDiagnosticReport(path: string): DiagnosticReadReport {
     if (isOneOf(event.non_success_kind, GATEWAY_NON_SUCCESS_KINDS)) {
       nonSuccessKinds[event.non_success_kind] += 1;
     }
+    if (isDiagnosticErrorCode(event.non_success_reason)) {
+      increment(nonSuccessReasons, event.non_success_reason);
+    }
+    if (isDiagnosticErrorCode(event.termination_source)) {
+      increment(terminationSources, event.termination_source);
+    }
   };
 
   const backup = readDiagnosticFile(`${path}.1`, consume);
@@ -167,6 +179,8 @@ export function readDiagnosticReport(path: string): DiagnosticReadReport {
     terminals,
     error_codes: Object.fromEntries(Object.entries(errorCodes).sort(([a], [b]) => a.localeCompare(b))),
     non_success_kinds: nonSuccessKinds,
+    non_success_reasons: nonSuccessReasons,
+    termination_sources: terminationSources,
   };
 }
 
@@ -181,6 +195,8 @@ export function formatDiagnosticReport(report: DiagnosticReadReport): string {
     `terminals: ${formatCounts(report.terminals)}`,
     `error_codes: ${formatCounts(report.error_codes)}`,
     `non_success_kinds: ${formatCounts(report.non_success_kinds)}`,
+    `non_success_reasons: ${formatCounts(report.non_success_reasons)}`,
+    `termination_sources: ${formatCounts(report.termination_sources)}`,
   ].join("\n");
 }
 

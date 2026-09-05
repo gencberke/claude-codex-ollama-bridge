@@ -200,8 +200,12 @@ per-request fields to `request_end`:
   is in flight. Concurrent work may contribute; these are not exclusive
   per-request attribution.
 
-The sidecar already recorded `first_event_latency_ms`, which is time to first
-token and therefore the prefill/generation split. Dev mode starts no worker,
+The sidecar already recorded `first_event_latency_ms`. **It is not time to
+first token.** Measured across 100 live Ollama requests it trails
+`headers_latency_ms` by a median of 10 ms (4-58 ms, 88% under 20 ms), because
+Ollama emits its first SSE frame with the response headers, before prefill.
+The field is therefore time to the first stream chunk, and no prefill /
+generation split can be derived from it. Dev mode starts no worker,
 makes no provider call, and never fails a request; CPU and memory are read at
 points the request already passes through. With the switch off, the hot path
 and the human log are byte-identical.
@@ -217,11 +221,21 @@ not evidence for the already-burned 0.3.3 artifact.
 
 ## 4. The open problem: Ollama subagent performance
 
+Claims in this section carry the labels defined in `AGENTS.md`: **measured**
+names its population, **inferred** names the step that could break it,
+**proposed** is an intention and never evidence, **superseded** is kept with
+what replaced it. The population behind everything below is one artifact's
+sidecar — 36 subagent requests on two threads, recorded under 0.3.3 and
+preserved at `~/.codex/backups/cob-diagnostics-baseline-20260904.jsonl`. It is
+**not** the live population: the 2026-09-05 canary ran 206 Ollama requests of
+which only 2 were subagent, and both died before reaching a model, so nothing
+in this section has been reproduced on the current artifact.
+
 A live subagent task took 31 minutes for work that was, by measurement,
 trivial. Dev mode explains why, and the explanation is not what it looked
 like.
 
-### 4.1 Where the time actually goes
+### 4.1 Where the time actually goes — measured
 
 Two controlled runs against the same repository, changing one variable each
 from the pre-instrumentation baseline (broad task, `reasoning_effort` max):
@@ -251,13 +265,22 @@ only the successful attempt is written. Without cob's dev-mode diagnostics the
 17.5 minutes are unattributable, which is precisely why the instrumentation
 was built before the optimization.
 
-### 4.2 Two hypotheses that the measurement killed
+### 4.2 Hypotheses, and two claims now superseded
 
-- **Prefill and the zero cache are not the bottleneck.** Prefill is **4%** of
-  wall time; 64k input tokens prefill in about 1.9 s. `cached_input_tokens: 0`
-  is real and reported by Ollama, and it matters for tokens billed, but it is
-  not where the minutes go. cob is not defeating any prefix cache: `instr_sha`
-  and `tools_sha` are constant across a run and the input is append-only.
+- **RETRACTED — "prefill is 4% of wall time".** That figure was
+  `first_event_latency_ms` read as prefill. It is not: see 3.2 above, the
+  first SSE frame arrives with the headers. Prefill has never been measured on
+  this path, and no claim about where prefill time goes is currently
+  supported. `cached_input_tokens: 0` is likewise not evidence of a cache
+  miss — Ollama Cloud does not report cached tokens at all (issue #15758 is
+  open; PR #17943, in the installed 0.33.3, wires the count from local runners
+  only). The prefix-stability claim behind "cob is not defeating any prefix
+  cache" was also measured on the wrong object: `instr_sha` / `tools_sha` come
+  from `markRequestStart` on the **inbound** payload
+  (`src/codex/gateway/responses.ts:491`), while deferred-tool promotion
+  happens afterwards in `prepareOllamaWireBounded`
+  (`src/codex/ollama.ts:310`). The final Ollama wire has never been
+  fingerprinted. Whether the cache helps is **open**.
 - **Reasoning effort is not the lever.** Dropping to `low` cut output tokens
   by 66% but doubled tool calls, and total wall time fell only 26%.
 
@@ -267,18 +290,39 @@ tool and may append discovered leaves (`src/codex/tool-search.ts`).
 `supports_search_tool` is a catalog advertisement that the wire code does not
 read. The list is Codex's.
 
-### 4.3 Proposed next step
+### 4.3 The ceiling — installed on live 0.3.5, and a damage limiter only
 
-Add a configurable ceiling on the Ollama response stream so a runaway
-generation fails in seconds rather than minutes. Observed successful responses
-peak at 0.79 MB, so a 1.5–2 MB ceiling has ample headroom.
+This is **not** instrumentation: it changes default behaviour on every Ollama
+SSE response, and it is live. Treat it as an operator-facing policy under
+evaluation, not as the fix for runaway generation — a byte count cannot decide
+that a generation failed, and a cut also removes the provider terminal that
+would have named the real cause. A cumulative ceiling on the Ollama SSE
+response is implemented in `relayOllama` and configurable through `cob.toml` `[limits]
+ollama_max_response_bytes` / `COB_OLLAMA_MAX_RESPONSE_BYTES`, default
+**2.5 MiB**. A cut emits exactly one cob-owned `response.failed` plus one
+`[DONE]` per ERROR-HANDLING rule 5, increments a counter `cob status` reports,
+and records request terminal
+`overflow` with code `ollama_response_stream_too_large`. This is not a retry
+and does not make cob a retry owner — Codex continues to own that.
 
-The turn is already lost when this fires; what is recovered is the *duration*
-of the loss, which is 65–76% of wall time in both measured runs. This is not a
-retry and does not make cob a retry owner — Codex continues to own that.
+Two corrections to the earlier proposal, both from the full live sidecar
+rather than the 09-04 window alone:
 
-Measurement is already in place: re-run the identical Gate A prompt with dev
-mode on and compare non-success duration.
+- **1.5 MB is too low.** The 0.79 MB peak holds only for the dev-mode window.
+  Across the whole sidecar there is a *completed* 1,632,434-byte response
+  (17,760 output tokens). A 1.5 MB ceiling would have cut a real successful
+  turn. The measured populations are completed ≤ 1.63 MB and non-success
+  ≥ 3.83 MB, so 2.5 MiB sits 1.53× above the largest observed success and
+  1.5× below the smallest observed failure.
+- **The recovery is partial, not total.** The 65–76% figure is the share of
+  wall time *lost*, not the share a ceiling returns: the turn still generates
+  everything up to the ceiling before being cut. Modelling the six recorded
+  failures at their own observed stream rates: a 2.0 MB ceiling recovers 51%
+  of the lost time, 2.5 MB recovers 39%, 3.0 MB recovers 27%. At the shipped
+  default that is 8.0 of the 20.7 lost minutes.
+
+Verification is a re-run of the identical Gate A prompt with dev mode on,
+comparing non-success duration and confirming no completed turn is cut.
 
 ---
 
@@ -286,19 +330,28 @@ mode on and compare non-success duration.
 
 ### 5.1 Live
 
-- Global cob **0.3.3**, dev mode **on**, plaintext wire **armed** with the
-  Desktop digest. `cob status` reports both.
-- Desktop updated itself to **codex-cli 0.153.1** mid-session. The wire still
-  matches. Catalog provenance is **stale** because the producer binary
-  identity changed; the fix is `cob sync`, and Desktop must be fully quit and
-  reopened if catalog bytes change.
+Verified by a real-environment `cob status` on 2026-09-04 21:26 +03:
+
+- Global cob **0.3.4**, gateway pid 31073 on `127.0.0.1:18790`, health `ok`,
+  overlay `ok`, dev mode **on**, plaintext wire **armed** with the pinned
+  Desktop digest.
+- Desktop is **codex-cli 0.153.1** and catalog provenance is **fresh** again;
+  the earlier `stale` disposition is resolved.
+- The diagnostic baseline that every measurement in this document rests on is
+  preserved at `~/.codex/backups/cob-diagnostics-baseline-20260904.jsonl`.
 
 ### 5.2 Workspace
 
-- The source for 0.3.2 and 0.3.3 is **uncommitted**. `RELEASE.md`'s basic cut
-  does not require a commit, and none was authorized. A tag, push, or GitHub
-  release requires separate authorization.
-- `npx tsc --noEmit` clean, `npm test` 804 tests passing.
+- The 0.3.2/0.3.3/0.3.4 source is committed and pushed on `master`; the exact
+  0.3.4 artifact is installed globally and serving the live gateway. A tag,
+  push, or GitHub release still requires separate authorization.
+- Test counts differ by scope and must not be conflated: the packed 0.3.4
+  artifact was cut at **818** (814 pass, 4 skips); the current dirty worktree
+  is **820** (816 pass, 4 skips) because it carries the two uncommitted
+  ceiling tests.
+- The response ceiling above is **workspace source only**: typechecked and
+  covered by tests, not packed, installed, or live-canary tested.
+- `npx tsc --noEmit` clean, `npm test` 820 tests (816 pass, 4 documented skips).
 
 ### 5.3 Where to look
 
@@ -310,26 +363,90 @@ mode on and compare non-success duration.
 | Dev-mode gate and per-request event shape | `src/codex/diagnostic-event.ts` |
 | Stale-digest reporting | `src/codex/runtime/status.ts` |
 | Non-success terminal classification | `src/codex/ollama-response-boundary.ts` |
+| Response ceiling constant and error | `src/codex/limits.ts` |
 | Ollama tool list handling | `src/codex/tool-search.ts` |
 
 ### 5.4 How to reproduce the measurement
 
+Two homes, and they must not be mixed. The isolated CLI flow stays in the dev
+home end to end:
+
 ```bash
-COB_DEV_MODE=1 cob start
-cob status          # expect: dev mode on, native plaintext spawn armed
+COB_DEV_MODE=1 cob start --dev     # isolated ~/.codex-cob-dev on :18791
+CODEX_HOME=~/.codex-cob-dev codex --profile cob
 ```
 
-Then spawn one Ollama subagent from Desktop and read
-`~/.codex/cob-diagnostics.jsonl`. Correlate a run by hashing the child's
+and reads `~/.codex-cob-dev/cob-diagnostics.jsonl`. Desktop is a separate,
+separately authorized live recipe: it always follows `~/.codex` and `:18790`,
+so a Desktop-driven run requires replacing the live gateway and reads
+`~/.codex/cob-diagnostics.jsonl`.
+
+For either home, Correlate a run by hashing the child's
 thread id from its rollout filename with `sha256`, first 8 hex characters, and
 filtering `request_end` records on `thread_sha8`. Per request:
-`first_event_latency_ms` is prefill, `total_latency_ms` minus that is
-generation, `terminal` separates the populations, and `cpu_ms` attributes
-gateway cost.
+`terminal` separates the populations and `cpu_ms` attributes gateway cost.
+`first_event_latency_ms` is time to the first stream chunk, **not** prefill —
+do not subtract it from `total_latency_ms` and call the remainder generation.
 
 ---
 
-## 6. Out of scope
+## 6. Ollama prompt caching — open, with one measured sub-claim
+
+The efficiency question is separate from the latency one.
+
+**The final wire is stable across a thread except at compaction, measured on
+the right object.** The 2026-09-05 canary is the first run with
+`request_end.wire`, and it settles a claim that an earlier revision got wrong
+by reading `request_start` instead: across 204 Ollama requests on one thread,
+the inbound `tools_sha8` differs from the wire `tools_sha8` on **204 of 204**
+requests, so the inbound value never was evidence about the wire. On the wire
+itself there are 8 transitions in 204 requests, and all 8 are the compaction
+summarizer turn entering and leaving (`tools_n` 15 → 0 with a one-item input,
+then back). The conversation prefix itself did not change, and `promoted_n`
+was 0 throughout, so mid-thread tool promotion still has never been observed.
+
+Two limits on that result: it is one thread on the direct-Ollama main route,
+not a subagent thread, and `input_n` is a count rather than a hash of the
+retained history — see the fingerprint caveat below.
+
+**Upstream will not tell us the hit rate on Cloud.** Ollama PR #17943 (merged
+2026-09-02, first released in **0.33.3**, the installed build) populates
+`usage.input_tokens_details.cached_tokens` on `/v1/responses` — but it wires
+that from local runners only. Issue #15758, "Cloud doesn't report number of
+cached tokens", is still open, and Ollama's cloud path forwards whatever the
+backend sends. `extractOllamaUsage` already reads that exact path, so cob
+needs no parser change; `usage.cached_input_tokens` and
+`prompt_cache_hit_tokens` are not Ollama field names and are harmless extra
+fallbacks. The `cached_input_tokens: 0` on every recorded request is therefore
+an **observability gap, not evidence of a cache miss**.
+
+**RETRACTED — the "flat TTFT proves a cache hit" inference.** It rested on
+`first_event_latency_ms`, which is the first stream chunk, not the first
+token; see 3.2. Prefill has never been measured on this path and nothing in
+the sidecar measures it.
+
+**Dropping `prompt_cache_key` is not known to cost anything.** Ollama Cloud
+caching is implicit and the one report that explicit cache parameters are
+accepted and ignored is a community benchmark, not an Ollama guarantee; the
+0.33.3 Cloud path is largely raw passthrough, so local converter behaviour
+does not generalize to what the Cloud backend does with these fields. Keep
+them in `OLLAMA_ADVISORY_FIELDS` — there is no evidence for changing that —
+but do not record the decision as proven free.
+
+**What the 0.3.5 wire fingerprint does and does not prove.** It captures
+`instr_sha8` / `tools_sha8` / `tools_n` / `input_n` / `bytes` / `promoted_n`
+of the exact serialized payload, which is the right object. It is still not a
+proof that the whole input prefix was unchanged: `input_n` is a count, not a
+hash of the retained history, so a mutation inside an existing item would not
+show. A prefix hash is required before any claim that the replayed history was
+byte-stable.
+
+Consequently a tool-promotion redesign — freezing the tool set, or a generic
+deferred-tool executor — is **not** justified by current evidence. What would
+justify it is a measured mid-thread `tools_sha8` change, which cob does not
+yet record as a first-class fact.
+
+## 7. Out of scope
 
 - Any cob-owned message queue, scheduler, or retry.
 - Advertising `multi_agent_version` other than `v1` on Ollama catalog rows.

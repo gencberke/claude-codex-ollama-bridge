@@ -76,6 +76,27 @@ function completedSearch(callId: string): JsonObject {
   };
 }
 
+describe("wire identity collisions", () => {
+  it("fails closed when a namespaced leaf and a flat function share a wire name", () => {
+    // namespace `audit` + leaf `read` serializes to the wire name `audit.read`,
+    // which a flat function may already occupy. The provider would accept both
+    // and cob could no longer tell which one an incoming call meant.
+    const payload = {
+      tools: [
+        { type: "function", name: "audit.read", parameters: { type: "object", properties: {} } },
+        {
+          type: "namespace",
+          name: "audit",
+          tools: [{ type: "function", name: "read", parameters: { type: "object", properties: {} } }],
+        },
+      ],
+    } as unknown as JsonObject;
+    const bridge = applyDeferredToolsToOllama(payload);
+    assert.ok(bridge.collisions > 0, "the ambiguity must be counted, not silently resolved");
+    assert.ok(bridge.blockedAliases.has("audit.read"), "the ambiguous wire name must be blocked");
+  });
+});
+
 describe("tool_search wire shim", () => {
   it("turns Codex tool_search tool defs and history into Ollama function calls", () => {
     const payload = rewriteToolSearchToOllama({

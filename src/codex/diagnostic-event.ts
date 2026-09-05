@@ -63,10 +63,84 @@ export type GatewayRequestMetrics = {
   tools_n?: number;
   input_n?: number;
   previous_response_id?: boolean;
+  /** The client itself sent `max_output_tokens`; never cob's own fill-in. */
+  client_max_output_tokens?: boolean;
   effort?: string;
   tools_sha8?: string;
   instructions_sha8?: string;
 };
+
+/**
+ * Content-free identity of the exact payload cob sent to Ollama, captured
+ * after every rewrite (reasoning normalization, deferred-tool promotion,
+ * apply_patch, allowlist). `request_start.metrics` describes the INBOUND
+ * client payload and cannot answer whether the provider-facing prefix was
+ * stable; this can.
+ */
+export type GatewayWireFingerprint = {
+  instr_sha8: string;
+  tools_sha8: string;
+  tools_n: number;
+  input_n: number;
+  bytes: number;
+  promoted_n: number;
+};
+
+/**
+ * Who ended the request. `terminal` says what happened; this says whose
+ * decision it was, and the two are different facts that were previously
+ * squeezed into one field. `HTTP 200 + a cob byte limit + a failed
+ * checkpoint` is not describable as one `http_error`.
+ */
+export type GatewayTerminationSource =
+  /** The provider sent a non-success terminal or a non-2xx response. */
+  | "provider"
+  /** cob's own policy ended it: response ceiling, traversal budget, guard. */
+  | "cob_limit"
+  /** The stream itself failed: idle deadline, truncation, transport error. */
+  | "transport"
+  /** The client disconnected or cancelled. */
+  | "client";
+
+/**
+ * How a request ended, recorded as one value.
+ *
+ * The shape is deliberately discriminated: only `completed` may omit a
+ * source, so every failure site is forced by the compiler to say whose
+ * decision it was. Before this existed the same tuple was assigned field by
+ * field at more than twenty places, and roughly half of them silently
+ * omitted the source when it was introduced.
+ */
+export type GatewayRequestOutcome =
+  | { terminal: "completed"; responseBytes?: number }
+  | {
+      terminal: Exclude<GatewayRequestTerminal, "completed">;
+      source: GatewayTerminationSource;
+      code?: string;
+      responseBytes?: number;
+    };
+
+/**
+ * The single place a request outcome is written. First classification wins:
+ * a precise terminal recorded at the point of detection is never replaced by
+ * a generic one from a shared response writer further out.
+ */
+export function recordRequestOutcome(
+  request: GatewayRequestContext | undefined,
+  outcome: GatewayRequestOutcome,
+): void {
+  if (!request) return;
+  if (request.terminal === undefined) {
+    request.terminal = outcome.terminal;
+    if (outcome.terminal !== "completed") request.termination_source = outcome.source;
+  }
+  if (outcome.terminal !== "completed" && request.error_code === undefined && isDiagnosticErrorCode(outcome.code)) {
+    request.error_code = outcome.code;
+  }
+  if (outcome.responseBytes !== undefined && request.response_bytes === undefined) {
+    request.response_bytes = outcome.responseBytes;
+  }
+}
 
 export type GatewayRequestContext = {
   /** Random, content-free process-run correlation token. */
@@ -92,6 +166,12 @@ export type GatewayRequestContext = {
   terminal?: GatewayRequestTerminal;
   error_code?: string;
   non_success_kind?: GatewayNonSuccessKind;
+  /** Closed-vocabulary provider reason for a non-success terminal. */
+  non_success_reason?: string;
+  /** Whose decision ended the request; absent when it completed normally. */
+  termination_source?: GatewayTerminationSource;
+  /** Fingerprints of the FINAL Ollama wire, not the inbound client payload. */
+  wire?: GatewayWireFingerprint;
   catalog_reload_fallback?: boolean;
   usage?: CompactUsageEvent;
   provider_attempts?: number;
@@ -247,6 +327,9 @@ export type GatewayDiagnosticEventV1 =
       terminal?: GatewayRequestTerminal;
       error_code?: string;
       non_success_kind?: GatewayNonSuccessKind;
+      non_success_reason?: string;
+      termination_source?: GatewayTerminationSource;
+      wire?: GatewayWireFingerprint;
       catalog_reload_fallback?: boolean;
       provider_attempts: number;
       gateway_retry_count: number;
@@ -299,9 +382,11 @@ export type GatewayDiagnosticEventV1 =
   | {
       schema_version: typeof GATEWAY_DIAGNOSTIC_SCHEMA_VERSION;
       kind: "upstream_terminal";
-      terminal: "empty" | "eof" | "idle" | "error" | "client_abort";
+      terminal: "empty" | "eof" | "idle" | "error" | "client_abort" | "overflow";
       status: number;
       raw_bytes: number;
+      /** Present only for a ceiling cut: the configured byte limit. */
+      limit_bytes?: number;
       completed: boolean;
       done: boolean;
       malformed: boolean;
@@ -365,6 +450,9 @@ export function recordGatewayRequestEnd(
     ...(context.terminal === undefined ? {} : { terminal: context.terminal }),
     ...(context.error_code === undefined ? {} : { error_code: context.error_code }),
     ...(context.non_success_kind === undefined ? {} : { non_success_kind: context.non_success_kind }),
+    ...(context.non_success_reason === undefined ? {} : { non_success_reason: context.non_success_reason }),
+    ...(context.termination_source === undefined ? {} : { termination_source: context.termination_source }),
+    ...(context.wire === undefined ? {} : { wire: context.wire }),
     ...(context.catalog_reload_fallback === undefined ? {} : { catalog_reload_fallback: context.catalog_reload_fallback }),
     provider_attempts: context.provider_attempts ?? 0,
     gateway_retry_count: context.gateway_retry_count ?? 0,
@@ -515,6 +603,9 @@ export function formatGatewayDiagnosticEvent(event: GatewayDiagnosticEventV1): s
       let line =
         `[cob] ollama stream incomplete terminal=${event.terminal} status=${event.status}` +
         ` raw_bytes=${event.raw_bytes} completed=${event.completed} done=${event.done} malformed=${event.malformed}`;
+      if (event.limit_bytes !== undefined) {
+        line += ` limit_bytes=${event.limit_bytes}`;
+      }
       if (event.phase !== undefined) {
         line += ` phase=${event.phase} done_n=${event.done_n ?? 0} contra_n=${event.contra_n ?? 0} held_malformed=${event.held_malformed ?? false}`;
       }

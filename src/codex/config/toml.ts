@@ -10,6 +10,7 @@ import {
   catalogPolicy,
   compactionPolicy,
   experimentalPolicy,
+  limitsPolicy,
   parseNativeSlugList,
   parseOllamaCompactEffort,
   parseOllamaCompactModel,
@@ -38,6 +39,7 @@ const KNOWN_COB_TOML_KEYS: Record<string, Set<string>> = {
     "apply_patch",
   ]),
   experimental: new Set(["native_plaintext_spawn", "native_plaintext_spawn_schema_sha256"]),
+  limits: new Set(["ollama_max_response_bytes"]),
 };
 
 function assertKnownCobTomlKey(section: string, key: string): void {
@@ -61,6 +63,7 @@ const SCALAR_TOKEN_KINDS: Record<string, "string" | "boolean" | "integer"> = {
   "catalog.apply_patch": "boolean",
   "experimental.native_plaintext_spawn": "boolean",
   "experimental.native_plaintext_spawn_schema_sha256": "string",
+  "limits.ollama_max_response_bytes": "integer",
 };
 
 function tomlScalarTokenKind(rawValue: string): "string" | "boolean" | "integer" | "invalid" {
@@ -104,6 +107,7 @@ export function parseCobToml(text: string): CobFileConfig {
   let applyPatch: boolean | undefined;
   let nativePlaintextSpawn: boolean | undefined;
   let nativePlaintextSpawnSchemaSha256: string | undefined;
+  let ollamaMaxResponseBytes: number | undefined;
   let arrayKey: string | undefined;
   let arrayItems: string[] = [];
   const seenSections = new Set<string>();
@@ -156,6 +160,9 @@ export function parseCobToml(text: string): CobFileConfig {
     }
     if (section === "experimental" && key === "native_plaintext_spawn_schema_sha256") {
       nativePlaintextSpawnSchemaSha256 = parseSchemaSha256(value, "experimental.native_plaintext_spawn_schema_sha256");
+    }
+    if (section === "limits" && key === "ollama_max_response_bytes") {
+      ollamaMaxResponseBytes = parsePositiveInt(value, "limits.ollama_max_response_bytes");
     }
   };
   const assignList = (key: string, items: string[]): void => {
@@ -284,6 +291,7 @@ export function parseCobToml(text: string): CobFileConfig {
       nativePlaintextSpawn: nativePlaintextSpawn ?? DEFAULT_EXPERIMENTAL_POLICY.nativePlaintextSpawn.enabled,
       schemaSha256: nativePlaintextSpawnSchemaSha256,
     }),
+    limits: limitsPolicy({ ollamaMaxResponseBytes }),
   };
 }
 
@@ -451,6 +459,14 @@ export function renderCobToml(config: CobFileConfig): string {
   );
   if (nativePlaintextSpawn.schemaSha256) {
     lines.push(`native_plaintext_spawn_schema_sha256 = ${tomlString(nativePlaintextSpawn.schemaSha256)}`);
+  }
+  if (typeof config.limits?.ollamaMaxResponseBytes === "number") {
+    lines.push(
+      "",
+      "[limits]",
+      "# Cumulative ceiling on one Ollama SSE response. Omit for the built-in default.",
+      `ollama_max_response_bytes = ${config.limits.ollamaMaxResponseBytes}`,
+    );
   }
   lines.push("");
   return lines.join("\n");

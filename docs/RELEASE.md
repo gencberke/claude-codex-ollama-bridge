@@ -8,7 +8,68 @@ Current live version, health, overlay, workspace, and catalog authority are
 recorded only in [STATUS.md](../STATUS.md). This file records release/install
 events and the rollback procedure.
 
-Prepared 0.3.4 global-install candidate (2026-09-04): source checkpoint
+Prepared 0.4.0 install candidate (2026-09-05): the iteration-discipline cut.
+The working tree was versioned as 0.4.0 and passed `npx tsc --noEmit`, 828 Node
+tests (824 pass, 4 intentional skips), and `git diff --check`. Exactly one npm
+artifact was packed: `codex-ollama-bridge-0.4.0.tgz`, 95 entries, 216,690
+bytes, SHA-256
+`a7f4968c177ae8aceaf881db47df59f9eb73edf41a67195454f6f6fd3b03889b`.
+Tests, harnesses, `gate6h`, `eval-*`, the build-manifest writer, sources, IDE
+files, and the separately built menu app are absent.
+
+This is the first artifact that carries its own identity. Its shipped
+`dist/build-manifest.json` reads: package version `0.4.0`, source commit
+`29324969b13e33f44405c36587302d2a3a5c9c9b`, **`source_dirty: true`**, dist
+digest `9e51d748f0f7…` (full value in the shipped manifest)
+over 89 production files, diagnostic schema version 1. The dirty flag is
+accurate and load-bearing: the source for this artifact is **not committed**,
+so the named commit does not reproduce these bytes. `cob status` prints this
+identity, and the artifact SHA above belongs here rather than inside the
+artifact, which cannot contain its own digest.
+
+**Not installed, started, or live-canary tested.** These bytes supersede an
+earlier same-version pack that was never installed; a candidate may be
+repacked before install, and the identity above is the one that counts. From
+the moment it is installed the usual rule binds: do not repack 0.4.0 with
+different bytes. Rollback from it is
+`npm install -g ./codex-ollama-bridge-0.3.5.tgz` followed by
+`COB_DEV_MODE=1 cob start`.
+
+Completed 0.3.5 installation event (2026-09-05): a diagnostics cut made so a
+live canary can answer two questions earlier artifacts could not — why Ollama
+ended a turn, and what the final provider wire actually contained. It is
+**not** instrumentation-only: it also carries the Ollama response ceiling,
+which is on by default at 2.5 MiB and changes behaviour on every Ollama SSE
+response. An earlier version of this entry described the cut as
+instrumentation-only; that was wrong.
+The working tree was versioned as 0.3.5 and passed `npx tsc --noEmit`, 822 Node
+tests (818 pass, 4 intentional skips), and `git diff --check`. Exactly one npm
+artifact was packed: `codex-ollama-bridge-0.3.5.tgz`, 93 entries, 210,542
+bytes, SHA-256
+`8f42fad753a10fc8470de16787e1b7ce2f9b05a1df367e02ded306539bb17005`.
+Tests, harnesses, `gate6h`, `eval-*`, sources, IDE files, and the separately
+built menu app are absent.
+
+Installed globally under explicit live authorization and started with
+`COB_DEV_MODE=1`. Post-install `cob status`: release 0.3.5 (global), gateway
+pid 55031 on `127.0.0.1:18790`, health `ok`, overlay `ok`, dev mode on,
+plaintext wire armed, catalog provenance fresh from Desktop `codex-cli
+0.153.1`. Root `config.toml` stayed byte-identical across stop/install/start at
+SHA-256 `4c815e0339a7228a20b3cd92a5d6d608e88dda4492c0a232015073e8e052c5d7`, and
+`cob-catalog.json` was unchanged at
+`2b37f6e1740582406243a440c20d87562a6c16b62ce1a574d864d5fe28539654`, so Desktop
+needed no restart; only cob's own `cob-catalog.meta.json` was re-stamped to
+`96e5f79c3a81a9c780a25a0319a76a6a88307ebcd37693c29832a630a2632b54`. Installed
+`dist/cli.js` matches the tarball member at SHA-256
+`3b5bfec38cdf82f6b80434aee29a9bf5302f73eb6b21a99f93d1179ebf3dd2ed`, and the two
+modules that actually changed match their tarball members as well. The source
+checkpoint is **not committed**; no tag or GitHub release. **No live canary has
+run against it yet.** Do not repack 0.3.5 with different bytes.
+
+Prepared 0.3.4 global-install candidate (2026-09-04) — **superseded**: it was
+installed later that day and then replaced by 0.3.5 on 2026-09-05. The record
+below is the state as of the date it was written. Prepared 0.3.4 candidate:
+source checkpoint
 `cdcdf6d629f985f25b0545268e1fb7ae024821fe` was committed and pushed to
 `origin/master`. The exact source passed `npx tsc --noEmit`, 818 Node tests
 (814 pass, 4 intentional skips), and `git diff --check`. Exactly one npm

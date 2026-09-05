@@ -51,6 +51,7 @@ import {
   type OllamaToolDeclaration,
 } from "./ollama-response-boundary.js";
 import { formatOllamaWireMetrics, summarizeRequest } from "./request-metrics.js";
+import type { GatewayWireFingerprint } from "./diagnostic-event.js";
 import {
   applyDeferredToolsToOllama,
   rewriteToolSearchFromOllama,
@@ -496,8 +497,15 @@ export async function forwardOllamaResponses(opts: {
   allowTrustedApplyPatchAliasHistory?: boolean;
   /** Caller-verified cloud verdict from catalog/tag evidence; overrides the name-only classification. */
   cloudRoute?: boolean;
-  /** Called after the final provider wire is prepared, before the one fetch. */
-  onWirePrepared?: (wire: Pick<OllamaForwardResult, "bridge" | "stream">) => void;
+  /**
+   * Called after the final provider wire is prepared, before the one fetch.
+   * `fingerprint` identifies the exact bytes cob is about to send, which is
+   * the only object that can answer whether the provider-facing prefix was
+   * stable; the inbound client payload cannot.
+   */
+  onWirePrepared?: (
+    wire: Pick<OllamaForwardResult, "bridge" | "stream"> & { fingerprint: GatewayWireFingerprint },
+  ) => void;
 }): Promise<OllamaForwardResult | OllamaReject> {
   const base = (opts.ollamaUrl ?? DEFAULT_OLLAMA_URL).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as UpstreamFetch);
@@ -509,9 +517,20 @@ export async function forwardOllamaResponses(opts: {
   });
   if (isOllamaReject(wire)) return wire;
   const stream = wire.payload.stream === true;
-  opts.onWirePrepared?.({ bridge: wire.bridge, stream });
   const body = Buffer.from(JSON.stringify(wire.payload), "utf8");
   const tools = summarizeRequest(wire.payload, body.length);
+  opts.onWirePrepared?.({
+    bridge: wire.bridge,
+    stream,
+    fingerprint: {
+      instr_sha8: tools.instructionsSha,
+      tools_sha8: tools.toolsSha,
+      tools_n: tools.toolsCount,
+      input_n: tools.inputCount,
+      bytes: body.length,
+      promoted_n: wire.bridge.promotedN,
+    },
+  });
   console.error(
     `[cob] ollama wire ${formatOllamaWireMetrics({
       wireBytes: body.length,

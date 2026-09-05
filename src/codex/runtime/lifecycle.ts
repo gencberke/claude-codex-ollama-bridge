@@ -384,6 +384,8 @@ async function prepareUnlocked(opts: StartOptions): Promise<{
     subagents: { models: spawnable },
     catalog: cob.catalog ?? DEFAULT_CATALOG_POLICY,
     experimental: cob.experimental,
+    // An explicit ceiling is operator state; a start must not silently drop it.
+    ...(cob.limits?.ollamaMaxResponseBytes !== undefined ? { limits: cob.limits } : {}),
   });
   assertRootConfigUnchanged(paths, before);
   return {
@@ -463,6 +465,9 @@ export async function serveForeground(opts: StartOptions = {}): Promise<void> {
         nonce,
         compaction: next.compaction,
         nativePlaintextSpawn: next.cob.experimental?.nativePlaintextSpawn,
+        ...(typeof next.cob.limits?.ollamaMaxResponseBytes === "number"
+          ? { ollamaMaxResponseBytes: next.cob.limits.ollamaMaxResponseBytes }
+          : {}),
         // The gateway owns the wire translator; lifecycle only threads the
         // isolated catalog decision into the implemented Gate 5 bridge.
         ...(catalogSupportsApplyPatch(next.cob) && !isLiveCodexHome(next.paths.codexHome)

@@ -22,6 +22,8 @@ export type RequestMetrics = {
   toolsCount: number;
   inputCount: number;
   previousResponseId: boolean;
+  /** The client sent the field at all, however valued. Never cob's own fill-in. */
+  clientMaxOutputTokens: boolean;
   reasoningEffort: string;
   toolsSha: string;
   instructionsSha: string;
@@ -67,6 +69,7 @@ export function summarizeRequest(payload: JsonObject, decodedBytes: number): Req
     toolsCount: countTools(tools),
     inputCount: Array.isArray(input) ? input.length : input === undefined ? 0 : 1,
     previousResponseId: typeof payload.previous_response_id === "string" && payload.previous_response_id.trim().length > 0,
+    clientMaxOutputTokens: Object.hasOwn(payload, "max_output_tokens"),
     reasoningEffort: readReasoningEffort(payload),
     toolsSha: sha256Hex8FromJson(toolsSnap.json),
     instructionsSha: sha256Hex8FromJson(instructions.json),

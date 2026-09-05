@@ -216,6 +216,10 @@ export type OllamaTerminalTrack = {
   heldTerminal?: JsonObject;
   completedCandidate?: JsonObject;
   nonSuccessKind?: GatewayNonSuccessKind;
+  /** Closed-vocabulary provider reason for the non-success terminal. */
+  nonSuccessReason?: string;
+  /** Supported provider error code, when the terminal carried one. */
+  nonSuccessCode?: string;
   contradictoryFrames: number;
   doneTrailers: number;
   malformed: boolean;
@@ -278,9 +282,39 @@ export function observeOllamaSseFrame(
     track.phase = "held-non-success";
     track.heldTerminal = value;
     track.nonSuccessKind = classifyOllamaNonSuccessKind(value);
+    track.nonSuccessReason = readOllamaNonSuccessReason(value);
+    track.nonSuccessCode = readOllamaPreservedErrorCode(value);
     return "withhold";
   }
   return "relay";
+}
+
+/**
+ * Why the provider ended the turn, as a closed vocabulary. Ollama spreads its
+ * own `incomplete_details.reason` / `status_details` through the terminal
+ * frame; this reads that enum and nothing else. Any unrecognized value
+ * becomes `other`, so an upstream string can never reach a log or a client.
+ */
+const OLLAMA_NON_SUCCESS_REASONS = new Set([
+  "max_output_tokens",
+  "max_tokens",
+  "content_filter",
+  "length",
+  "stop",
+  "timeout",
+  "cancelled",
+  "server_error",
+  "rate_limit",
+]);
+
+export function readOllamaNonSuccessReason(value: JsonObject): string | undefined {
+  const response = isRecord(value.response) ? value.response : value;
+  const details =
+    (isRecord(response.incomplete_details) ? response.incomplete_details : undefined) ??
+    (isRecord(response.status_details) ? response.status_details : undefined);
+  const raw = details?.reason ?? response.finish_reason;
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  return OLLAMA_NON_SUCCESS_REASONS.has(raw) ? raw : "other";
 }
 
 function classifyOllamaNonSuccessKind(value: JsonObject): GatewayNonSuccessKind {
@@ -298,8 +332,35 @@ export function ollamaNonSuccessCode(kind: GatewayNonSuccessKind): string {
 }
 
 /**
+ * Provider error codes whose meaning the controller acts on. Codex classifies
+ * retryable versus fatal from this code, so collapsing every failure into one
+ * generic code silently turns a fatal context/quota error into a retryable
+ * one. The set is closed and every member is a fixed cob-owned identifier —
+ * no upstream text, message, or unlisted code is ever relayed.
+ */
+const OLLAMA_PRESERVED_ERROR_CODES = new Set([
+  "context_length_exceeded",
+  "insufficient_quota",
+  "rate_limit_exceeded",
+  "model_not_found",
+  "invalid_api_key",
+  "billing_hard_limit_reached",
+]);
+
+/** The upstream code only when it is one cob explicitly supports, else undefined. */
+export function readOllamaPreservedErrorCode(value: JsonObject): string | undefined {
+  const response = isRecord(value.response) ? value.response : value;
+  const error = isRecord(response.error) ? response.error : undefined;
+  const code = error?.code;
+  if (typeof code !== "string") return undefined;
+  return OLLAMA_PRESERVED_ERROR_CODES.has(code) ? code : undefined;
+}
+
+/**
  * Preserve the provider terminal kind and structural fields while replacing
- * untrusted provider error text/code with one bounded cob-owned error.
+ * untrusted provider error text with one bounded cob-owned message. The code
+ * is preserved only when it is in the closed supported set above, so the
+ * controller keeps the retry semantics it depends on.
  */
 export function sanitizeOllamaNonSuccessTerminal(
   value: JsonObject,
@@ -307,7 +368,7 @@ export function sanitizeOllamaNonSuccessTerminal(
 ): JsonObject {
   const error = {
     type: "server_error",
-    code: ollamaNonSuccessCode(kind),
+    code: readOllamaPreservedErrorCode(value) ?? ollamaNonSuccessCode(kind),
     message: kind === "incomplete"
       ? "Ollama response was incomplete; retry or resend the full context."
       : "Ollama response failed; retry or resend the full context.",

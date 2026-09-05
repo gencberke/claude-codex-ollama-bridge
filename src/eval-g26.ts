@@ -96,9 +96,9 @@ export type G26SidecarReceipt = {
   duplicates: { fingerprints_repeated: number; repeat_excess: number; max_repeat: number };
   successful_usage: {
     records: number;
-    input_tokens: number;
-    output_tokens: number;
-    total_tokens: number;
+    input_tokens: { present: number; sum: number | null };
+    output_tokens: { present: number; sum: number | null };
+    total_tokens: { present: number; sum: number | null };
   };
   latency_ms: { total: number; max: number };
   observable_transport_pass: boolean;
@@ -216,9 +216,9 @@ export function evaluateG26Sidecar(
     },
     successful_usage: {
       records: usageRecords.length,
-      input_tokens: sum(usageRecords.map((event) => event.usage?.input_tokens ?? 0)),
-      output_tokens: sum(usageRecords.map((event) => event.usage?.output_tokens ?? 0)),
-      total_tokens: sum(usageRecords.map((event) => event.usage?.total_tokens ?? 0)),
+      input_tokens: usageField(usageRecords.map((event) => event.usage?.input_tokens)),
+      output_tokens: usageField(usageRecords.map((event) => event.usage?.output_tokens)),
+      total_tokens: usageField(usageRecords.map((event) => event.usage?.total_tokens)),
     },
     latency_ms: {
       total: sum(ends.map((event) => event.total_latency_ms)),
@@ -330,6 +330,11 @@ function sum(values: number[]): number {
 
 function max(values: number[]): number {
   return values.length === 0 ? 0 : Math.max(...values);
+}
+
+function usageField(values: Array<number | undefined>): { present: number; sum: number | null } {
+  const finite = values.filter((value): value is number => Number.isFinite(value));
+  return { present: finite.length, sum: finite.length === 0 ? null : sum(finite) };
 }
 
 type CliOptions = G26SidecarOptions & { inputs: string[]; out: string };

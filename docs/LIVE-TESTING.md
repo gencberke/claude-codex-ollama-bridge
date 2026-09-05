@@ -66,6 +66,7 @@ inferred from Codex UI text.
 | G21 (Gate 6) | One isolated 0731 child receives two `send_message` payloads while still active, then two `followup_task` turns after idle/completed, all in one session/id with nonce order preserved | Second spawn, send after the child already completed, wait between the two active sends, duplicate/lost/wrong-id delivery, or Sol `GATE6_PASS` without those child-session rows |
 | G21-H (Gate 6-H) | Workspace `npm run gate6h` watches parent/child rollout JSONL; two same-turn `send_message` calls with no wait/list/final between them, then two idle `followup_task` rows on one 0731 child | `controller_sequencing_fail` (wait/list/interrupt/final/exec before send2); three such fails record `controller_sequencing_observed` and `transport_unmeasured`. Do not add a cob queue or open Gate 7–10 |
 
+| G27 | **Proposed, not run.** Fixed task set across both product paths; efficiency judged on completed tasks, not requests. Receipt contract and tiers in the G27 section below. | A claim from request latency alone, a sum that hides a missing usage field, or pooling cob-cut requests with clean ones |
 | G26-A/B | G26-A: direct picker-selected Ollama main turn; G26-B: native GPT/Luna parent → Ollama V1 child → same-child follow-up. Record routing, continuity, usage, latency, request outcomes, and content-free diagnostic evidence. | PASS requires `invalid_json`, provider retries, controller retries, no-progress repeats, and duplicate signatures all zero, with every required metric visible. Missing/ambiguous counters or content-bearing evidence fails auditability |
 
 Ollama child catalog rows carry no `apply_patch_tool_type` by default, and
@@ -992,6 +993,71 @@ closed. No new cob runtime fix is indicated by this canary. Production or
 whole-product promotion remains a separate decision because the required
 upstream counters are unavailable and unrelated gates retain their recorded
 dispositions.
+
+## G27 — task-level efficiency, both product paths
+
+**Status: proposed.** Not yet run; no receipt exists.
+
+A faster request is not a more efficient agent. Reasoning effort can drop
+while tool calls double; an output cap can shorten one attempt while
+multiplying retries. Every cap, cache and compaction decision from here is
+judged on **completed tasks**, not on request latency.
+
+### Fixed task set
+
+A small, stable set, unchanged between runs so two runs are comparable. Each
+run covers both supported product paths:
+
+1. **Ollama main** — a picker-selected Ollama thread doing the task directly.
+2. **Native parent → Ollama child → same-child follow-up** — the spawn path,
+   including one continuation on the same child.
+
+### Metrics, per task and per path
+
+| Metric | Rule |
+| --- | --- |
+| Correct completion | The task's own success condition, judged from a real workspace effect, never from the model's claim |
+| Total wall time | Whole task, not per request |
+| Exact token cost | Only from upstream-supplied usage; a missing field is `unknown`, never 0 |
+| Controller repeats | Only from a controller receipt; otherwise `unknown` |
+| Continuity and tool-use correctness | Same-child follow-up resolved, declared tools only |
+| cob-owned cost | `cpu_ms` outside queue time, to the extent it is separable |
+
+Report medians **and** the long failing tail; a small sample does not license a
+p95 claim. `inconclusive` is a first-class outcome, alongside pass and fail.
+
+### Receipt contract
+
+A G27 receipt is invalid unless it carries all of:
+
+- artifact SHA-256, the shipped `dist/build-manifest.json` identity
+  (version, source commit, dirty flag, dist digest), client and provider
+  versions, home/port class, and the effective policies (ceiling, any output
+  cap, plaintext wire state);
+- which path each task ran, the real parent protocol, and whether the
+  follow-up reached the same child;
+- request start/end pairing, final-wire fingerprints, `termination_source`,
+  and whether any response was cut by a cob limit;
+- first chunk **and** first real output delta, recorded separately;
+- per-field presence for usage, never a sum that hides a missing field;
+- retry/reconnect/no-progress counters only from a controller receipt, else
+  `unknown`;
+- diagnostic sink loss counters, and `pass` / `fail` / `inconclusive` with the
+  explicit boundary of what the run does and does not establish.
+
+A cut by cob's own ceiling makes the provider outcome unobservable for that
+request; such runs are reported separately and never pooled with clean ones.
+
+### Three tiers, and what each may claim
+
+| Tier | Command | May claim |
+| --- | --- | --- |
+| Fast local | targeted `npx tsx --test <file>` | nothing beyond that file |
+| Full verification | `npx tsc --noEmit` + `npm test` | the merge gate is green |
+| Live canary | this gate, version-bound | product behaviour, for that exact artifact only |
+
+The fast tier exists to keep daily iteration cheap. It never substitutes for
+the full gate, and neither substitutes for live evidence.
 
 ## Workspace fixtures and evaluators (pack-excluded, not live gold)
 

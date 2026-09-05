@@ -1,6 +1,6 @@
 {
   "name": "codex-ollama-bridge",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "private": true,
   "description": "cob: loopback bridges so Codex and Claude Code can keep native subscription models and route ollama/* to local Ollama.",
   "type": "module",
@@ -9,6 +9,8 @@
   },
   "files": [
     "dist/**/*.js",
+    "dist/build-manifest.json",
+    "!dist/write-build-manifest.js",
     "!dist/**/*.test.js",
     "!dist/**/*.harness.js",
     "!dist/**/gate6h.js",
@@ -21,7 +23,7 @@
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node dist/write-build-manifest.js",
     "test": "npm run clean && tsc && node --test \"dist/**/*.test.js\"",
     "cob": "node dist/cli.js",
     "gate6h": "npm run clean && tsc && node dist/gate6h.harness.js",
